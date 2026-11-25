@@ -17,6 +17,13 @@ ausdrücklich verlangen (Zeile ``Staffel: weiter``). Sonst würde jeder Vorsorge
 oder Zwischenstand-Handoff die Session am Ende ihres nächsten Zuges abschießen —
 Stop-Hooks laufen nach JEDEM Zug, nicht nur am Sitzungsende.
 
+Zweiter Auftrag (#276): ein committeter eigener Handoff der Session (Ablöse-SOP
+Schritt 1–2, Regel :mod:`to_spawn.eigener_handoff`, Worktree ``BAU_WORKTREE``) —
+die Session wartet sonst auf eine Aufsicht, die evtl. gar nicht läuft. Der Hook
+nimmt dafür die Leiter-Sperre, löst nur ab, wenn noch eine Staffel-Runde frei ist
+(``BAU_STAFFEL_MAX``), und merkt die Ablösung, damit Leiter/Aufpasser denselben
+Handoff nicht ein zweites Mal benutzen.
+
 Fehlt eine dieser Angaben, hält sich der Hook vollständig heraus. Jede
 Unklarheit (kein Handoff, Ticket zu, gh unerreichbar, kein claude-Vorfahr)
 endet ohne Kill und ohne Staffel-Datei: eine Session zu lange laufen zu lassen
@@ -30,8 +37,6 @@ import json
 import logging
 import os
 import re
-import shutil
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -48,7 +53,7 @@ def _skill_wurzel() -> Path:
 
 
 sys.path.insert(0, str(_skill_wurzel()))
-from to_spawn import prozessbaum  # noqa: E402
+from to_spawn import eigener_handoff, leitstand, prozessbaum, ticket_zustand  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s staffel_stop: %(message)s")
 log = logging.getLogger("staffel_stop")
@@ -107,28 +112,61 @@ def frischer_handoff(ordner: list[Path], ticket: str, seit: float) -> Path | Non
     return max(treffer, key=lambda paar: paar[0])[1]
 
 
+def eigener_handoff_der_session(ticket: str, seit: float) -> Path | None:
+    """#276: committeter eigener Handoff dieser Session — auch ohne ``Staffel: weiter``.
+
+    Regel: :func:`eigener_handoff.der_session` (dieselbe wie bei Leiter und Aufpasser).
+    ``None`` ohne ``BAU_WORKTREE`` (alter Launcher) und in der letzten Staffel-Runde:
+    ohne Folge-Runde darf der Hook nicht beenden — der Handoff bleibt dann gültig, und
+    Leiter/Aufpasser lösen ab.
+    """
+    wt = os.environ.get("BAU_WORKTREE") or ""
+    if not wt or not ticket.isdigit():
+        return None
+    runde = os.environ.get("BAU_STAFFEL_RUNDE") or ""
+    hoechst = os.environ.get("BAU_STAFFEL_MAX") or ""
+    if runde.isdigit() and hoechst.isdigit() and int(runde) >= int(hoechst):
+        log.info("Staffel-Grenze %s erreicht — Ablösung bleibt bei Leiter/Aufpasser", hoechst)
+        return None
+    treffer = eigener_handoff.der_session(Path(wt), int(ticket), seit)
+    return None if treffer is None else Path(wt) / treffer.datei
+
+
+def beenden_ab_eigenem(ziel: int, ticket: str, seit: float, handoff: Path) -> bool:
+    """Unter der Leiter-Sperre erneut prüfen, beenden, Ablösung merken (#276).
+
+    Hält Leiter oder Aufpasser die Sperre, lösen sie gerade selbst ab — dann nichts tun.
+    Gemerkt wird erst nach dem Beenden: scheitert es, bleibt der Handoff für sie gültig.
+    """
+    halter = leitstand.versuche(f"leiter-{ticket}", f"staffel-{os.getpid()}")
+    if halter is None:
+        log.info("Leiter-Sperre #%s belegt — Leiter/Aufpasser lösen ab", ticket)
+        return False
+    with halter:
+        if eigener_handoff_der_session(ticket, seit) != handoff:
+            return False
+        if not beenden(ziel):
+            return False
+        try:
+            eigener_handoff.merke_abloesung(int(ticket))
+        except (OSError, RuntimeError) as fehler:
+            # Session ist schon beendet: die Folge-Runde muss trotzdem starten. Ihr
+            # ``session_start`` macht den Handoff danach ohnehin ungültig.
+            log.warning("Ablösung #%s nicht gemerkt (%s)", ticket, fehler)
+    return True
+
+
 def ticket_offen(ticket: str) -> bool:
-    """``True`` nur bei belegt offenem Issue — jeder Fehler gilt als „nicht offen"."""
-    gh = shutil.which("gh")
-    if gh is None:
-        log.warning("gh fehlt — Ticket-Zustand unbekannt, keine Staffel")
+    """``True`` nur, wenn belegt noch jemand bauen muss (#279: Regel ``ticket_zustand.fertig_gebaut``).
+
+    Jeder Lese-Fehler (gh fehlt, Exit ≠ 0, Zeitüberschreitung, kaputte Antwort) gilt als
+    „nicht offen“ — keine Staffel.
+    """
+    daten = ticket_zustand.lesen(ticket)
+    if daten is None:
+        log.warning("Ticket #%s: Zustand unbekannt — keine Staffel", ticket)
         return False
-    proc = subprocess.run(
-        [gh, "issue", "view", ticket, "--json", "state"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=False,
-    )
-    if proc.returncode != 0:
-        log.warning("gh issue view %s: %s", ticket, proc.stderr.strip()[:200])
-        return False
-    try:
-        zustand = (json.loads(proc.stdout or "{}") or {}).get("state")
-    except json.JSONDecodeError:
-        log.warning("gh-Antwort unlesbar — keine Staffel")
-        return False
-    return str(zustand).upper() == "OPEN"
+    return not ticket_zustand.fertig_gebaut(daten)
 
 
 def ist_session_zeile(zeile: str) -> bool:
@@ -184,8 +222,16 @@ def main() -> int:
         return 0
 
     handoff = frischer_handoff(ordner, ticket, seit)
+    eigen = False
     if handoff is None:
-        return 0
+        try:
+            handoff = eigener_handoff_der_session(ticket, seit)
+        except (OSError, ValueError, RuntimeError) as fehler:
+            log.warning("Eigener Handoff nicht prüfbar (%s) — Leiter/Aufpasser lösen ab", fehler)
+            return 0
+        if handoff is None:
+            return 0
+        eigen = True
     if not ticket_offen(ticket):
         log.info("Ticket #%s nicht mehr offen — Session läuft normal aus", ticket)
         return 0
@@ -202,7 +248,12 @@ def main() -> int:
         ziel,
         runde,
     )
-    if not beenden(ziel):
+    try:
+        abgeloest = beenden_ab_eigenem(ziel, ticket, seit, handoff) if eigen else beenden(ziel)
+    except (OSError, ValueError, RuntimeError) as fehler:
+        log.warning("Ablösung ab eigenem Handoff gescheitert (%s)", fehler)
+        return 0
+    if not abgeloest:
         return 0
     Path(staffel_datei).parent.mkdir(parents=True, exist_ok=True)
     Path(staffel_datei).write_text(

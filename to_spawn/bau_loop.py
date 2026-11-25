@@ -22,7 +22,7 @@ import time
 from pathlib import Path
 from typing import Any, Sequence
 
-from . import bau_log, config, gh, hooks, sitzungsjob, starter
+from . import bau_log, config, hooks, sitzungsjob, starter, ticket_zustand
 
 log = logging.getLogger("to_spawn.bau_loop")
 
@@ -35,17 +35,13 @@ def frischer_handoff(repo: Path, ticket: str | int, seit: float) -> Path | None:
     ordner = repo / "docs" / "handoffs"
     if not ordner.is_dir():
         return None
-    kandidaten = [
-        pfad for pfad in ordner.glob(f"HANDOFF_*_{ticket}.md") if pfad.stat().st_mtime >= seit
-    ]
+    kandidaten = [pfad for pfad in ordner.glob(f"HANDOFF_*_{ticket}.md") if pfad.stat().st_mtime >= seit]
     if not kandidaten:
         return None
     return max(kandidaten, key=lambda p: p.stat().st_mtime)
 
 
-def _marker_waechter(
-    marker: Path, prozess: subprocess.Popen, stopp: threading.Event, takt: float
-) -> None:
+def _marker_waechter(marker: Path, prozess: subprocess.Popen, stopp: threading.Event, takt: float) -> None:
     """Beendet das Kind, sobald die Marker-Datei auftaucht (Weg ``eltern``)."""
     while not stopp.wait(takt):
         if not marker.exists():
@@ -93,11 +89,7 @@ def run_ticket(
     wurzel = config.repo_wurzel(repo)
     einstellungen = konfig if konfig is not None else config.lade(wurzel)
     modus = config.staffel_modus(einstellungen)
-    grenze = int(
-        max_staffeln
-        if max_staffeln is not None
-        else einstellungen.get("staffel", {}).get("max_staffeln", 3)
-    )
+    grenze = int(max_staffeln if max_staffeln is not None else einstellungen.get("staffel", {}).get("max_staffeln", 3))
     marker = hooks.marker_pfad(wurzel, ticket)
     aktuell = list(cmd)
     code = 0
@@ -148,8 +140,9 @@ def run_ticket(
                 waechter.join(timeout=takt * 3)
 
         handoff = frischer_handoff(wurzel, ticket, start)
-        offen = gh.ticket_offen(ticket, cwd=wurzel)
-        if handoff is None or offen is False:
+        # Folge-Session nur, wenn noch jemand bauen muss; unbekannter Stand → weiter wie bisher (#279).
+        daten = ticket_zustand.lesen(ticket, cwd=wurzel)
+        if handoff is None or (daten is not None and ticket_zustand.fertig_gebaut(daten)):
             marker.unlink(missing_ok=True)
             return code
 

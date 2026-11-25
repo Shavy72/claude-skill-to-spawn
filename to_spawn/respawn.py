@@ -27,6 +27,7 @@ Außenwelt (tmux, Prozesse, Uhr) nur über das Protokoll :class:`Werkzeug`; echt
 
 from __future__ import annotations
 
+import itertools
 import logging
 import os
 import re
@@ -41,7 +42,18 @@ from pathlib import Path
 from types import FrameType
 from typing import Literal, Protocol
 
-from to_spawn import capo, config, pc_fenster, prozessbaum, sessions_datei, speicher, tmux_aufruf
+from to_spawn import (
+    anleitung,
+    capo,
+    config,
+    konsole,
+    pc_fenster,
+    prozessbaum,
+    sessions_datei,
+    speicher,
+    tmux_aufruf,
+    werkzeug,
+)
 from to_spawn.tmux_aufruf import FensterWeg, TmuxFehler
 
 log = logging.getLogger(__name__)
@@ -75,7 +87,7 @@ BEENDEN_TAKT_S = 1.0
 #: So lange darf die alte Session nach Schritt e noch arbeiten (Commit), bevor sie endet.
 ALT_RUHE_MAX_S = 120.0
 WARTE_MAX_VORGABE = 1800.0
-REMOTE_CONTROL = "/remote-control"
+REMOTE_CONTROL = anleitung.REMOTE_CONTROL
 HANDOFF_ORDNER = "docs/handoffs"
 
 EXIT_OK = 0
@@ -90,10 +102,7 @@ SCHON_WEG: Beendet = "schon_weg"
 LEBT: Beendet = "lebt"
 
 #: Wird der alten Session getippt, wenn die Ablösung nach Schritt a abbricht.
-WEITER_AUFTRAG = (
-    "Ablösung abgebrochen (respawn). Die neue Session startet nicht — arbeite normal "
-    "am Ticket weiter. Handoff-Datei und Start-Prompt dürfen liegen bleiben."
-)
+WEITER_AUFTRAG = anleitung.WEITER_AUFTRAG
 
 
 @dataclass(frozen=True)
@@ -139,7 +148,7 @@ class Auftrag:
 
     @property
     def sitzung(self) -> str:
-        return f"spec-{self.spec}"
+        return tmux_aufruf.sitzung_name(self.repo, self.spec)
 
 
 class Werkzeug(Protocol):
@@ -150,13 +159,11 @@ class Werkzeug(Protocol):
 
     def fenster_liste(self) -> list[FensterInfo]: ...
     def bau_prozesse(self) -> list[str]: ...
-    def fenster_starten(
-        self, sitzung: str, name: str, cwd: str, befehl: str
-    ) -> str: ...
+    def fenster_starten(self, sitzung: str, name: str, cwd: str, befehl: str) -> str: ...
     def tippen(self, ziel: str, text: str) -> None: ...
     def taste(self, ziel: str, taste: str) -> None: ...
-    def bildschirm(self, ziel: str) -> str | None:
-        """Sichtbarer Text des Panes; ``None`` = nicht lesbar (tmux-Fehler)."""
+    def bildschirm(self, ziel: str, *, farben: bool = False) -> str | None:
+        """Sichtbarer Text (``farben``: mit Steuerfolgen); ``None`` = nicht lesbar."""
         ...
 
     def fenster_umbenennen(self, ziel: str, name: str) -> None: ...
@@ -169,6 +176,11 @@ class Werkzeug(Protocol):
     def claude_laeuft(self, pane_pid: int) -> bool: ...
     def jetzt(self) -> float: ...
     def schlafen(self, s: float) -> None: ...
+
+
+#: Laufende Nummer für Puffernamen und die Tipp-Sperre aller Fäden (#414).
+_PUFFER_NR = itertools.count(1)
+_TIPP_SPERRE = threading.Lock()
 
 
 class TmuxWerkzeug:
@@ -202,18 +214,17 @@ class TmuxWerkzeug:
             if len(teile) != 5 or teile[4] != "1":
                 continue
             sitzung, name, fid, pid, _ = teile
-            fenster.append(
-                FensterInfo(sitzung, name, f"={sitzung}:{fid}", int(pid or 0))
-            )
+            fenster.append(FensterInfo(sitzung, name, f"={sitzung}:{fid}", int(pid or 0)))
         return fenster
 
     def bau_prozesse(self) -> list[str]:
         fertig = subprocess.run(
             ["pgrep", "-af", "bau.py"],
             capture_output=True,
-            text=True,
+            **konsole.UNTERPROZESS_TEXT,
             check=False,
             timeout=30,
+            **prozessbaum.fensterlos(),
         )
         if fertig.returncode not in (0, 1):
             raise RuntimeError(f"pgrep nicht nutzbar: {fertig.stderr.strip()}")
@@ -240,26 +251,56 @@ class TmuxWerkzeug:
     def tippen(self, ziel: str, text: str) -> None:
         # Text als Bracketed Paste (ein Block, Zeilenumbrüche schicken nichts ab),
         # dann Enter getrennt — sonst schluckt die TUI das Enter im Einfügen.
-        puffer = f"respawn-{os.getpid()}"
-        self._tmux("load-buffer", "-b", puffer, "-", eingabe=text)
-        self._tmux("paste-buffer", "-p", "-d", "-b", puffer, "-t", ziel)
-        self.schlafen(TIPP_PAUSE_S)
-        try:
-            self._tmux("send-keys", "-t", ziel, "Enter")
-        except TmuxFehler:
-            # Kein halber Auftrag im Eingabefeld: Zeile leeren, Fehler weitergeben.
+        # Puffer je Aufruf eindeutig und eine Sperre je Prozess: Briefkasten-Wecker und
+        # Ablösung tippen in eigenen Fäden desselben Prozesses (#414).
+        puffer = f"respawn-{os.getpid()}-{next(_PUFFER_NR)}"
+        with _TIPP_SPERRE:
             try:
-                self._tmux("send-keys", "-t", ziel, "C-u")
-            except TmuxFehler as leeren:
-                log.warning("Eingabe in %s nicht geleert: %s", ziel, leeren)
-            raise
+                self._tmux("load-buffer", "-b", puffer, "-", eingabe=text)
+                self._tmux("paste-buffer", "-p", "-d", "-b", puffer, "-t", ziel)
+            except TmuxFehler:
+                # ``-d`` greift nur nach gelungenem Einfügen: Puffer nicht liegen lassen.
+                try:
+                    self._tmux("delete-buffer", "-b", puffer)
+                except TmuxFehler as rest:
+                    log.warning("tmux-Puffer %s nicht gelöscht: %s", puffer, rest)
+                raise
+            self.schlafen(TIPP_PAUSE_S)
+            try:
+                self._tmux("send-keys", "-t", ziel, "Enter")
+            except TmuxFehler:
+                # Kein halber Auftrag im Eingabefeld: Zeile leeren, Fehler weitergeben.
+                try:
+                    self._tmux("send-keys", "-t", ziel, "C-u")
+                except TmuxFehler as leeren:
+                    log.warning("Eingabe in %s nicht geleert: %s", ziel, leeren)
+                raise
 
     def taste(self, ziel: str, taste: str) -> None:
         self._tmux("send-keys", "-t", ziel, taste)
 
-    def bildschirm(self, ziel: str) -> str | None:
-        """Sichtbarer Text; :class:`FensterWeg` wenn das Fenster fehlt, ``None`` bei Fehlern."""
+    def pane_lage(self, ziel: str) -> tuple[int | None, float | None]:
+        """PID des Pane-Prozesses und ``window_activity`` (Epoche, s); ``None`` = nicht lesbar.
+
+        :class:`FensterWeg`/:class:`TmuxFehler` fliegen weiter.
+        """
+        roh = self._tmux("display-message", "-p", "-t", ziel, "#{pane_pid}\t#{window_activity}")
+        pid, _, aktiv = roh.strip().partition("\t")
         try:
+            aktiv_s: float | None = float(aktiv)
+        except ValueError:
+            aktiv_s = None
+        return (int(pid) if pid.isdigit() else None), aktiv_s
+
+    def bildschirm(self, ziel: str, *, farben: bool = False) -> str | None:
+        """Sichtbarer Text; :class:`FensterWeg` wenn das Fenster fehlt, ``None`` bei Fehlern.
+
+        ``farben=True`` liest mit ``-e`` (Farbcodes bleiben drin) — nur für
+        :func:`aufpasser.eingabe_leer`, das gedimmte Platzhalter erkennen muss (#414).
+        """
+        try:
+            if farben:
+                return self._tmux("capture-pane", "-e", "-p", "-t", ziel)
             return self._tmux("capture-pane", "-p", "-t", ziel)
         except FensterWeg:
             raise
@@ -287,17 +328,16 @@ class TmuxWerkzeug:
             letzter = self._git(wt, "log", "-1", "--format=%H", "--", str(pfad))
             if not letzter.strip():
                 return False
-        return not self._git(
-            wt, "status", "--porcelain", "--", *map(str, pfade)
-        ).strip()
+        return not self._git(wt, "status", "--porcelain", "--", *map(str, pfade)).strip()
 
     def _git(self, wt: Path, *argumente: str) -> str:
         return subprocess.run(
             ["git", "-C", str(wt), *argumente],
             capture_output=True,
-            text=True,
+            **konsole.UNTERPROZESS_PFADE,
             check=True,
             timeout=30,
+            **prozessbaum.fensterlos(),
         ).stdout
 
     def alte_session_beenden(self, pane_pid: int) -> Beendet:
@@ -306,7 +346,7 @@ class TmuxWerkzeug:
         ``schon_weg``: kein claude-Prozess mehr (Session hat sich selbst beendet).
         """
         baum = prozessbaum.baum(pane_pid)
-        claude = [pid for pid in baum if prozessbaum.ist_claude(pid)]
+        claude = [pid for pid in baum if werkzeug.ist_session_pid(pid)]
         andere = [pid for pid in baum if pid not in claude]
         tot = prozessbaum.beenden(
             [*andere, *claude],
@@ -327,8 +367,8 @@ class TmuxWerkzeug:
         return LEBT
 
     def claude_laeuft(self, pane_pid: int) -> bool:
-        """Läuft im Prozessbaum des Panes eine Claude-Session (sonst nur Shell)?"""
-        return any(prozessbaum.ist_claude(pid) for pid in prozessbaum.baum(pane_pid))
+        """Läuft im Prozessbaum des Panes eine Bau-Session (``claude`` oder ``agy``, sonst nur Shell)?"""
+        return werkzeug.session_laeuft(pane_pid)
 
     def jetzt(self) -> float:
         return time.time()
@@ -375,9 +415,7 @@ def _finde(soll: Path, schluessel: int | str, seit: float) -> Path | None:
     if _frisch(soll, seit):
         return soll
     praefix, endung = soll.name.split("_", 1)[0], soll.suffix
-    kandidaten = [
-        p for p in soll.parent.glob(f"{praefix}_*_{schluessel}{endung}") if _frisch(p, seit)
-    ]
+    kandidaten = [p for p in soll.parent.glob(f"{praefix}_*_{schluessel}{endung}") if _frisch(p, seit)]
     return max(kandidaten, key=lambda p: p.stat().st_mtime, default=None)
 
 
@@ -388,23 +426,12 @@ def _groesse(pfad: Path | None) -> int:
         return -1
 
 
-def _handoff_auftrag(handoff: str, start: str) -> str:
-    return (
-        "Ablösung dieser Session (respawn, Skill handoff, Bau-Variante): Schreib jetzt den "
-        f"Handoff nach {handoff} und den Start-Prompt für die neue Session nach {start} "
-        "(nur Text, die neue Session liest ihn als ersten Auftrag). Gibt es die Dateien schon, "
-        "sind sie aus einer früheren Runde veraltet: komplett mit dem jetzigen Stand "
-        "überschreiben, auch wenn sich wenig geändert hat. Beide Dateien committen. "
-        "Keine Zeile „Staffel: weiter“ ausgeben — die neue Session übernimmt, eine "
-        "Folge-Runde in diesem Fenster wäre eine zweite Session. Danach nichts mehr tun."
-    )
+_handoff_auftrag = anleitung.handoff_auftrag
 
 
 def handoff_auftrag_fuer(wt: Path, ticket: int, jetzt: float) -> str:
     """Handoff-Auftrag von Schritt a — einzige Pfadquelle, auch für die Leiter (#432)."""
-    return _handoff_auftrag(
-        *(f"{HANDOFF_ORDNER}/{p.name}" for p in _dateien(wt, ticket, jetzt))
-    )
+    return _handoff_auftrag(*(f"{HANDOFF_ORDNER}/{p.name}" for p in _dateien(wt, ticket, jetzt)))
 
 
 def start_prompt_da(wt: Path, ticket: int, seit: float) -> bool:
@@ -422,9 +449,7 @@ def _startbefehl(repo: Path, ticket: int) -> str:
     Alle Konfiguration kommt aus ``bau.py``; ``--ohne-prompt``: der Start-Prompt
     wird erst in Schritt e ins Fenster getippt.
     """
-    return shlex.join(
-        ["bash", "-lc", capo.bau_startzeile(repo, ticket, "", "--ohne-prompt")]
-    )
+    return shlex.join(["bash", "-lc", capo.bau_startzeile(repo, ticket, "", "--ohne-prompt")])
 
 
 def _bereit(text: str) -> bool:
@@ -604,9 +629,7 @@ def _signale_zuruecksetzen(alte: dict[signal.Signals, _SignalHandler]) -> None:
         signal.signal(sig, vorher)
 
 
-def _abbruch_ergebnis(
-    a: Auftrag, w: Werkzeug, stand: _Stand, exit_code: int, grund: str
-) -> Ergebnis:
+def _abbruch_ergebnis(a: Auftrag, w: Werkzeug, stand: _Stand, exit_code: int, grund: str) -> Ergebnis:
     """Vor dem Beenden: aufräumen. Danach arbeitet die neue Session schon → Handarbeit."""
     stand.raeumt_auf = True
     if not stand.beenden_begonnen:
@@ -614,8 +637,7 @@ def _abbruch_ergebnis(
     return Ergebnis(
         EXIT_NICHT_BEWIESEN,
         f"{a.kopf}: {grund} beim Beenden der alten Session — neue Session arbeitet in "
-        f"„{a.name_neu}“, alte evtl. noch offen, Handarbeit nötig"
-        + "".join(f" — {h}" for h in stand.hinweise),
+        f"„{a.name_neu}“, alte evtl. noch offen, Handarbeit nötig" + "".join(f" — {h}" for h in stand.hinweise),
     )
 
 
@@ -626,12 +648,13 @@ def _ablauf(a: Auftrag, w: Werkzeug, stand: _Stand) -> Ergebnis:
         return alt
     stand.alt = alt
 
+    sitzung = alt.sitzung or a.sitzung
     wt = Path(config.worktree_pfad(a.ticket, a.repo))
     befehl = _startbefehl(a.repo, a.ticket)
     if a.dry_run:
         return Ergebnis(
             EXIT_OK,
-            f"{a.kopf}: dry-run — alt {alt.ziel}, neu „{a.name_neu}“ in {a.sitzung}, cwd {a.repo}, Befehl: {befehl}",
+            f"{a.kopf}: dry-run — alt {alt.ziel}, neu „{a.name_neu}“ in {sitzung}, cwd {a.repo}, Befehl: {befehl}",
         )
 
     # a) Handoff-Auftrag ins alte Fenster (außer die Leiter hat ihn schon getippt und
@@ -647,22 +670,19 @@ def _ablauf(a: Auftrag, w: Werkzeug, stand: _Stand) -> Ergebnis:
 
     # b) neues Fenster: bau.py wie spawn (cwd Hauptbaum, bau.py wechselt selbst in den Worktree)
     stand.sessions = sessions_datei.Sicherung.merken(sessions_datei.pfad(a.repo, str(a.ticket)))
-    stand.neu = w.fenster_starten(a.sitzung, a.name_neu, str(a.repo), befehl)
+    stand.neu = w.fenster_starten(sitzung, a.name_neu, str(a.repo), befehl)
     log.info("respawn #%s: neues Fenster %s gestartet.", a.ticket, stand.neu)
 
     try:
         speicher_s = _remote_control(w, stand.neu, a.warte_max)  # c)
         if speicher_s:
-            stand.hinweise.append(
-                f"neue Session wartete {int(speicher_s)} s auf Speicher"
-            )
-        gefunden_h, gefunden_s, prompt = _warte_dateien(
-            w, handoff, start, seit, a.ticket, a.warte_max
-        )  # d)
+            stand.hinweise.append(f"neue Session wartete {int(speicher_s)} s auf Speicher")
+        gefunden_h, gefunden_s, prompt = _warte_dateien(w, handoff, start, seit, a.ticket, a.warte_max)  # d)
         _start_prompt(w, stand.neu, prompt)  # e)
     except FensterWeg as fehler:
         raise _Abbruch(
-            EXIT_NICHT_BEWIESEN, f"neue Session beendet sich selbst ({fehler})"
+            EXIT_NICHT_BEWIESEN,
+            f"neue Session beendet sich selbst ({fehler}) — Grund in {capo.fenster_log(a.repo, a.ticket)}",
         ) from fehler
     return _alte_abloesen(a, w, stand, alt, stand.neu, wt, gefunden_h, gefunden_s)
 
@@ -680,9 +700,7 @@ def _pruefe_duplikat(a: Auftrag, w: Werkzeug) -> FensterInfo | Ergebnis:
         )
     if len(alte) != 1:
         grund = "kein Fenster" if not alte else f"{len(alte)} Fenster"
-        return Ergebnis(
-            EXIT_DUPLIKAT, f"{a.kopf}: {grund} „{a.name_alt}“ — nichts angefasst"
-        )
+        return Ergebnis(EXIT_DUPLIKAT, f"{a.kopf}: {grund} „{a.name_alt}“ — nichts angefasst")
     if len(prozesse) > 1:
         return Ergebnis(
             EXIT_DUPLIKAT,
@@ -768,12 +786,8 @@ def _warte_dateien(
         return False
 
     if not _warte(w, warte_max, bedingung):
-        fehlt = [
-            p.name for p in (handoff, start) if _finde(p, schluessel, seit) is None
-        ] or ["stabile Dateien"]
-        raise _Abbruch(
-            EXIT_HANDOFF_FEHLT, f"nach {int(warte_max)} s fehlt {', '.join(fehlt)}"
-        )
+        fehlt = [p.name for p in (handoff, start) if _finde(p, schluessel, seit) is None] or ["stabile Dateien"]
+        raise _Abbruch(EXIT_HANDOFF_FEHLT, f"nach {int(warte_max)} s fehlt {', '.join(fehlt)}")
     h, s = fund[-1]
     prompt = s.read_text(encoding="utf-8").strip()
     if not prompt:
@@ -816,13 +830,8 @@ def _alte_unruhe(w: Werkzeug, ziel: str) -> str | None:
     if _warte(w, ALT_RUHE_MAX_S, bedingung):
         return None
     if unlesbar:
-        return (
-            f"Bildschirm der alten Session nicht lesbar, nach {int(ALT_RUHE_MAX_S)} s "
-            "beendet trotzdem"
-        )
-    return (
-        f"alte Session arbeitete nach {int(ALT_RUHE_MAX_S)} s noch — beendet trotzdem"
-    )
+        return f"Bildschirm der alten Session nicht lesbar, nach {int(ALT_RUHE_MAX_S)} s beendet trotzdem"
+    return f"alte Session arbeitete nach {int(ALT_RUHE_MAX_S)} s noch — beendet trotzdem"
 
 
 def _alte_abloesen(
@@ -847,9 +856,7 @@ def _alte_abloesen(
         hinweise.append(unruhe)
     try:
         if not w.committet(wt, [handoff, start]):
-            hinweise.append(
-                f"Handoff/Start-Prompt nicht committet ({handoff.name}, {start.name})"
-            )
+            hinweise.append(f"Handoff/Start-Prompt nicht committet ({handoff.name}, {start.name})")
     except (
         OSError,
         subprocess.SubprocessError,
@@ -861,8 +868,7 @@ def _alte_abloesen(
         return Ergebnis(
             EXIT_NICHT_BEWIESEN,
             f"{a.kopf}: neue Session arbeitet in „{a.name_neu}“, alte (Pane-PID {alt.pane_pid}) "
-            "lebt noch — zwei Sessions offen, Handarbeit nötig"
-            + "".join(f"; {h}" for h in hinweise),
+            "lebt noch — zwei Sessions offen, Handarbeit nötig" + "".join(f"; {h}" for h in hinweise),
         )
     if ausgang == SCHON_WEG:
         log.info("respawn #%s: alte Session war schon beendet.", a.ticket)
@@ -914,9 +920,7 @@ def _halb_gestartet(a: Auftrag, w: Werkzeug) -> str | None:
         return _UNBEKANNT
 
 
-def _aufraeumen(
-    a: Auftrag, w: Werkzeug, stand: _Stand, exit_code: int, grund: str
-) -> Ergebnis:
+def _aufraeumen(a: Auftrag, w: Werkzeug, stand: _Stand, exit_code: int, grund: str) -> Ergebnis:
     """Abbruch vor dem Beenden: neues Fenster zu, alte Session weiterarbeiten lassen.
 
     Die Zeile sagt nur, was wirklich geklappt hat.
@@ -926,34 +930,25 @@ def _aufraeumen(
     # Start gescheitert (z. B. Zeitüberschreitung), tmux legte das Fenster evtl. trotzdem an.
     neu = stand.neu or (_halb_gestartet(a, w) if stand.sessions else None)
     if neu == _UNBEKANNT:
-        teile.append(
-            f"Fenster „{a.name_neu}“ evtl. offen (Fensterliste unlesbar), Handarbeit nötig"
-        )
+        teile.append(f"Fenster „{a.name_neu}“ evtl. offen (Fensterliste unlesbar), Handarbeit nötig")
     elif neu:
         try:
             w.fenster_schliessen(neu)
         except RuntimeError:  # Prüfung folgt über die Fensterliste
             log.exception("respawn #%s: neues Fenster nicht schließbar.", a.ticket)
         if _fenster_offen(w, neu):
-            teile.append(
-                f"zwei Sessions offen („{a.name_neu}“ ließ sich nicht schließen), Handarbeit nötig"
-            )
+            teile.append(f"zwei Sessions offen („{a.name_neu}“ ließ sich nicht schließen), Handarbeit nötig")
         else:
             teile.append("neues Fenster zu")
     if stand.sessions and not stand.sessions.zuruecklegen():
-        teile.append(
-            f"Sessions-Datei {stand.sessions.pfad.name} nicht zurückgesetzt, Handarbeit nötig"
-        )
+        teile.append(f"Sessions-Datei {stand.sessions.pfad.name} nicht zurückgesetzt, Handarbeit nötig")
     if stand.auftrag_getippt and stand.alt:
         try:
             w.tippen(stand.alt.ziel, WEITER_AUFTRAG)
             teile.append("Ablösung abgebrochen, alte Session arbeitet weiter")
         except RuntimeError:  # tmux-Fehler: Zustand gehört in die Zeile
             log.exception("respawn #%s: Weiter-Auftrag nicht getippt.", a.ticket)
-            teile.append(
-                "alte Session hat den Handoff-Auftrag evtl. erhalten und wartet untätig, "
-                "Handarbeit nötig"
-            )
+            teile.append("alte Session hat den Handoff-Auftrag evtl. erhalten und wartet untätig, Handarbeit nötig")
     elif stand.alt:
         teile.append("alte Session unangetastet")
     teile.extend(stand.hinweise)

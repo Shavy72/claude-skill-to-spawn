@@ -23,7 +23,7 @@ from pathlib import Path
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import befund, config, gh  # noqa: E402
+from to_spawn import befund, config, gh, prozessbaum, ticket_zustand  # noqa: E402
 
 log = logging.getLogger("spec_stand")
 #: Repo, in dem gearbeitet wird: ``TO_SPAWN_REPO`` (setzt die Weiterleitung im Repo), sonst
@@ -32,16 +32,12 @@ REPO_ORDNER = Path(os.environ["TO_SPAWN_REPO"]).resolve() if os.environ.get("TO_
 
 
 def sh(*args: str, cwd: Path | None = None) -> str:
-    r = subprocess.run(list(args), capture_output=True, text=True, encoding="utf-8", cwd=cwd, check=False)
+    r = subprocess.run(
+        list(args), capture_output=True, text=True, encoding="utf-8", cwd=cwd, check=False, **prozessbaum.fensterlos()
+    )
     if r.returncode != 0:
         raise RuntimeError(f"{args[:3]} → {r.stderr.strip()[:200]}")
     return r.stdout.strip()
-
-
-def wt_basis_vorgabe(repo: Path) -> str:
-    """Basis-Ordner der Ticket-Worktrees laut ``config.worktree_pfad`` (Konfig ``worktree_basis``,
-    sonst Plattform-Regel) — dieselbe Regel wie ``bau.py``."""
-    return str(Path(config.worktree_pfad("0", repo)).parent.as_posix())
 
 
 def server_head(konfig: dict) -> str:
@@ -69,6 +65,11 @@ def alter(iso: str | None) -> str:
     return f"{m}m" if m < 120 else f"{m // 60}h"
 
 
+def zustand_text(kind: dict[str, object]) -> str:
+    """offen / fertig gebaut / zu / verworfen, gleich breit für die Spalte (#279)."""
+    return f"{ticket_zustand.ANZEIGE[ticket_zustand.stufe(kind)]:<13}"
+
+
 def gelb_zeilen(repo: Path, spec: int, abruf: befund.Abruf | None = None) -> list[str]:
     """Abschnitt „Gelbe Folge-Tickets (Gesamtabnahme)“ (#438); leer ohne gelbe Folgen, FEHLER-Zeile bei kaputtem Manifest."""
     return befund.abschnitt(repo, spec, abruf=abruf)
@@ -91,7 +92,6 @@ def main() -> int:
             file=sys.stderr,
         )
         return 2
-    wt_basis = a.wt_basis or wt_basis_vorgabe(repo)
     haupt = f"origin/{gh.hauptzweig(repo)}"
 
     sh("git", "fetch", "-q", "origin", cwd=repo)
@@ -104,20 +104,21 @@ def main() -> int:
     offen_gesamt = 0
     for k in sorted(kinder, key=lambda x: x["number"]):
         n = k["number"]
-        state = "zu " if k["state"] == "closed" else "OFF"
-        if k["state"] != "closed":
+        state = zustand_text(k)
+        if ticket_zustand.stufe(k) == "offen":
             offen_gesamt += 1
         wer = ",".join(u["login"] for u in k.get("assignees") or []) or "-"
         deps = gh_json(f"repos/{REPO}/issues/{n}/dependencies/blocked_by")
         assert isinstance(deps, list)
         blocker_offen = gh.offene_blocker(deps)  # zu oder staging:fertig (#1527)
-        commit = sh("git", "log", haupt, "--oneline", "-1", "--fixed-strings", "--grep", f"(#{n})", cwd=repo)
-        commit = commit[:7] if commit else "-"
+        commit = (gh.letzter_commit(repo, n, haupt) or "-")[:7]
         kommentare = gh_json(f"repos/{REPO}/issues/{n}/comments?per_page=1&direction=desc")
         assert isinstance(kommentare, list)
         letzter = kommentare[0] if kommentare else None
         kom = f"{alter(letzter['created_at'])} „{letzter['body'].strip().splitlines()[0][:70]}“" if letzter else "—"
-        wt = Path(wt_basis).expanduser() / f"wt-{n}"
+        # Ohne --wt-basis die eine Regel (``config.worktree_pfad``, Ausweich-Ordner #641).
+        wt = Path(a.wt_basis) / f"wt-{n}" if a.wt_basis else Path(config.worktree_pfad(n, repo))
+        wt = wt.expanduser()
         wt_info = "-"
         if wt.is_dir():
             try:

@@ -13,16 +13,14 @@ from pathlib import Path
 
 import pytest
 
-from to_spawn import hausmeister
+from to_spawn import hausmeister, konsole
 from to_spawn import uebergabe_sichern as us
 
 WURZEL = Path(__file__).resolve().parent.parent
 
 
 def _git(cwd: Path, *args: str) -> str:
-    return subprocess.run(
-        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
-    ).stdout.strip()
+    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
 
 
 def _entfernte_zweige(origin: Path) -> list[str]:
@@ -51,9 +49,7 @@ def skill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     return {"tmp": tmp_path, "origin": origin, "repo": repo}
 
 
-def _zweig(
-    skill: dict[str, Path], name: str, dateien: list[tuple[str, str | None]]
-) -> Path:
+def _zweig(skill: dict[str, Path], name: str, dateien: list[tuple[str, str | None]]) -> Path:
     """Worktree auf neuem Zweig ``name``; je Datei ein Commit (``None`` = löschen)."""
     wt = skill["tmp"] / name.replace("/", "-")
     _git(skill["repo"], "worktree", "add", "-q", "-b", name, str(wt), "main")
@@ -170,6 +166,7 @@ def test_cli_sichern_trocken_laedt_nichts_hoch(skill: dict[str, Path]) -> None:
         env=dict(os.environ),
         capture_output=True,
         text=True,
+        **konsole.UNTERPROZESS_TEXT,  # die CLI schreibt UTF-8, auch in Windows-Pipes
         timeout=60,
         check=False,
     )

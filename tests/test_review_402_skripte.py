@@ -106,7 +106,9 @@ def test_abnahme_verneinung_und_rot_beweis_bleiben_gruen(tu: ModuleType, tmp_pat
     assert _status(tu, tmp_path, text) == "gruen"
 
 
-@pytest.mark.parametrize("text", ["grüne Abnahme", "grünen Licht", "belegte Punkte", "bestandene Tests", "freigegebene Fassung"])
+@pytest.mark.parametrize(
+    "text", ["grüne Abnahme", "grünen Licht", "belegte Punkte", "bestandene Tests", "freigegebene Fassung"]
+)
 def test_abnahme_flektierte_formen_sind_gruen(tu: ModuleType, tmp_path: Path, text: str) -> None:
     assert _status(tu, tmp_path, text) == "gruen"
 

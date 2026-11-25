@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from conftest import attrappe
+from conftest import _ECHTES_HEIM, attrappe
 
 SKILL = Path(__file__).resolve().parent.parent
 CLI = SKILL / "to_spawn.py"
@@ -130,9 +130,7 @@ EINORDNUNG = [
 
 
 @pytest.mark.parametrize(("name", "beschreibung", "erwartet"), EINORDNUNG)
-def test_einordnung_je_kategorie(
-    repo: Path, heim: Path, name: str, beschreibung: str, erwartet: str
-) -> None:
+def test_einordnung_je_kategorie(repo: Path, heim: Path, name: str, beschreibung: str, erwartet: str) -> None:
     _skill(heim / ".claude" / "skills" / name, name, beschreibung)
     inv = _erstelle(repo, heim)
     w = _werkzeug(inv, name)
@@ -177,7 +175,7 @@ def test_katalog_liest_plugins_agenten_mcp_und_ueberspringt_ablage(repo: Path, h
         ),
         encoding="utf-8",
     )
-    (repo / ".mcp.json").write_text(json.dumps({"mcpServers": {"postproxy": {}}}), "utf-8")
+    (repo / ".mcp.json").write_text(json.dumps({"mcpServers": {"n8n": {}}}), "utf-8")
 
     inv = _erstelle(repo, heim)
     namen = {w.name for w in inv.werkzeuge}
@@ -189,8 +187,8 @@ def test_katalog_liest_plugins_agenten_mcp_und_ueberspringt_ablage(repo: Path, h
     assert _werkzeug(inv, "firecrawl").kategorie == "recherche"
     assert _werkzeug(inv, "chrome-devtools").kategorie == "sehen"
     assert _werkzeug(inv, "graphify-mcp").kategorie == "kontext"
-    assert _werkzeug(inv, "postproxy").kategorie == "projekt"
-    assert _werkzeug(inv, "postproxy").quelle.endswith(".mcp.json")
+    assert _werkzeug(inv, "n8n").kategorie == "projekt"
+    assert _werkzeug(inv, "n8n").quelle.endswith(".mcp.json")
     assert _werkzeug(inv, "firecrawl").quelle == "~/.claude.json"
 
 
@@ -284,9 +282,7 @@ def test_env_werte_landen_nie_in_ausgabe_oder_datei(repo: Path, heim: Path, tmp_
     assert "GEMINI_API_KEY" in inv.als_dict()["projekt"]["env_schluessel"]
 
 
-def test_setup_zeilen_mit_fehlgrund_nur_fuer_fehlendes(
-    repo: Path, heim: Path, tmp_path: Path
-) -> None:
+def test_setup_zeilen_mit_fehlgrund_nur_fuer_fehlendes(repo: Path, heim: Path, tmp_path: Path) -> None:
     pfad = _pfad_mit(tmp_path, "ffmpeg")
     inv = _erstelle(repo, heim, environ={"PATH": pfad})
     zeilen = {z.name: z for z in inv.setup_zeilen}
@@ -308,9 +304,7 @@ def test_keine_setup_zeile_wenn_alles_da(repo: Path, heim: Path, tmp_path: Path)
     assert inv.setup_zeilen == []
 
 
-def test_codex_zaehlt_als_da_mit_befehl_und_schluessel(
-    repo: Path, heim: Path, tmp_path: Path
-) -> None:
+def test_codex_zaehlt_als_da_mit_befehl_und_schluessel(repo: Path, heim: Path, tmp_path: Path) -> None:
     # #209 F6: früher reichte der Befehl allein; jetzt braucht codex zusätzlich
     # OPENAI_API_KEY oder ~/.codex/auth.json (Gegenprobe: test_f6_codex_…).
     pfad = _pfad_mit(tmp_path, "codex")
@@ -345,9 +339,7 @@ def _cli(repo: Path, heim: Path, *args: str) -> subprocess.CompletedProcess[str]
     )
 
 
-def test_abwahl_bleibt_beim_zweiten_lauf_und_anwahl_hebt_auf(
-    repo: Path, heim: Path, tmp_path: Path
-) -> None:
+def test_abwahl_bleibt_beim_zweiten_lauf_und_anwahl_hebt_auf(repo: Path, heim: Path, tmp_path: Path) -> None:
     for name in ("mp-tdd", "graphify", "ffmpeg-production"):
         _skill(heim / ".claude" / "skills" / name, name, "irgendwas")
     ziel = tmp_path / "aus" / "werkzeuge.json"
@@ -409,9 +401,13 @@ def test_weg_echtes_repo_echtes_home(tmp_path: Path) -> None:
     echte_datei = ECHTES_REPO / ".to-spawn" / "werkzeuge.json"
     vorher = echte_datei.exists()
     ziel = tmp_path / "werkzeuge.json"
+    # Die autouse-Fixture ``test_heim`` (#232) biegt HOME auf einen Wegwerf-Ordner um;
+    # dieser Weg-Test braucht ausdrücklich das echte HOME (nur lesend, Ausgabe nach tmp_path).
+    echt = {**os.environ, "HOME": str(_ECHTES_HEIM), "USERPROFILE": str(_ECHTES_HEIM)}
     lauf = subprocess.run(
         [sys.executable, str(CLI), "inventur", "--json", "--schreiben", "--ausgabe", str(ziel)],
         cwd=str(ECHTES_REPO),
+        env=echt,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -427,7 +423,7 @@ def test_weg_echtes_repo_echtes_home(tmp_path: Path) -> None:
     assert len(alle) >= 20
     je_name = {w["name"]: w for w in alle}
 
-    skills = Path.home() / ".claude" / "skills"
+    skills = _ECHTES_HEIM / ".claude" / "skills"
     for name, kategorie in (("mp-tdd", "testen"), ("ffmpeg-production", "medien")):
         if (skills / name).exists():
             assert je_name[name]["kategorie"] == kategorie
@@ -435,7 +431,7 @@ def test_weg_echtes_repo_echtes_home(tmp_path: Path) -> None:
         pytest.skip("weder mp-tdd noch ffmpeg-production in ~/.claude/skills")
 
     slug = re.sub(r"[^A-Za-z0-9]", "-", str(ECHTES_REPO.resolve()))
-    if (Path.home() / ".claude" / "projects" / slug).is_dir():
+    if (_ECHTES_HEIM / ".claude" / "projects" / slug).is_dir():
         assert any(w["genutzt"] > 0 for w in alle), "Historie ergibt keine Nutzung"
 
     env_namen = _env_namen(ECHTES_REPO / ".env")
@@ -450,7 +446,7 @@ def test_weg_echtes_repo_echtes_home(tmp_path: Path) -> None:
         shutil.which("codex") is not None
         or "OPENAI_API_KEY" in os.environ
         or "OPENAI_API_KEY" in env_namen
-        or (Path.home() / ".codex" / "auth.json").is_file()
+        or (_ECHTES_HEIM / ".codex" / "auth.json").is_file()
     )
     assert ("codex" in zeilen) == (not codex_da)
 
@@ -497,9 +493,7 @@ def test_f1_kaputte_werkzeuge_json_exit_4_und_bleibt_unberuehrt(
     assert ziel.read_text(encoding="utf-8") == inhalt
 
 
-def test_f1_abwahl_ausserhalb_des_katalogs_bleibt_erhalten(
-    repo: Path, heim: Path, tmp_path: Path
-) -> None:
+def test_f1_abwahl_ausserhalb_des_katalogs_bleibt_erhalten(repo: Path, heim: Path, tmp_path: Path) -> None:
     _skill(heim / ".claude" / "skills" / "mp-tdd", "mp-tdd", "Test")
     ziel = tmp_path / "werkzeuge.json"
     ziel.write_text(json.dumps({"abgewaehlt": ["weg-skill", "mp-tdd"]}), encoding="utf-8")
@@ -567,9 +561,7 @@ def test_f3_projekt_skills_und_agenten_aus_dem_repo(repo: Path, heim: Path) -> N
 # --- F4: Historie fehlt / leer ------------------------------------------------------------
 
 
-def test_f4_historie_fehlt_warnung_und_toter_winkel(
-    repo: Path, heim: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_f4_historie_fehlt_warnung_und_toter_winkel(repo: Path, heim: Path, caplog: pytest.LogCaptureFixture) -> None:
     ordner = heim / ".claude" / "projects" / _slug(repo)
     with caplog.at_level("WARNING", logger="to_spawn.inventur"):
         inv = _erstelle(repo, heim)
@@ -667,9 +659,7 @@ def test_f6_codex_befehl_allein_reicht_nicht(repo: Path, heim: Path, tmp_path: P
 # --- F7: Historie wird gestreamt ----------------------------------------------------------
 
 
-def test_f7_historie_zeilenweise_ohne_read_text(
-    repo: Path, heim: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f7_historie_zeilenweise_ohne_read_text(repo: Path, heim: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     ordner = heim / ".claude" / "projects" / _slug(repo)
     ordner.mkdir(parents=True)
     (ordner / "s.jsonl").write_text(_tool_use("Skill", {"skill": "x"}) + "\n", "utf-8")
@@ -712,10 +702,7 @@ EINORDNUNG_F8 = [
     ("grill-me", "A relentless interview to sharpen a plan or design.", "zweitmeinung"),
     (
         "grill-with-docs",
-        (
-            "A relentless interview to sharpen a plan or design, which also creates docs "
-            "(ADR's and glossary) as we go."
-        ),
+        ("A relentless interview to sharpen a plan or design, which also creates docs (ADR's and glossary) as we go."),
         "zweitmeinung",
     ),
     (
@@ -741,10 +728,7 @@ EINORDNUNG_F8 = [
     ),
     (
         "fable-1080",
-        (
-            "PFLICHT-Protokoll auf Fable 5 bei Dev-Tasks: Fable plant+reviewt, "
-            "executor-opus/-sonnet bauen."
-        ),
+        ("PFLICHT-Protokoll auf Fable 5 bei Dev-Tasks: Fable plant+reviewt, executor-opus/-sonnet bauen."),
         "steuerung",
     ),
     (
@@ -757,10 +741,7 @@ EINORDNUNG_F8 = [
     ),
     (
         "writing-for-agents",
-        (
-            "Writing documents for agents. Use when creating or editing skills, or modifying "
-            "AGENTS.md or CLAUDE.md."
-        ),
+        ("Writing documents for agents. Use when creating or editing skills, or modifying AGENTS.md or CLAUDE.md."),
         "kontext",
     ),
     ("prototype", "Build a throwaway prototype to answer a design question.", "bauen"),
@@ -769,9 +750,7 @@ EINORDNUNG_F8 = [
 
 
 @pytest.mark.parametrize(("name", "beschreibung", "erwartet"), EINORDNUNG_F8)
-def test_f8_einordnung_echte_faelle(
-    repo: Path, heim: Path, name: str, beschreibung: str, erwartet: str
-) -> None:
+def test_f8_einordnung_echte_faelle(repo: Path, heim: Path, name: str, beschreibung: str, erwartet: str) -> None:
     _skill(heim / ".claude" / "skills" / name, name, beschreibung)
     inv = _erstelle(repo, heim)
     w = _werkzeug(inv, name)
@@ -903,6 +882,7 @@ def _echt(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(CLI), "inventur", *args],
         cwd=str(ECHTES_REPO),
+        env={**os.environ, "HOME": str(_ECHTES_HEIM), "USERPROFILE": str(_ECHTES_HEIM)},
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -939,7 +919,7 @@ def test_f11_weg_echtes_repo_abwahl_ueber_drei_laeufe(tmp_path: Path) -> None:
     assert echte_datei.exists() == vorher, "echte werkzeuge.json darf nicht entstehen"
 
     je_name = {w["name"]: w for k in daten["kategorien"] for w in k["werkzeuge"]}
-    skills = Path.home() / ".claude" / "skills"
+    skills = _ECHTES_HEIM / ".claude" / "skills"
     geprueft = 0
     for skill, kategorie in (("german-umlauts", "bauen"), ("diagnosing-bugs", "testen")):
         if (skills / skill / "SKILL.md").is_file():

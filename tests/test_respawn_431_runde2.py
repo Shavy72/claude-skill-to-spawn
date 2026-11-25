@@ -40,9 +40,7 @@ def _lauf(repo: Path, fake: FakeWerkzeug, warte_max: float = 600) -> respawn.Erg
         from to_spawn import config
 
         extra.append(config.lade(repo))
-    return respawn.abloesen(
-        repo, SPEC, TICKET, *extra, werkzeug=fake, warte_max=warte_max
-    )
+    return respawn.abloesen(repo, SPEC, TICKET, *extra, werkzeug=fake, warte_max=warte_max)
 
 
 def _run_wirft(fehler: BaseException) -> Any:
@@ -60,9 +58,7 @@ def test_b2_handoff_auftrag_tippen_scheitert_zeile_ehrlich(
 ) -> None:
     """Paste ok, Enter scheitert → Auftrag kann im Eingabefeld stehen: nie „unangetastet“."""
     repo, wt = umgebung
-    fake = FakeWerkzeug(
-        wt, fehler_bei={f"tippen:{ALT_ZIEL}:Ablösung dieser": RuntimeError("enter")}
-    )
+    fake = FakeWerkzeug(wt, fehler_bei={f"tippen:{ALT_ZIEL}:Ablösung dieser": RuntimeError("enter")})
     erg = _lauf(repo, fake)
     assert erg.exit == 1, erg.zeile
     assert "unangetastet" not in erg.zeile
@@ -263,9 +259,7 @@ def test_b7_keyboardinterrupt_raeumt_auf_und_reicht_weiter(
     umgebung: tuple[Path, Path],  # noqa: F811
 ) -> None:
     repo, wt = umgebung
-    fake = FakeWerkzeug(
-        wt, fehler_bei={f"tippen:{NEU_ZIEL}:/remote-control": KeyboardInterrupt()}
-    )
+    fake = FakeWerkzeug(wt, fehler_bei={f"tippen:{NEU_ZIEL}:/remote-control": KeyboardInterrupt()})
     with pytest.raises(KeyboardInterrupt):
         _lauf(repo, fake)
     assert ("fenster_schliessen", NEU_ZIEL) in fake.aufrufe
@@ -278,18 +272,14 @@ def test_b7_keyboardinterrupt_raeumt_auf_und_reicht_weiter(
 def test_b8_fenster_schliessen_timeout_wirft_nicht(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        respawn.subprocess, "run", _run_wirft(subprocess.TimeoutExpired(["tmux"], 30))
-    )
+    monkeypatch.setattr(respawn.subprocess, "run", _run_wirft(subprocess.TimeoutExpired(["tmux"], 30)))
     respawn.TmuxWerkzeug().fenster_schliessen("=spec-1:@1")
 
 
 # --- Befund 9: _ist_claude kennt die npm-Installation nicht --------------------------
 
 
-def _proc_tabelle(
-    monkeypatch: pytest.MonkeyPatch, tabelle: dict[str, bytes | BaseException]
-) -> None:
+def _proc_tabelle(monkeypatch: pytest.MonkeyPatch, tabelle: dict[str, bytes | BaseException]) -> None:
     def proc(pid: int, datei: str) -> bytes:
         wert = tabelle[datei]
         if isinstance(wert, BaseException):
@@ -351,9 +341,7 @@ def test_b11_alte_session_ueberlebt_sigkill_heisst_lebt(
     monkeypatch.setattr(prozessbaum, "baum", lambda pid: [pid, 200, 300])
     monkeypatch.setattr(prozessbaum, "ist_claude", lambda pid: pid == 300)
     monkeypatch.setattr(prozessbaum, "lebt", lambda pid: True)
-    monkeypatch.setattr(
-        respawn.os, "kill", lambda pid, sig: gesendet.append((pid, sig))
-    )
+    monkeypatch.setattr(respawn.os, "kill", lambda pid, sig: gesendet.append((pid, sig)))
     w = _Uhr()
     assert w.alte_session_beenden(100) == respawn.LEBT
     assert (300, signal.SIGTERM) in gesendet and (300, signal.SIGKILL) in gesendet
@@ -365,10 +353,7 @@ def test_b11_alte_session_ueberlebt_sigkill_heisst_lebt(
 
 def test_b12_typen_und_schmale_ausnahmen() -> None:
     assert respawn.__annotations__.get("REMOTE_MARKER") == "tuple[str, ...]"
-    assert (
-        inspect.signature(prozessbaum.senden).parameters["sig"].annotation
-        == "signal.Signals"
-    )
+    assert inspect.signature(prozessbaum.senden).parameters["sig"].annotation == "signal.Signals"
 
 
 def test_b12_ruff_meldet_kein_breites_except() -> None:
@@ -412,9 +397,7 @@ def test_b12_nur_die_tuer_faengt_breit() -> None:
                 isinstance(knoten, ast.ExceptHandler)
                 and isinstance(knoten.type, ast.Name)
                 and knoten.type.id in ("Exception", "BaseException")
-                and not any(
-                    isinstance(k, ast.Raise) and k.exc is None for k in ast.walk(knoten)
-                )
+                and not any(isinstance(k, ast.Raise) and k.exc is None for k in ast.walk(knoten))
             ):
                 breit.append(funktion.name)
     assert breit == ["abloesen"], breit
@@ -434,3 +417,22 @@ def test_offen_b_handoff_auftrag_verbietet_staffel_marker() -> None:
     text = respawn._handoff_auftrag("docs/handoffs/H.md", "docs/handoffs/S.txt")
     assert "Staffel: weiter" in text
     assert "Keine Zeile" in text
+
+
+def test_b4_abbruch_nennt_fenster_log(
+    umgebung: tuple[Path, Path],  # noqa: F811
+) -> None:
+    """Befund PR 293 (#277): Abbruch-Meldung nennt das Fenster-Log mit dem Grund."""
+    repo, wt = umgebung
+    fake = FakeWerkzeug(wt)
+    original = fake.bildschirm
+
+    def bildschirm(ziel: str) -> str:
+        if ziel == NEU_ZIEL:
+            raise respawn.FensterWeg("capture-pane", "can't find window: @9")
+        return original(ziel)
+
+    fake.bildschirm = bildschirm  # type: ignore[method-assign]
+    erg = _lauf(repo, fake)
+    assert erg.exit == 1, erg.zeile
+    assert f"fenster_{TICKET}.log" in erg.zeile

@@ -1,0 +1,431 @@
+FFFFF........FFFFFFFFFFFFFF...                                           [100%]
+=================================== FAILURES ===================================
+_ test_laufmuster_greift_nicht_ueber_ordnergrenzen[.to-spawn/thermo_x/tief/d.json] _
+
+tmp_path = PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_laufmuster_greift_nicht_u0')
+pfad = '.to-spawn/thermo_x/tief/d.json'
+
+    @pytest.mark.parametrize(
+        "pfad",
+        [
+            ".to-spawn/thermo_x/tief/d.json",
+            ".to-spawn/stop-7/d.json",
+            ".to-spawn/umzug-anfrage-3/tief/d.json",
+            ".to-spawn/thermo_5/",
+            ".to-spawn/stop-7/",
+        ],
+    )
+    def test_laufmuster_greift_nicht_ueber_ordnergrenzen(tmp_path: Path, pfad: str) -> None:
+>       assert not cache.ist_werkzeug_rest(tmp_path, pfad)
+E       AssertionError: assert not True
+E        +  where True = <function ist_werkzeug_rest at 0x7ff1404f6ca0>(PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_laufmuster_greift_nicht_u0'), '.to-spawn/thermo_x/tief/d.json')
+E        +    where <function ist_werkzeug_rest at 0x7ff1404f6ca0> = cache.ist_werkzeug_rest
+
+tests/test_pruef_buendel_238_224_204_246.py:58: AssertionError
+__ test_laufmuster_greift_nicht_ueber_ordnergrenzen[.to-spawn/stop-7/d.json] ___
+
+tmp_path = PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_laufmuster_greift_nicht_u1')
+pfad = '.to-spawn/stop-7/d.json'
+
+    @pytest.mark.parametrize(
+        "pfad",
+        [
+            ".to-spawn/thermo_x/tief/d.json",
+            ".to-spawn/stop-7/d.json",
+            ".to-spawn/umzug-anfrage-3/tief/d.json",
+            ".to-spawn/thermo_5/",
+            ".to-spawn/stop-7/",
+        ],
+    )
+    def test_laufmuster_greift_nicht_ueber_ordnergrenzen(tmp_path: Path, pfad: str) -> None:
+>       assert not cache.ist_werkzeug_rest(tmp_path, pfad)
+E       AssertionError: assert not True
+E        +  where True = <function ist_werkzeug_rest at 0x7ff1404f6ca0>(PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_laufmuster_greift_nicht_u1'), '.to-spawn/stop-7/d.json')
+E        +    where <function ist_werkzeug_rest at 0x7ff1404f6ca0> = cache.ist_werkzeug_rest
+
+tests/test_pruef_buendel_238_224_204_246.py:58: AssertionError
+_ test_laufmuster_greift_nicht_ueber_ordnergrenzen[.to-spawn/umzug-anfrage-3/tief/d.json] _
+
+tmp_path = PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_laufmuster_greift_nicht_u2')
+pfad = '.to-spawn/umzug-anfrage-3/tief/d.json'
+
+    @pytest.mark.parametrize(
+        "pfad",
+        [
+            ".to-spawn/thermo_x/tief/d.json",
+            ".to-spawn/stop-7/d.json",
+            ".to-spawn/umzug-anfrage-3/tief/d.json",
+            ".to-spawn/thermo_5/",
+            ".to-spawn/stop-7/",
+        ],
+    )
+    def test_laufmuster_greift_nicht_ueber_ordnergrenzen(tmp_path: Path, pfad: str) -> None:
+>       assert not cache.ist_werkzeug_rest(tmp_path, pfad)
+E       AssertionError: assert not True
+E        +  where True = <function ist_werkzeug_rest at 0x7ff1404f6ca0>(PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_laufmuster_greift_nicht_u2'), '.to-spawn/umzug-anfrage-3/tief/d.json')
+E        +    where <function ist_werkzeug_rest at 0x7ff1404f6ca0> = cache.ist_werkzeug_rest
+
+tests/test_pruef_buendel_238_224_204_246.py:58: AssertionError
+____ test_laufmuster_greift_nicht_ueber_ordnergrenzen[.to-spawn/thermo_5/] _____
+
+tmp_path = PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_laufmuster_greift_nicht_u3')
+pfad = '.to-spawn/thermo_5/'
+
+    @pytest.mark.parametrize(
+        "pfad",
+        [
+            ".to-spawn/thermo_x/tief/d.json",
+            ".to-spawn/stop-7/d.json",
+            ".to-spawn/umzug-anfrage-3/tief/d.json",
+            ".to-spawn/thermo_5/",
+            ".to-spawn/stop-7/",
+        ],
+    )
+    def test_laufmuster_greift_nicht_ueber_ordnergrenzen(tmp_path: Path, pfad: str) -> None:
+>       assert not cache.ist_werkzeug_rest(tmp_path, pfad)
+E       AssertionError: assert not True
+E        +  where True = <function ist_werkzeug_rest at 0x7ff1404f6ca0>(PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_laufmuster_greift_nicht_u3'), '.to-spawn/thermo_5/')
+E        +    where <function ist_werkzeug_rest at 0x7ff1404f6ca0> = cache.ist_werkzeug_rest
+
+tests/test_pruef_buendel_238_224_204_246.py:58: AssertionError
+_____ test_laufmuster_greift_nicht_ueber_ordnergrenzen[.to-spawn/stop-7/] ______
+
+tmp_path = PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_laufmuster_greift_nicht_u4')
+pfad = '.to-spawn/stop-7/'
+
+    @pytest.mark.parametrize(
+        "pfad",
+        [
+            ".to-spawn/thermo_x/tief/d.json",
+            ".to-spawn/stop-7/d.json",
+            ".to-spawn/umzug-anfrage-3/tief/d.json",
+            ".to-spawn/thermo_5/",
+            ".to-spawn/stop-7/",
+        ],
+    )
+    def test_laufmuster_greift_nicht_ueber_ordnergrenzen(tmp_path: Path, pfad: str) -> None:
+>       assert not cache.ist_werkzeug_rest(tmp_path, pfad)
+E       AssertionError: assert not True
+E        +  where True = <function ist_werkzeug_rest at 0x7ff1404f6ca0>(PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_laufmuster_greift_nicht_u4'), '.to-spawn/stop-7/')
+E        +    where <function ist_werkzeug_rest at 0x7ff1404f6ca0> = cache.ist_werkzeug_rest
+
+tests/test_pruef_buendel_238_224_204_246.py:58: AssertionError
+__________ test_datei_im_unterordner_eines_laufmusters_erzwingt_voll ___________
+
+repo = PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_datei_im_unterordner_eine0')
+
+    def test_datei_im_unterordner_eines_laufmusters_erzwingt_voll(repo: Path) -> None:  # noqa: F811
+        basis = _code_commit(repo)
+        _schreibe(repo, ".to-spawn/thermo_x/tief/d.json", '"rot"\n')
+        stufe = _pruef_stufe(repo, basis)
+>       assert stufe.name == "voll", stufe.grund
+E       AssertionError: 1 betroffene Tests
+E       assert 'auswahl' == 'voll'
+E         
+E         - voll
+E         + auswahl
+
+tests/test_pruef_buendel_238_224_204_246.py:82: AssertionError
+______ test_versteckte_datei_unter_laufmuster_ordner_zaehlt_im_schluessel ______
+
+tmp_path = PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_versteckte_datei_unter_la0')
+
+    def test_versteckte_datei_unter_laufmuster_ordner_zaehlt_im_schluessel(tmp_path: Path) -> None:
+        probe = _probe_py(tmp_path / "py")
+        _ausschliessen(probe, ".to-spawn/")
+        daten = _schreibe(probe, ".to-spawn/thermo_x/tief/d.json", "1")
+        _schreibe(probe, ".to-spawn/thermo_x/teil-1.json", "1")
+        vorher = cache.schluessel(probe, "base", "HEAD")
+        assert vorher is not None
+        _schreibe(probe, ".to-spawn/thermo_x/teil-1.json", "2")  # echte Laufdatei: zählt nicht
+        assert cache.schluessel(probe, "base", "HEAD") == vorher
+        daten.write_text("2", encoding="utf-8")
+>       assert cache.schluessel(probe, "base", "HEAD") not in (None, vorher)
+E       AssertionError: assert 'dda2d4a2a6f4c390a1c474bd1de4d1bb7312241d760b2fe7fd5f313b400661c2' not in (None, 'dda2d4a2a6f4c390a1c474bd1de4d1bb7312241d760b2fe7fd5f313b400661c2')
+E        +  where 'dda2d4a2a6f4c390a1c474bd1de4d1bb7312241d760b2fe7fd5f313b400661c2' = <function schluessel at 0x7ff1404f71a0>(PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_versteckte_datei_unter_la0/py'), 'base', 'HEAD')
+E        +    where <function schluessel at 0x7ff1404f71a0> = cache.schluessel
+
+tests/test_pruef_buendel_238_224_204_246.py:96: AssertionError
+________ test_fremde_datei_im_pycache_eines_versteckten_ordners_zaehlt _________
+
+tmp_path = PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_fremde_datei_im_pycache_e0')
+
+    def test_fremde_datei_im_pycache_eines_versteckten_ordners_zaehlt(tmp_path: Path) -> None:
+        probe = _probe_py(tmp_path / "py")
+        _ausschliessen(probe, "ign/")
+        _schreibe(probe, "ign/notiz.md", "x")
+        fremd = _schreibe(probe, "ign/__pycache__/d.txt", "1")
+        (probe / "ign" / "__pycache__" / "m.cpython-311.pyc").write_bytes(b"\0")
+        vorher = cache.schluessel(probe, "base", "HEAD")
+        assert vorher is not None
+        (probe / "ign" / "__pycache__" / "m.cpython-311.pyc").write_bytes(b"\1")  # Bytecode: zählt nicht
+        assert cache.schluessel(probe, "base", "HEAD") == vorher
+        fremd.write_text("2", encoding="utf-8")
+>       assert cache.schluessel(probe, "base", "HEAD") not in (None, vorher)
+E       AssertionError: assert '3eb89bdea8e1c776597d3059764ad5aac609d17c0428cc449f8a5cbc20b7b669' not in (None, '3eb89bdea8e1c776597d3059764ad5aac609d17c0428cc449f8a5cbc20b7b669')
+E        +  where '3eb89bdea8e1c776597d3059764ad5aac609d17c0428cc449f8a5cbc20b7b669' = <function schluessel at 0x7ff1404f71a0>(PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_fremde_datei_im_pycache_e0/py'), 'base', 'HEAD')
+E        +    where <function schluessel at 0x7ff1404f71a0> = cache.schluessel
+
+tests/test_pruef_buendel_238_224_204_246.py:113: AssertionError
+____ test_node_modules_ohne_paketliste_gibt_keinen_schluessel[node_modules] ____
+
+tmp_path = PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_node_modules_ohne_paketli0')
+ordner = 'node_modules'
+
+    @pytest.mark.parametrize("ordner", ["node_modules", "web/sub/node_modules", "ign/node_modules"])
+    def test_node_modules_ohne_paketliste_gibt_keinen_schluessel(tmp_path: Path, ordner: str) -> None:
+        probe = _probe_py(tmp_path / "py")
+        _ausschliessen(probe, "node_modules/")
+        _ausschliessen(probe, "ign/")
+        _schreibe(probe, f"{ordner}/paket/index.js", "1")
+>       assert cache.schluessel(probe, "base", "HEAD") is None
+E       AssertionError: assert '8632b8b1ea5f5b1b2f94e35b732356ecb730f5bd3219bc673ddd0877a48935f9' is None
+E        +  where '8632b8b1ea5f5b1b2f94e35b732356ecb730f5bd3219bc673ddd0877a48935f9' = <function schluessel at 0x7ff1404f71a0>(PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_node_modules_ohne_paketli0/py'), 'base', 'HEAD')
+E        +    where <function schluessel at 0x7ff1404f71a0> = cache.schluessel
+
+tests/test_pruef_buendel_238_224_204_246.py:125: AssertionError
+_ test_node_modules_ohne_paketliste_gibt_keinen_schluessel[web/sub/node_modules] _
+
+tmp_path = PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_node_modules_ohne_paketli1')
+ordner = 'web/sub/node_modules'
+
+    @pytest.mark.parametrize("ordner", ["node_modules", "web/sub/node_modules", "ign/node_modules"])
+    def test_node_modules_ohne_paketliste_gibt_keinen_schluessel(tmp_path: Path, ordner: str) -> None:
+        probe = _probe_py(tmp_path / "py")
+        _ausschliessen(probe, "node_modules/")
+        _ausschliessen(probe, "ign/")
+        _schreibe(probe, f"{ordner}/paket/index.js", "1")
+>       assert cache.schluessel(probe, "base", "HEAD") is None
+E       AssertionError: assert 'f8196526fa8b5b7441486be2900e2c62247f141281c2906a8a623982c2f87208' is None
+E        +  where 'f8196526fa8b5b7441486be2900e2c62247f141281c2906a8a623982c2f87208' = <function schluessel at 0x7ff1404f71a0>(PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_node_modules_ohne_paketli1/py'), 'base', 'HEAD')
+E        +    where <function schluessel at 0x7ff1404f71a0> = cache.schluessel
+
+tests/test_pruef_buendel_238_224_204_246.py:125: AssertionError
+__ test_node_modules_ohne_paketliste_gibt_keinen_schluessel[ign/node_modules] __
+
+tmp_path = PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_node_modules_ohne_paketli2')
+ordner = 'ign/node_modules'
+
+    @pytest.mark.parametrize("ordner", ["node_modules", "web/sub/node_modules", "ign/node_modules"])
+    def test_node_modules_ohne_paketliste_gibt_keinen_schluessel(tmp_path: Path, ordner: str) -> None:
+        probe = _probe_py(tmp_path / "py")
+        _ausschliessen(probe, "node_modules/")
+        _ausschliessen(probe, "ign/")
+        _schreibe(probe, f"{ordner}/paket/index.js", "1")
+>       assert cache.schluessel(probe, "base", "HEAD") is None
+E       AssertionError: assert '6aa65fe56cc2ad5a6245465608592a8a2b756ff79a3a2d3e9aad169c98e24706' is None
+E        +  where '6aa65fe56cc2ad5a6245465608592a8a2b756ff79a3a2d3e9aad169c98e24706' = <function schluessel at 0x7ff1404f71a0>(PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_node_modules_ohne_paketli2/py'), 'base', 'HEAD')
+E        +    where <function schluessel at 0x7ff1404f71a0> = cache.schluessel
+
+tests/test_pruef_buendel_238_224_204_246.py:125: AssertionError
+________________ test_ausfuehrbar_bit_versteckter_datei_zaehlt _________________
+
+tmp_path = PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_ausfuehrbar_bit_versteckt0')
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="Windows kennt kein Ausführbar-Bit")
+    def test_ausfuehrbar_bit_versteckter_datei_zaehlt(tmp_path: Path) -> None:
+        probe = _probe_py(tmp_path / "py")
+        _ausschliessen(probe, "ign/")
+        skript = _schreibe(probe, "ign/s.sh", "echo ok\n")
+        vorher = cache.schluessel(probe, "base", "HEAD")
+        assert vorher is not None
+        assert cache.schluessel(probe, "base", "HEAD") == vorher
+        skript.chmod(0o755)
+>       assert cache.schluessel(probe, "base", "HEAD") not in (None, vorher)
+E       AssertionError: assert 'c5b62769eb8381463c892fc2e3e8cc7a147a1a2160f1680b523a71b3d448163a' not in (None, 'c5b62769eb8381463c892fc2e3e8cc7a147a1a2160f1680b523a71b3d448163a')
+E        +  where 'c5b62769eb8381463c892fc2e3e8cc7a147a1a2160f1680b523a71b3d448163a' = <function schluessel at 0x7ff1404f71a0>(PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_ausfuehrbar_bit_versteckt0/py'), 'base', 'HEAD')
+E        +    where <function schluessel at 0x7ff1404f71a0> = cache.schluessel
+
+tests/test_pruef_buendel_238_224_204_246.py:146: AssertionError
+__________ test_konfig_mit_txt_endung_ist_nie_doku[requirements.txt] ___________
+
+tmp_path = PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_konfig_mit_txt_endung_ist0')
+pfad = 'requirements.txt'
+
+    @pytest.mark.parametrize(
+        "pfad",
+        [
+            "requirements.txt",
+            "requirements-dev.txt",
+            "constraints.txt",
+            "web/CMakeLists.txt",
+            "docs/requirements.txt",
+            "Requirements.TXT",
+        ],
+    )
+    def test_konfig_mit_txt_endung_ist_nie_doku(tmp_path: Path, pfad: str) -> None:
+        probe = _doku_repo(tmp_path / "r", {pfad: "paket==1\n", "docs/notiz.txt": "hallo\n"})
+>       assert not sofort._ist_doku_datei(probe, "base", pfad)
+E       AssertionError: assert not True
+E        +  where True = <function _ist_doku_datei at 0x7ff1404f7ba0>(PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_konfig_mit_txt_endung_ist0/r'), 'base', 'requirements.txt')
+E        +    where <function _ist_doku_datei at 0x7ff1404f7ba0> = sofort._ist_doku_datei
+
+tests/test_pruef_buendel_238_224_204_246.py:176: AssertionError
+________ test_konfig_mit_txt_endung_ist_nie_doku[requirements-dev.txt] _________
+
+tmp_path = PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_konfig_mit_txt_endung_ist1')
+pfad = 'requirements-dev.txt'
+
+    @pytest.mark.parametrize(
+        "pfad",
+        [
+            "requirements.txt",
+            "requirements-dev.txt",
+            "constraints.txt",
+            "web/CMakeLists.txt",
+            "docs/requirements.txt",
+            "Requirements.TXT",
+        ],
+    )
+    def test_konfig_mit_txt_endung_ist_nie_doku(tmp_path: Path, pfad: str) -> None:
+        probe = _doku_repo(tmp_path / "r", {pfad: "paket==1\n", "docs/notiz.txt": "hallo\n"})
+>       assert not sofort._ist_doku_datei(probe, "base", pfad)
+E       AssertionError: assert not True
+E        +  where True = <function _ist_doku_datei at 0x7ff1404f7ba0>(PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_konfig_mit_txt_endung_ist1/r'), 'base', 'requirements-dev.txt')
+E        +    where <function _ist_doku_datei at 0x7ff1404f7ba0> = sofort._ist_doku_datei
+
+tests/test_pruef_buendel_238_224_204_246.py:176: AssertionError
+___________ test_konfig_mit_txt_endung_ist_nie_doku[constraints.txt] ___________
+
+tmp_path = PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_konfig_mit_txt_endung_ist2')
+pfad = 'constraints.txt'
+
+    @pytest.mark.parametrize(
+        "pfad",
+        [
+            "requirements.txt",
+            "requirements-dev.txt",
+            "constraints.txt",
+            "web/CMakeLists.txt",
+            "docs/requirements.txt",
+            "Requirements.TXT",
+        ],
+    )
+    def test_konfig_mit_txt_endung_ist_nie_doku(tmp_path: Path, pfad: str) -> None:
+        probe = _doku_repo(tmp_path / "r", {pfad: "paket==1\n", "docs/notiz.txt": "hallo\n"})
+>       assert not sofort._ist_doku_datei(probe, "base", pfad)
+E       AssertionError: assert not True
+E        +  where True = <function _ist_doku_datei at 0x7ff1404f7ba0>(PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_konfig_mit_txt_endung_ist2/r'), 'base', 'constraints.txt')
+E        +    where <function _ist_doku_datei at 0x7ff1404f7ba0> = sofort._ist_doku_datei
+
+tests/test_pruef_buendel_238_224_204_246.py:176: AssertionError
+_________ test_konfig_mit_txt_endung_ist_nie_doku[web/CMakeLists.txt] __________
+
+tmp_path = PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_konfig_mit_txt_endung_ist3')
+pfad = 'web/CMakeLists.txt'
+
+    @pytest.mark.parametrize(
+        "pfad",
+        [
+            "requirements.txt",
+            "requirements-dev.txt",
+            "constraints.txt",
+            "web/CMakeLists.txt",
+            "docs/requirements.txt",
+            "Requirements.TXT",
+        ],
+    )
+    def test_konfig_mit_txt_endung_ist_nie_doku(tmp_path: Path, pfad: str) -> None:
+        probe = _doku_repo(tmp_path / "r", {pfad: "paket==1\n", "docs/notiz.txt": "hallo\n"})
+>       assert not sofort._ist_doku_datei(probe, "base", pfad)
+E       AssertionError: assert not True
+E        +  where True = <function _ist_doku_datei at 0x7ff1404f7ba0>(PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_konfig_mit_txt_endung_ist3/r'), 'base', 'web/CMakeLists.txt')
+E        +    where <function _ist_doku_datei at 0x7ff1404f7ba0> = sofort._ist_doku_datei
+
+tests/test_pruef_buendel_238_224_204_246.py:176: AssertionError
+________ test_konfig_mit_txt_endung_ist_nie_doku[docs/requirements.txt] ________
+
+tmp_path = PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_konfig_mit_txt_endung_ist4')
+pfad = 'docs/requirements.txt'
+
+    @pytest.mark.parametrize(
+        "pfad",
+        [
+            "requirements.txt",
+            "requirements-dev.txt",
+            "constraints.txt",
+            "web/CMakeLists.txt",
+            "docs/requirements.txt",
+            "Requirements.TXT",
+        ],
+    )
+    def test_konfig_mit_txt_endung_ist_nie_doku(tmp_path: Path, pfad: str) -> None:
+        probe = _doku_repo(tmp_path / "r", {pfad: "paket==1\n", "docs/notiz.txt": "hallo\n"})
+>       assert not sofort._ist_doku_datei(probe, "base", pfad)
+E       AssertionError: assert not True
+E        +  where True = <function _ist_doku_datei at 0x7ff1404f7ba0>(PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_konfig_mit_txt_endung_ist4/r'), 'base', 'docs/requirements.txt')
+E        +    where <function _ist_doku_datei at 0x7ff1404f7ba0> = sofort._ist_doku_datei
+
+tests/test_pruef_buendel_238_224_204_246.py:176: AssertionError
+__________ test_konfig_mit_txt_endung_ist_nie_doku[Requirements.TXT] ___________
+
+tmp_path = PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_konfig_mit_txt_endung_ist5')
+pfad = 'Requirements.TXT'
+
+    @pytest.mark.parametrize(
+        "pfad",
+        [
+            "requirements.txt",
+            "requirements-dev.txt",
+            "constraints.txt",
+            "web/CMakeLists.txt",
+            "docs/requirements.txt",
+            "Requirements.TXT",
+        ],
+    )
+    def test_konfig_mit_txt_endung_ist_nie_doku(tmp_path: Path, pfad: str) -> None:
+        probe = _doku_repo(tmp_path / "r", {pfad: "paket==1\n", "docs/notiz.txt": "hallo\n"})
+>       assert not sofort._ist_doku_datei(probe, "base", pfad)
+E       AssertionError: assert not True
+E        +  where True = <function _ist_doku_datei at 0x7ff1404f7ba0>(PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_konfig_mit_txt_endung_ist5/r'), 'base', 'Requirements.TXT')
+E        +    where <function _ist_doku_datei at 0x7ff1404f7ba0> = sofort._ist_doku_datei
+
+tests/test_pruef_buendel_238_224_204_246.py:176: AssertionError
+_______________ test_requirements_unter_doku_muster_prueft_voll ________________
+
+tmp_path = PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_requirements_unter_doku_m0')
+
+    def test_requirements_unter_doku_muster_prueft_voll(tmp_path: Path) -> None:
+        probe = sofort_test._angriff(
+            tmp_path / "req",
+            {"requirements.txt": "ok\n", "app.py": _liest("requirements.txt")},
+        )
+        sofort_test._erklaere(probe, ["docs/**", "*.txt"])
+        sofort_test._commit(probe, "requirements.txt", "kaputt\n")
+>       sofort_test._voll_rot(probe, sofort.NICHT_NUR_DOKU)
+
+tests/test_pruef_buendel_238_224_204_246.py:187: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+ordner = PosixPath('/tmp/pytest-of-<nutzer>/pytest-2901/test_requirements_unter_doku_m0/req')
+grund = 'nicht nur Doku geändert'
+
+    def _voll_rot(ordner: Path, grund: str) -> None:
+        code, zeile = _tuer(ordner)
+>       assert code == 1, zeile
+E       AssertionError: {'zeit': '2026-11-23T11:02:01+00:00', 'basis': '76350a1665e75087d7f3d4c1fd455930215be8ef', 'ziel': '9219a772f21b8a532bc6ae61b93147543f5ef3eb', 'urteil': 'grün', ...}
+E       assert 0 == 1
+
+tests/test_pruef_sofort_3b.py:484: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_pruef_buendel_238_224_204_246.py::test_laufmuster_greift_nicht_ueber_ordnergrenzen[.to-spawn/thermo_x/tief/d.json]
+FAILED tests/test_pruef_buendel_238_224_204_246.py::test_laufmuster_greift_nicht_ueber_ordnergrenzen[.to-spawn/stop-7/d.json]
+FAILED tests/test_pruef_buendel_238_224_204_246.py::test_laufmuster_greift_nicht_ueber_ordnergrenzen[.to-spawn/umzug-anfrage-3/tief/d.json]
+FAILED tests/test_pruef_buendel_238_224_204_246.py::test_laufmuster_greift_nicht_ueber_ordnergrenzen[.to-spawn/thermo_5/]
+FAILED tests/test_pruef_buendel_238_224_204_246.py::test_laufmuster_greift_nicht_ueber_ordnergrenzen[.to-spawn/stop-7/]
+FAILED tests/test_pruef_buendel_238_224_204_246.py::test_datei_im_unterordner_eines_laufmusters_erzwingt_voll
+FAILED tests/test_pruef_buendel_238_224_204_246.py::test_versteckte_datei_unter_laufmuster_ordner_zaehlt_im_schluessel
+FAILED tests/test_pruef_buendel_238_224_204_246.py::test_fremde_datei_im_pycache_eines_versteckten_ordners_zaehlt
+FAILED tests/test_pruef_buendel_238_224_204_246.py::test_node_modules_ohne_paketliste_gibt_keinen_schluessel[node_modules]
+FAILED tests/test_pruef_buendel_238_224_204_246.py::test_node_modules_ohne_paketliste_gibt_keinen_schluessel[web/sub/node_modules]
+FAILED tests/test_pruef_buendel_238_224_204_246.py::test_node_modules_ohne_paketliste_gibt_keinen_schluessel[ign/node_modules]
+FAILED tests/test_pruef_buendel_238_224_204_246.py::test_ausfuehrbar_bit_versteckter_datei_zaehlt
+FAILED tests/test_pruef_buendel_238_224_204_246.py::test_konfig_mit_txt_endung_ist_nie_doku[requirements.txt]
+FAILED tests/test_pruef_buendel_238_224_204_246.py::test_konfig_mit_txt_endung_ist_nie_doku[requirements-dev.txt]
+FAILED tests/test_pruef_buendel_238_224_204_246.py::test_konfig_mit_txt_endung_ist_nie_doku[constraints.txt]
+FAILED tests/test_pruef_buendel_238_224_204_246.py::test_konfig_mit_txt_endung_ist_nie_doku[web/CMakeLists.txt]
+FAILED tests/test_pruef_buendel_238_224_204_246.py::test_konfig_mit_txt_endung_ist_nie_doku[docs/requirements.txt]
+FAILED tests/test_pruef_buendel_238_224_204_246.py::test_konfig_mit_txt_endung_ist_nie_doku[Requirements.TXT]
+FAILED tests/test_pruef_buendel_238_224_204_246.py::test_requirements_unter_doku_muster_prueft_voll
+19 failed, 11 passed in 2.95s
+exit 1

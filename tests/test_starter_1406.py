@@ -103,7 +103,26 @@ def test_tuer_sperrt_anderes_skill_skript_unter_test(tmp_path: Path) -> None:
 
 #: Start-Stellen, die noch NICHT über ``starter.starte`` laufen. Seit Teil 2 von #1406 leer —
 #: neue Einträge nur als Übergang mit Ticket.
-REST_START: frozenset[tuple[str, str]] = frozenset()
+REST_START: frozenset[tuple[str, str]] = frozenset(
+    {
+        # 1:1-Übernahme, Angleichung folgt in #214 Teil B (Review-Hook startet noch roh)
+        ("review-hook/_hookbasis.py", "befehl"),
+        ("review-hook/tests/test_hooks.py", "Umgebung.hook"),
+        ("review-hook/tests/test_hooks.py", "Umgebung.route"),
+        ("review-hook/tests/test_schutz_runde6.py", "_innen_laufen"),
+        ("review-hook/tests/test_stop_runde5.py", "_beleg_echt"),
+        ("review-hook/tests/test_stop_runde5.py", "test_neue_datei_beleg_ueberlebt_commit"),
+        ("review-hook/tests/test_stop_runde5.py", "test_pruefen_cli_findet_beleg_nach_commit"),
+        ("review-hook/tests/test_wochenbericht.py", "_lauf"),
+        ("review-hook/wochenbericht.py", "bericht_erzeugen"),
+        # 1:1-Übernahme des Review-Werkzeugs (#329 P1): git/pytest/Skripte mit gefangener Ausgabe
+        ("review/_gemeinsam.py", "_blast_radius"),
+        ("review/rot_probe.py", "pruefen"),
+        ("review/rot_probe.py", "sammeln"),
+        ("review/tests/review_hilfen.py", "lauf"),
+        ("review/tests/test_rot_probe_platte.py", "toter_pid"),
+    }
+)
 
 #: Treffer der Suche, die nichts Echtes starten: Lese-/Prüfbefehle und Kind-Skripte des Skills
 #: (deren eigene Starts gehen wieder durch die Tür). Neue Einträge nur mit Grund.
@@ -113,19 +132,22 @@ KEIN_START = frozenset(
         ("to_spawn/hausmeister_windows.py", "_prozesse"),  # powershell -Command: CIM-Prozessliste lesen (#1373)
         ("skripte/sessions_stand.py", "prozesse_lesen"),  # powershell -Command: WMI-Prozessliste lesen
         ("to_spawn/setup.py", "pruefe_start"),  # Versions-Probe
-        ("to_spawn/docker_reste.py", "_docker"),  # docker image/builder prune, gefangene Ausgabe (#1372)
+        (
+            "to_spawn/konsole.py",
+            "lauf_daten",
+        ),  # Lese-Helfer, gefangene Ausgabe (docker prune #1372, git rev-parse, ssh git rev-parse)
+        ("to_spawn/docker_reste.py", "_docker"),  # docker image/builder prune über konsole.lauf_daten (#1372, #608)
         ("skripte/abschluss_paket.py", "wirkungskreis"),  # Repo-Skript, Ausgabe gelesen
         ("skripte/bau.py", "ticket_from_gh"),  # gh
         ("skripte/bau.py", "_gh_json"),  # gh
         ("skripte/leitstand.py", "starte"),  # Kind-Prozess mit gefangener Ausgabe
         ("skripte/spec_stand.py", "sh"),  # Lese-Befehle
-        ("skripte/hooks/staffel_stop.py", "ticket_offen"),  # gh
         ("to_spawn/aufpasser.py", "Aufpasser.sh"),  # Lese-Befehle (tmux list/capture); start=True → Tür
         ("to_spawn/aufseher_stand.py", "_tmux_echt"),  # tmux lesen
         # bash-Tür (#186): einzige subprocess-Stelle für bash; Aufrufer startklar._standard_laeufer
         # (Hook-/Trockenlauf-Probe, Ausgabe gelesen) und stand._lauf (Stand-Check/Push), keine Session
         ("to_spawn/bash_wahl.py", "lauf"),  # bash Probe-/Prüf-/Push-Befehle, wartet, keine Session
-        ("to_spawn/capo.py", "vps_kopf"),  # ssh lesen
+        ("to_spawn/capo.py", "vps_kopf"),  # ssh git rev-parse HEAD über konsole.lauf_daten (#608)
         ("to_spawn/capo.py", "_staging_zeilen"),  # ssh lesen
         ("to_spawn/capo.py", "tmux_fenster"),  # tmux list-windows
         ("to_spawn/capo.py", "_abschluss_lauf"),  # abschluss_paket.py
@@ -159,6 +181,7 @@ _START_PROGRAMM = {"claude", "claude.exe", "claude.cmd", "wt", "wt.exe"}
 #: ``ssh`` startet immer etwas auf dem Ziel: den Fern-Befehl oder eine Login-Shell (#1406, B1).
 _FERN_PROGRAMM = {"ssh", "ssh.exe"}
 _LAUF = {"run", "call", "check_call", "check_output"}
+_KONSOLE_MODUL = {"konsole", "to_spawn.konsole"}
 _SHELL = {"powershell", "pwsh", "cmd", "bash", "sh", "zsh"}
 _SHELL_BEFEHL = {"-c", "-lc", "-command", "/c", "/k"}
 
@@ -189,15 +212,24 @@ def _name(knoten: ast.expr) -> str:
 
 def _aliase(baum: ast.AST) -> dict[str, str]:
     """Lokaler Name → echter Name: ``import subprocess as sp`` → ``sp: subprocess``,
-    ``from subprocess import run as r`` → ``r: subprocess.run``."""
+    ``from subprocess import run as r`` → ``r: subprocess.run``,
+    ``from to_spawn import konsole as k`` → ``k: konsole``."""
     namen: dict[str, str] = {}
     for knoten in ast.walk(baum):
         if isinstance(knoten, ast.Import):
             for teil in knoten.names:
                 namen[teil.asname or teil.name] = teil.name
-        elif isinstance(knoten, ast.ImportFrom) and knoten.module in ("subprocess", "os", "asyncio", "pty"):
-            for teil in knoten.names:
-                namen[teil.asname or teil.name] = f"{knoten.module}.{teil.name}"
+        elif isinstance(knoten, ast.ImportFrom):
+            if knoten.module in ("subprocess", "os", "asyncio", "pty"):
+                for teil in knoten.names:
+                    namen[teil.asname or teil.name] = f"{knoten.module}.{teil.name}"
+            elif knoten.module in ("to_spawn.konsole", "konsole"):
+                for teil in knoten.names:
+                    namen[teil.asname or teil.name] = f"konsole.{teil.name}"
+            elif knoten.module in ("to_spawn", None):
+                for teil in knoten.names:
+                    if teil.name == "konsole":
+                        namen[teil.asname or teil.name] = "konsole"
     return namen
 
 
@@ -209,18 +241,19 @@ def _konstanten(knoten: ast.expr) -> list[object]:
 
 def _ist_start(aufruf: ast.Call, aliase: dict[str, str] | None = None) -> bool:
     """Popen, os-Start, tmux/wt-Fenster-Konstante, Claude/wt als Programm oder ``subprocess.run``
-    mit dynamischem Befehl. ``aliase`` löst ``import … as`` und ``from … import`` auf."""
+    bzw. ``konsole.lauf_daten`` mit dynamischem Befehl. ``aliase`` löst ``import … as`` und
+    ``from … import`` auf."""
     if any(k.arg == "start" and isinstance(k.value, ast.Constant) and k.value.value is True for k in aufruf.keywords):
         return False  # ``start=True``: Helfer leitet über die Tür (tmux_aufruf.aufrufen, Aufpasser.sh)
     aliase = aliase or {}
     traeger, fn = _traeger_fn(aufruf.func, aliase)
     if _ist_startfunktion(traeger, fn):
         return True
-    # ``args=`` zählt wie das erste Positionsargument
-    werte = [*aufruf.args, *(k.value for k in aufruf.keywords if k.arg == "args")]
+    # ``args=`` / ``befehl=`` zählt wie das erste Positionsargument
+    werte = [*aufruf.args, *(k.value for k in aufruf.keywords if k.arg in ("args", "befehl"))]
     if any(k in _TMUX_START for a in werte for k in _konstanten(a)):
         return True
-    if traeger == "subprocess" and fn in _LAUF and werte:
+    if ((traeger == "subprocess" and fn in _LAUF) or (traeger in _KONSOLE_MODUL and fn == "lauf_daten")) and werte:
         liste = werte[0]
         if (
             not isinstance(liste, (ast.List, ast.Tuple))
@@ -256,7 +289,11 @@ def _funde_in(quelle: str, rel: str) -> set[tuple[str, str]]:
         if not isinstance(kind.ctx, ast.Load):
             return False
         traeger, fn = _traeger_fn(kind, aliase)
-        return _ist_startfunktion(traeger, fn) or (traeger == "subprocess" and fn in _LAUF)
+        return (
+            _ist_startfunktion(traeger, fn)
+            or (traeger == "subprocess" and fn in _LAUF)
+            or (traeger in _KONSOLE_MODUL and fn == "lauf_daten")
+        )
 
     def besuche(knoten: ast.AST, ort: str) -> None:
         for kind in ast.iter_child_nodes(knoten):
@@ -271,15 +308,19 @@ def _funde_in(quelle: str, rel: str) -> set[tuple[str, str]]:
     return funde
 
 
-#: Werkzeug-Ordner überall ausgenommen; Tests nur im obersten ``tests/``.
+#: Werkzeug-Ordner überall ausgenommen; ``tests/`` und ``probe/`` nur auf der obersten Ebene.
+# ``probe``: Vorlagen-App für Probe-Läufe (#426 Teil F), läuft im Lauf-Repo ohne Skill und kann
+# die Tür ``to_spawn.starter`` dort nicht importieren (#447: enger auf parts[0] == "probe").
 _AUSSER = {".git", ".review", ".ruff_cache", "__pycache__", ".venv", "node_modules"}
+_AUSSER_OBEN = {"tests", "probe"}
 
 
 def _start_stellen(wurzel: Path = SKILL) -> set[tuple[str, str]]:
     funde: set[tuple[str, str]] = set()
-    for datei in wurzel.rglob("*.py"):  # ganzes Repo außer Tests und Werkzeug-Ordnern
+    for datei in wurzel.rglob("*.py"):  # ganzes Repo außer Tests, Probe-Vorlagen und Werkzeug-Ordnern
         rel = datei.relative_to(wurzel).as_posix()
-        if Path(rel).parts[0] == "tests" or _AUSSER & set(Path(rel).parts):
+        teile = Path(rel).parts
+        if teile[0] in _AUSSER_OBEN or _AUSSER & set(teile):
             continue
         if rel != "to_spawn/starter.py":
             funde |= _funde_in(datei.read_text(encoding="utf-8"), rel)
@@ -354,6 +395,15 @@ def test_pruef_test_sucht_auch_in_unter_ordnern_namens_tests(tmp_path: Path) -> 
         datei.parent.mkdir(parents=True, exist_ok=True)
         datei.write_text('import subprocess\ndef f():\n    subprocess.Popen(["x"])\n', encoding="utf-8")
     assert _start_stellen(tmp_path) == {("to_spawn/tests/probe.py", "f")}
+
+
+def test_pruef_test_sucht_auch_in_unter_ordnern_namens_probe(tmp_path: Path) -> None:
+    """#447: Nur der oberste ``probe/`` ist ausgenommen, nicht etwa ``to_spawn/probe/``."""
+    for rel in ("probe/x.py", "to_spawn/probe/x.py"):
+        datei = tmp_path / rel
+        datei.parent.mkdir(parents=True, exist_ok=True)
+        datei.write_text('import subprocess\ndef f():\n    subprocess.Popen(["x"])\n', encoding="utf-8")
+    assert _start_stellen(tmp_path) == {("to_spawn/probe/x.py", "f")}
 
 
 def test_keine_start_stelle_ausserhalb_der_tuer() -> None:
@@ -487,3 +537,31 @@ def test_direktstart_cmd_ziel_lehnt_anfuehrung_ab(tmp_path: Path) -> None:
 def test_batch_ziel_mit_punkt_oder_leerzeichen_am_ende(ziel: str) -> None:
     """End-Review G4: Windows schneidet ``.``/Leerzeichen am Ende ab und startet doch über cmd."""
     assert starter._endung(ziel) in {".cmd", ".bat"}
+
+
+@pytest.mark.parametrize(
+    "quelle",
+    [
+        'from to_spawn import konsole\ndef f():\n    konsole.lauf_daten(["claude", "-p", "x"])',
+        'from to_spawn import konsole\ndef f():\n    konsole.lauf_daten(["wt", "new-tab", "x"])',
+        'from to_spawn import konsole\ndef f(z):\n    konsole.lauf_daten(["ssh", "bau-server", z])',
+        'from to_spawn import konsole\ndef f(z):\n    konsole.lauf_daten(["bash", "-lc", z])',
+        "from to_spawn import konsole\ndef f(befehl):\n    konsole.lauf_daten(befehl)",
+        'from to_spawn import konsole\ndef f():\n    konsole.lauf_daten(befehl=["claude"])',
+        'from to_spawn import konsole as k\ndef f():\n    k.lauf_daten(["claude"])',
+        "from . import konsole as k\ndef f(befehl):\n    k.lauf_daten(befehl)",
+        'from to_spawn.konsole import lauf_daten\ndef f():\n    lauf_daten(["claude"])',
+        'from .konsole import lauf_daten as ld\ndef f():\n    ld(["ssh", "h", "x"])',
+        'import to_spawn.konsole as k\ndef f():\n    k.lauf_daten(["claude"])',
+        'from to_spawn import konsole\ndef f():\n    lauf = konsole.lauf_daten\n    lauf(["x"])',
+    ],
+)
+def test_pruef_test_meldet_start_ueber_konsole_lauf_daten(quelle: str) -> None:
+    """#608 (2): ``konsole.lauf_daten`` ist nur für Lese-Befehle; Starts/dynamische Befehle fallen auf."""
+    assert _funde_in(quelle, "probe.py") == {("probe.py", "f")}
+
+
+def test_pruef_test_laesst_lese_befehl_ueber_konsole_lauf_daten_durch() -> None:
+    """#608 (2): Fester Lese-Befehl über ``konsole.lauf_daten`` bleibt erlaubt."""
+    quelle = 'from to_spawn import konsole\ndef f():\n    konsole.lauf_daten(["git", "rev-parse", "HEAD"])\n'
+    assert _funde_in(quelle, "probe.py") == set()

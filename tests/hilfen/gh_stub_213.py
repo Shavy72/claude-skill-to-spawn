@@ -56,6 +56,8 @@ def _issue(nummer: str, daten: dict) -> dict:
         "assignees": [{"login": name} for name in eintrag.get("assignees", [])],
         "labels": [{"name": name} for name in eintrag.get("labels", [])],
         "state_reason": eintrag.get("state_reason"),
+        # CLI-Form (``gh issue view --json stateReason``) nur, wenn ein Test sie setzt (#279 P6b).
+        **({"stateReason": eintrag["stateReason"]} if "stateReason" in eintrag else {}),
     }
 
 
@@ -79,6 +81,7 @@ def _kommentare(nummer: str, daten: dict) -> list[dict]:
 
 
 def main() -> int:
+    sys.stdout.reconfigure(encoding="utf-8")  # wie echtes gh; Windows-Pipe wäre cp1252 (#553)
     args = sys.argv[1:]
     protokoll = os.environ.get("GH_STUB_PROTOKOLL")
     if protokoll:

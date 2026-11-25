@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO
 
-from . import config, context_mode, probesitz
+from . import config, context_mode, konsole, probesitz, prozessbaum
 
 log = logging.getLogger("to_spawn.setup")
 
@@ -48,9 +48,7 @@ ROLLEN: dict[str, str] = {
 }
 
 SCHLUSS_SATZ = "Laufende Sessions bleiben unberührt; neue Starts lesen die Werte."
-ERSTES_MAL = (
-    "Erstes Mal in diesem Repo: `to_spawn.py setup` passt Terminal/Modell/Effort an."
-)
+ERSTES_MAL = "Erstes Mal in diesem Repo: `to_spawn.py setup` passt Terminal/Modell/Effort an."
 
 Finde = Callable[[str], "str | None"]
 PruefeStart = Callable[[str, str], "str | None"]
@@ -120,9 +118,7 @@ _TERMINALS: list[_Terminal] = [
         None,
         None,
     ),
-    _Terminal(
-        "pane", "Pane", "gleiche Bedienung auf allen Systemen", _ALLE, None, None
-    ),
+    _Terminal("pane", "Pane", "gleiche Bedienung auf allen Systemen", _ALLE, None, None),
     _Terminal(
         "wezterm",
         "WezTerm",
@@ -150,7 +146,12 @@ def pruefe_start(programm: str, pfad: str) -> str | None:
         return None
     try:
         ergebnis = subprocess.run(
-            [pfad, arg], capture_output=True, text=True, timeout=5, check=False
+            [pfad, arg],
+            capture_output=True,
+            **konsole.UNTERPROZESS_TEXT,
+            timeout=5,
+            check=False,
+            **prozessbaum.fensterlos(),
         )
     except (OSError, subprocess.SubprocessError) as fehler:
         return f"{programm} {arg} startet nicht: {fehler}"
@@ -171,9 +172,7 @@ def terminal_optionen(
         if system not in terminal.plattformen:
             continue
         if terminal.programm is None:
-            optionen.append(
-                Option(terminal.schluessel, terminal.name, terminal.vorteil, "geplant")
-            )
+            optionen.append(Option(terminal.schluessel, terminal.name, terminal.vorteil, "geplant"))
             continue
         pfad = finde(terminal.programm)
         if not pfad:
@@ -183,20 +182,14 @@ def terminal_optionen(
             status, grund = ("nicht installiert", fehler) if fehler else ("bereit", "")
         if grund:
             log.info("Terminal %s: %s", terminal.schluessel, grund)
-        optionen.append(
-            Option(terminal.schluessel, terminal.name, terminal.vorteil, status, grund)
-        )
+        optionen.append(Option(terminal.schluessel, terminal.name, terminal.vorteil, status, grund))
     return optionen
 
 
 def waehlbare_terminals(plattform: str | None = None) -> list[str]:
     """Schlüssel der V1-Adapter dieser Plattform (ohne Live-Prüfung)."""
     system = plattform_von(plattform)
-    return [
-        t.schluessel
-        for t in _TERMINALS
-        if system in t.plattformen and t.programm is not None
-    ]
+    return [t.schluessel for t in _TERMINALS if system in t.plattformen and t.programm is not None]
 
 
 def standard_terminal(konfig: dict[str, Any], plattform: str | None = None) -> str:
@@ -332,8 +325,7 @@ def fuehre_dialog(
                 ausgabe,
             )
         ausgabe.write(
-            f"\nAufseher läuft immer auf {modell_name(FLAGGSCHIFF)} ({FLAGGSCHIFF}), "
-            "gefragt wird nur der Effort.\n"
+            f"\nAufseher läuft immer auf {modell_name(FLAGGSCHIFF)} ({FLAGGSCHIFF}), gefragt wird nur der Effort.\n"
         )
         ergebnis["effort"]["waechter"] = _frage(
             "Effort für Aufseher:",
@@ -369,9 +361,7 @@ def _schreibe_atomar(datei: Path, daten: dict[str, Any]) -> None:
         modus = stat.S_IMODE(datei.stat().st_mode)
     except FileNotFoundError:
         modus = 0o644
-    griff, tmp = tempfile.mkstemp(
-        prefix=".config-", suffix=".tmp", dir=str(datei.parent)
-    )
+    griff, tmp = tempfile.mkstemp(prefix=".config-", suffix=".tmp", dir=str(datei.parent))
     try:
         with os.fdopen(griff, "w", encoding="utf-8") as strom:
             strom.write(json.dumps(daten, indent=2, ensure_ascii=False) + "\n")
@@ -397,15 +387,11 @@ def _terminal_objekt(alt: Any) -> dict[str, Any]:
             if alt in adapter:
                 objekt[system] = alt
     elif alt is not None:
-        log.warning(
-            "Feld terminal ist weder Text noch Objekt — Standards je Plattform."
-        )
+        log.warning("Feld terminal ist weder Text noch Objekt — Standards je Plattform.")
     return objekt
 
 
-def speichere(
-    repo: Path | None, aenderungen: dict[str, Any], plattform: str | None = None
-) -> Path:
+def speichere(repo: Path | None, aenderungen: dict[str, Any], plattform: str | None = None) -> Path:
     """Setzt nur ``terminal.<plattform>``, ``modelle.*``, ``effort.*`` — der Rest bleibt.
 
     Fehlt die Datei, sind die Vorgaben die Basis. Eine unlesbare Datei wird nie
@@ -487,14 +473,7 @@ def zeige(
         zeilen.append("  fehlt (Datei gibt es noch nicht)")
     else:
         terminal = roh.get("terminal")
-        zeilen.append(
-            "  terminal: "
-            + (
-                "fehlt"
-                if terminal is None
-                else json.dumps(terminal, ensure_ascii=False)
-            )
-        )
+        zeilen.append("  terminal: " + ("fehlt" if terminal is None else json.dumps(terminal, ensure_ascii=False)))
         for rolle, klartext in ROLLEN.items():
             teile = []
             for feld in ("modelle", "effort"):
@@ -507,8 +486,7 @@ def zeige(
         modell = vorgabe["modelle"][rolle]
         fest = ", fest" if rolle == "waechter" else ""
         zeilen.append(
-            f"  {rolle} ({klartext}): {modell_name(modell)} ({modell}{fest}), "
-            f"Effort {vorgabe['effort'][rolle]}"
+            f"  {rolle} ({klartext}): {modell_name(modell)} ({modell}{fest}), Effort {vorgabe['effort'][rolle]}"
         )
     zeilen += ["", probesitz_block(repo or datei.resolve().parent.parent)]
     return "\n".join(zeilen)
@@ -532,9 +510,7 @@ def erster_start(
     if datei.exists():
         return datei
     if ist_tty:
-        aenderungen = fuehre_dialog(
-            config.lade(repo), eingabe, ausgabe, plattform, finde, pruefe_start
-        )
+        aenderungen = fuehre_dialog(config.lade(repo), eingabe, ausgabe, plattform, finde, pruefe_start)
         datei = speichere(repo, aenderungen, plattform)
         ausgabe.write(f"Gespeichert: {datei}\n")
         ausgabe.write(probesitz_block(config.repo_wurzel(repo)) + "\n")

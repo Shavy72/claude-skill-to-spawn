@@ -43,9 +43,7 @@ class Laeufer:
         self.antworten = antworten or {}
         self.aufrufe: list[list[str]] = []
 
-    def __call__(
-        self, argv: list[str], **_: Any
-    ) -> subprocess.CompletedProcess[str]:
+    def __call__(self, argv: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
         self.aufrufe.append(list(argv))
         text = " ".join(str(teil) for teil in argv)
         for praefix, (code, stdout) in self.antworten.items():
@@ -120,23 +118,16 @@ def test_zustand_laden_speichern(repo: Path, tmp_path: Path) -> None:
 
 def test_zeige_zeilen_gruen_rot_offen() -> None:
     zustand: dict[str, Any] = {"punkte": {}, "letzter_lauf": "2026-09-21T10:00:00"}
-    zustand = probesitz.eintragen(
-        zustand, probesitz.Ergebnis(1, probesitz.PUNKTE[0], True, "loggedIn true")
-    )
+    zustand = probesitz.eintragen(zustand, probesitz.Ergebnis(1, probesitz.PUNKTE[0], True, "loggedIn true"))
     zustand = probesitz.eintragen(
         zustand,
-        probesitz.Ergebnis(
-            3, probesitz.PUNKTE[2], False, "staging.url fehlt", "staging.url eintragen"
-        ),
+        probesitz.Ergebnis(3, probesitz.PUNKTE[2], False, "staging.url fehlt", "staging.url eintragen"),
     )
     text = probesitz.zeige(zustand)
     zeilen = text.splitlines()
     assert zeilen[0] == "Probesitz (7 Punkte):"
     assert "  ✓ 1 Login trägt — loggedIn true" in zeilen
-    assert (
-        "  ✗ 3 Playwright gegen Staging — staging.url fehlt · fehlt noch: staging.url eintragen"
-        in zeilen
-    )
+    assert "  ✗ 3 Playwright gegen Staging — staging.url fehlt · fehlt noch: staging.url eintragen" in zeilen
     assert "  · 4 Sandbox sperrt außerhalb Worktree — noch nie geprüft" in zeilen
     assert zeilen[-1].startswith("  Stand: ")
 
@@ -223,17 +214,13 @@ def test_p3_login_seite_200_mit_zugangsdatei(repo: Path, tmp_path: Path) -> None
 def test_p3_status_ungleich_200(repo: Path) -> None:
     konfig = _konfig(repo)
     konfig["staging"]["url"] = "https://staging.example/"
-    erg = probesitz.pruefe_staging(
-        konfig, repo, seite_laden=lambda *_: (502, "Bad Gateway")
-    )
+    erg = probesitz.pruefe_staging(konfig, repo, seite_laden=lambda *_: (502, "Bad Gateway"))
     assert not erg.ok and "502" in erg.grund
 
 
 def test_lies_zugang_beide_formate() -> None:
     assert probesitz.lies_zugang("user:pa:ss\n") == ("", "user", "pa:ss")
-    assert probesitz.lies_zugang(
-        "# Kommentar\nadresse = https://x\nnutzer=u\npasswort=p\n"
-    ) == ("https://x", "u", "p")
+    assert probesitz.lies_zugang("# Kommentar\nadresse = https://x\nnutzer=u\npasswort=p\n") == ("https://x", "u", "p")
     assert probesitz.lies_zugang("") == ("", "", "")
 
 
@@ -242,9 +229,7 @@ def test_lies_zugang_beide_formate() -> None:
 
 def test_p4_srt_fehlt(repo: Path) -> None:
     laeufer = Laeufer()
-    erg = probesitz.pruefe_sandbox(
-        config.lade(repo), repo, laeufer=laeufer, which=_which_nichts
-    )
+    erg = probesitz.pruefe_sandbox(config.lade(repo), repo, laeufer=laeufer, which=_which_nichts)
     assert not erg.ok
     assert "srt + bubblewrap installieren" in erg.fehlt_noch
     assert laeufer.aufrufe == []
@@ -269,9 +254,7 @@ def test_p4_sperrt_aussen(repo: Path, tmp_path: Path) -> None:
     heim = tmp_path / "heim"
     heim.mkdir()
     laeufer = _sperr_laeufer(aussen_exit=1, aussen_anlegen=False)
-    erg = probesitz.pruefe_sandbox(
-        config.lade(repo), repo, laeufer=laeufer, which=_which_alles, home=heim
-    )
+    erg = probesitz.pruefe_sandbox(config.lade(repo), repo, laeufer=laeufer, which=_which_alles, home=heim)
     assert erg.ok, erg
     assert "modus aus" in erg.grund  # Hinweis, kein ✗
     assert len(laeufer.aufrufe) == 2
@@ -284,9 +267,7 @@ def test_p4_aussen_schreibbar_ist_rot(repo: Path, tmp_path: Path) -> None:
     heim = tmp_path / "heim"
     heim.mkdir()
     laeufer = _sperr_laeufer(aussen_exit=0, aussen_anlegen=True)
-    erg = probesitz.pruefe_sandbox(
-        config.lade(repo), repo, laeufer=laeufer, which=_which_alles, home=heim
-    )
+    erg = probesitz.pruefe_sandbox(config.lade(repo), repo, laeufer=laeufer, which=_which_alles, home=heim)
     assert not erg.ok
     assert "außerhalb" in erg.grund
 
@@ -300,10 +281,44 @@ def test_p4_innen_gesperrt_ist_rot(repo: Path, tmp_path: Path) -> None:
             self.aufrufe.append(list(argv))
             return subprocess.CompletedProcess(argv, 1, "", "nein")
 
-    erg = probesitz.pruefe_sandbox(
-        config.lade(repo), repo, laeufer=AllesZu(), which=_which_alles, home=heim
-    )
+    erg = probesitz.pruefe_sandbox(config.lade(repo), repo, laeufer=AllesZu(), which=_which_alles, home=heim)
     assert not erg.ok and "innerhalb" in erg.grund
+
+
+def test_p4_eigener_sandbox_heimordner_je_lauf_260(repo: Path, tmp_path: Path) -> None:
+    """``pruefe_sandbox`` bindet nie das gemeinsame ``<home>/.claude`` ein (#260)."""
+    heim = tmp_path / "heim"
+    (heim / ".claude").mkdir(parents=True)
+    settings_inhalte: list[dict[str, Any]] = []
+
+    class Beobachter(Laeufer):
+        def __call__(self, argv: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+            self.aufrufe.append(list(argv))
+            datei = Path(argv[argv.index("--settings") + 1])
+            ziel = Path(argv[-1])
+            if "aussen" in ziel.parent.name:
+                return subprocess.CompletedProcess(argv, 1, "", "Read-only file system")
+            settings_inhalte.append(json.loads(datei.read_text(encoding="utf-8")))
+            ziel.touch()
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+    laeufer = Beobachter()
+    for _ in range(2):
+        erg = probesitz.pruefe_sandbox(config.lade(repo), repo, laeufer=laeufer, which=_which_alles, home=heim)
+        assert erg.ok, erg
+
+    assert len(settings_inhalte) == 2
+    gemeinsam_claude = str(heim / ".claude")
+    claude_pfade: list[str] = []
+    for daten in settings_inhalte:
+        fs = daten["filesystem"]
+        assert gemeinsam_claude not in fs["allowWrite"]
+        assert str(heim / ".claude" / "settings.local.json") not in fs["denyWrite"]
+        eintraege = [p for p in fs["denyWrite"] if p.endswith("settings.local.json")]
+        assert len(eintraege) == 1
+        claude_pfade.append(eintraege[0])
+    assert claude_pfade[0] != claude_pfade[1], "Jeder Lauf braucht einen eigenen Ort"
+    assert not list(heim.glob(".probesitz-*")), "Temp-Ordner werden aufgeräumt"
 
 
 # --- Punkte 5/6 aus dem Bau-Log ---------------------------------------------------
@@ -312,9 +327,7 @@ def test_p4_innen_gesperrt_ist_rot(repo: Path, tmp_path: Path) -> None:
 def _log_schreiben(repo: Path, ticket: str, zeilen: list[dict[str, Any]]) -> None:
     datei = bau_log.lauf_pfad(repo, ticket)
     datei.parent.mkdir(parents=True, exist_ok=True)
-    datei.write_text(
-        "".join(json.dumps(z, ensure_ascii=False) + "\n" for z in zeilen), encoding="utf-8"
-    )
+    datei.write_text("".join(json.dumps(z, ensure_ascii=False) + "\n" for z in zeilen), encoding="utf-8")
 
 
 def test_p5_p6_aus_bau_log_gruen(repo: Path) -> None:
@@ -322,11 +335,38 @@ def test_p5_p6_aus_bau_log_gruen(repo: Path) -> None:
         repo,
         "999",
         [
-            {"ts": "2026-09-21T10:00:00+02:00", "typ": "session_start", "ticket": "999", "session_id": "a1", "staffel": 1},
-            {"ts": "2026-09-21T10:01:00+02:00", "typ": "session_ende", "ticket": "999", "session_id": "a1", "staffel": 1, "modell": "claude-sonnet-5", "tokens": {"gesamt": 12345}},
+            {
+                "ts": "2026-09-21T10:00:00+02:00",
+                "typ": "session_start",
+                "ticket": "999",
+                "session_id": "a1",
+                "staffel": 1,
+            },
+            {
+                "ts": "2026-09-21T10:01:00+02:00",
+                "typ": "session_ende",
+                "ticket": "999",
+                "session_id": "a1",
+                "staffel": 1,
+                "modell": "claude-sonnet-5",
+                "tokens": {"gesamt": 12345},
+            },
             {"ts": "2026-09-21T10:01:01+02:00", "typ": "handoff", "ticket": "999", "session_id": "a1", "staffel": 1},
-            {"ts": "2026-09-21T10:02:00+02:00", "typ": "session_start", "ticket": "999", "session_id": "b2", "staffel": 2},
-            {"ts": "2026-09-21T10:03:00+02:00", "typ": "session_ende", "ticket": "999", "session_id": "b2", "staffel": 2, "tokens": {"gesamt": 500}},
+            {
+                "ts": "2026-09-21T10:02:00+02:00",
+                "typ": "session_start",
+                "ticket": "999",
+                "session_id": "b2",
+                "staffel": 2,
+            },
+            {
+                "ts": "2026-09-21T10:03:00+02:00",
+                "typ": "session_ende",
+                "ticket": "999",
+                "session_id": "b2",
+                "staffel": 2,
+                "tokens": {"gesamt": 500},
+            },
         ],
     )
     p5, p6 = probesitz.werte_bau_log(bau_log.lese(repo, "999"))
@@ -341,8 +381,21 @@ def test_p5_p6_ohne_token_und_ohne_staffel(repo: Path) -> None:
         repo,
         "998",
         [
-            {"ts": "2026-09-21T10:00:00+02:00", "typ": "session_start", "ticket": "998", "session_id": "a1", "staffel": 1},
-            {"ts": "2026-09-21T10:01:00+02:00", "typ": "session_ende", "ticket": "998", "session_id": "a1", "staffel": 1, "tokens": {"gesamt": 0}},
+            {
+                "ts": "2026-09-21T10:00:00+02:00",
+                "typ": "session_start",
+                "ticket": "998",
+                "session_id": "a1",
+                "staffel": 1,
+            },
+            {
+                "ts": "2026-09-21T10:01:00+02:00",
+                "typ": "session_ende",
+                "ticket": "998",
+                "session_id": "a1",
+                "staffel": 1,
+                "tokens": {"gesamt": 0},
+            },
         ],
     )
     p5, p6 = probesitz.werte_bau_log(bau_log.lese(repo, "998"))
@@ -405,9 +458,7 @@ def test_wegwerf_raeumt_auch_bei_fehler_auf(repo: Path, tmp_path: Path, monkeypa
 def _alles_gruen_bis_6() -> dict[str, Any]:
     zustand: dict[str, Any] = {}
     for nummer in range(1, 7):
-        zustand = probesitz.eintragen(
-            zustand, probesitz.Ergebnis(nummer, probesitz.PUNKTE[nummer - 1], True, "ok")
-        )
+        zustand = probesitz.eintragen(zustand, probesitz.Ergebnis(nummer, probesitz.PUNKTE[nummer - 1], True, "ok"))
     return zustand
 
 
@@ -415,9 +466,7 @@ def test_p7_blockiert_bei_offenen_punkten(repo: Path) -> None:
     zustand = probesitz.eintragen({}, probesitz.Ergebnis(1, probesitz.PUNKTE[0], True, "ok"))
     konfig = _konfig(repo)
     konfig["mail"]["befehl"] = ["true"]
-    erg = probesitz.pruefe_mail(
-        repo, konfig, zustand, melden=lambda *a, **k: pytest.fail("keine Mail bei Rot")
-    )
+    erg = probesitz.pruefe_mail(repo, konfig, zustand, melden=lambda *a, **k: pytest.fail("keine Mail bei Rot"))
     assert not erg.ok
     assert erg.grund.startswith("Punkte offen: 2, 3, 4, 5, 6")
     assert erg.fehlt_noch == "erst die offenen Punkte"
@@ -463,9 +512,7 @@ def test_p7_darf_bei_nur_kritisch_raus(repo: Path) -> None:
 
 def test_laufen_einzelne_punkte_speichern_zustand(repo: Path) -> None:
     laeufer = Laeufer({"auth status": (0, json.dumps({"loggedIn": True}))})
-    ergebnisse = probesitz.laufen(
-        repo, config.lade(repo), punkte={1, 3}, laeufer=laeufer, which=_which_alles
-    )
+    ergebnisse = probesitz.laufen(repo, config.lade(repo), punkte={1, 3}, laeufer=laeufer, which=_which_alles)
     assert [e.nummer for e in ergebnisse] == [1, 3]
     zustand = probesitz.lade_zustand(repo)
     assert zustand["punkte"]["1"]["ok"] is True

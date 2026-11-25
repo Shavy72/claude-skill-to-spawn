@@ -27,10 +27,10 @@ import sys
 import tempfile
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
-from to_spawn import capo, config, gh, hausmeister, inventur, temp_ordner
+from to_spawn import capo, config, gh, hausmeister, inventur, konsole, prozessbaum, temp_ordner
 
 log = logging.getLogger("to_spawn.nest")
 
@@ -138,8 +138,9 @@ def _git(ordner: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", "-C", str(ordner), *args],
         capture_output=True,
-        text=True,
+        **konsole.UNTERPROZESS_PFADE,
         check=False,
+        **prozessbaum.fensterlos(),
     )
 
 
@@ -246,6 +247,7 @@ def _auschecken_ohne_beleg_bilder(worktree: Path, belege: str) -> None:
         ["git", "-C", str(worktree), "ls-files", "-z", "--", belege],
         capture_output=True,
         check=False,
+        **prozessbaum.fensterlos(),
     )
     if alte.returncode != 0:
         raise NestFehler(f"git ls-files scheiterte: {alte.stderr.decode(errors='replace').strip()[:300]}")
@@ -256,6 +258,7 @@ def _auschecken_ohne_beleg_bilder(worktree: Path, belege: str) -> None:
             input=b"\0".join(bilder) + b"\0",
             capture_output=True,
             check=False,
+            **prozessbaum.fensterlos(),
         )
         if markiert.returncode != 0:
             fehler = markiert.stderr.decode(errors="replace").strip()[:300]
@@ -324,48 +327,105 @@ GIT_HOOKS_SPERRE = Path("scripts") / "hooks" / "pre-push-master-sperre.sh"
 GIT_HOOKS_TIMEOUT_S = 60
 
 
-def git_hooks_einrichten(klon: Path) -> bool:
-    """Richtet die Git-Hooks des Projekts ein (u. a. pre-push: master-Sperre, #1442/#1445).
+def _relativer_git_pfad(roh: str) -> PurePosixPath | None:
+    """Relativer POSIX-Pfad für ``git show <ref>:<pfad>`` (#413); ``..``/absolut/leer → ``None``."""
+    normal = roh.strip().replace("\\", "/")
+    if not normal or normal.startswith("/") or (len(normal) >= 2 and normal[1] == ":"):
+        return None
+    pfad = PurePosixPath(normal)
+    if pfad.is_absolute() or not pfad.name or ".." in pfad.parts or "." in pfad.parts:
+        return None
+    return pfad
+
+
+def _git_show_bytes(klon: Path, ref: str, datei: PurePosixPath) -> bytes | None:
+    """Liest ``ref:datei`` aus dem Klon; fehlt die Datei → ``None``; Git-Fehler → wirft ``OSError``/``TimeoutExpired``."""
+    gezeigt = subprocess.run(
+        ["git", "-C", str(klon), "show", f"{ref}:{datei.as_posix()}"],
+        capture_output=True,
+        timeout=GIT_HOOKS_TIMEOUT_S,
+        check=False,
+        **prozessbaum.fensterlos(),
+    )
+    return gezeigt.stdout if gezeigt.returncode == 0 else None
+
+
+def git_hooks_einrichten(klon: Path, konfig: Mapping[str, Any] | None = None) -> bool:
+    """Richtet die Git-Hooks des Projekts ein (u. a. pre-push: master-Sperre, #1442/#1445/#413).
 
     Aufruf vor jedem Session-Start (``bau.py``, ``wache.py``, CLI ``nest sandbox``),
-    unabhängig vom Sandbox-Modus. Installer und Sperre kommen aus dem Git-Objekt
-    ``origin/<hauptzweig>`` des Klons, nie aus dem Arbeitsordner: den darf eine Session
-    beschreiben, der Installer läuft aber mit den Rechten des Starters (#1445 B2).
-    Die Hooks liegen im gemeinsamen Git-Ordner, also gilt ein Aufruf für Hauptklon und
-    alle Worktrees. Idempotent. Fehlt der Installer auf origin (alter Stand, fremdes
-    Repo) oder scheitert er: Warnung im Log, ``False``, kein Abbruch.
+    unabhängig vom Sandbox-Modus. Der Installer-Pfad kommt aus ``.to-spawn/config.json``
+    (``git_hooks.installer``, optional ``git_hooks.sperre``). Fehlt der Eintrag, wird
+    abwärtskompatibel noch der Standard-Pfad geprüft, bei Fehlen aber still übersprungen
+    (INFO statt WARNING, kein app-spezifischer Pfad im Log). Ist ein Pfad eingetragen
+    und fehlt auf ``origin/<hauptzweig>`` oder scheitert der Lauf: Warnung, ``False``,
+    kein Abbruch. Installer und Sperre kommen immer aus ``origin/<hauptzweig>``, nie aus
+    dem Arbeitsordner (#1445 B2).
     """
+    konfig_daten = konfig if konfig is not None else config.lade(klon)
+    installer_cfg, sperre_cfg = config.git_hooks_konfig(konfig_daten)
+    konfiguriert = bool(installer_cfg)
+    if konfiguriert:
+        installer_pfad = _relativer_git_pfad(installer_cfg)
+        if installer_pfad is None:
+            log.warning("Push-Sperre nicht eingerichtet: ungültiger Pfad %r in git_hooks.installer", installer_cfg)
+            return False
+        if sperre_cfg:
+            sperre_pfad = _relativer_git_pfad(sperre_cfg)
+            if sperre_pfad is None:
+                log.warning("Push-Sperre nicht eingerichtet: ungültiger Pfad %r in git_hooks.sperre", sperre_cfg)
+                return False
+        else:
+            sperre_pfad = installer_pfad.parent / GIT_HOOKS_SPERRE.name
+    else:
+        installer_pfad = PurePosixPath(GIT_HOOKS_INSTALLER.as_posix())
+        sperre_pfad = PurePosixPath(GIT_HOOKS_SPERRE.as_posix())
+
     ref = f"origin/{gh.hauptzweig(klon)}"
-    inhalte: dict[str, bytes] = {}
-    for datei in (GIT_HOOKS_INSTALLER, GIT_HOOKS_SPERRE):
-        try:
-            gezeigt = subprocess.run(
-                ["git", "-C", str(klon), "show", f"{ref}:{datei.as_posix()}"],
-                capture_output=True,
-                timeout=GIT_HOOKS_TIMEOUT_S,
-                check=False,
+    try:
+        installer_inhalt = _git_show_bytes(klon, ref, installer_pfad)
+    except (OSError, subprocess.TimeoutExpired) as fehler:
+        log.warning("Push-Sperre nicht eingerichtet: git show %s scheiterte (%s)", ref, fehler)
+        return False
+    if installer_inhalt is None:
+        if konfiguriert:
+            log.warning(
+                "Push-Sperre nicht eingerichtet: %s fehlt auf %s im Klon %s",
+                installer_pfad.as_posix(),
+                ref,
+                klon,
             )
+        else:
+            log.info(
+                "Push-Sperre übersprungen: kein git_hooks.installer in .to-spawn/config.json (Hook-Installer fehlt auf %s)",
+                ref,
+            )
+        return False
+
+    inhalte: dict[str, bytes] = {installer_pfad.name: installer_inhalt}
+    if sperre_pfad != installer_pfad:
+        try:
+            sperre_inhalt = _git_show_bytes(klon, ref, sperre_pfad)
         except (OSError, subprocess.TimeoutExpired) as fehler:
             log.warning("Push-Sperre nicht eingerichtet: git show %s scheiterte (%s)", ref, fehler)
             return False
-        if gezeigt.returncode == 0:
-            inhalte[datei.name] = gezeigt.stdout
-    if GIT_HOOKS_INSTALLER.name not in inhalte:
-        log.warning("Push-Sperre nicht eingerichtet: %s fehlt auf %s im Klon %s", GIT_HOOKS_INSTALLER, ref, klon)
-        return False
+        if sperre_inhalt is not None:
+            inhalte[sperre_pfad.name] = sperre_inhalt
+
     # Fehlt nur die Sperre: Installer legt den Hook trotzdem an, der warnt dann beim Push.
     # Temp-Ordner + Schreiben mit im try: Platte voll/Rechte dürfen den Start nie abbrechen.
     try:
         with tempfile.TemporaryDirectory(prefix="to-spawn-hooks-") as tmp:
             for name, inhalt in inhalte.items():
                 (Path(tmp) / name).write_bytes(inhalt)
-            installer = Path(tmp) / GIT_HOOKS_INSTALLER.name
+            installer = Path(tmp) / installer_pfad.name
             ergebnis = subprocess.run(
                 ["sh", str(installer), str(klon)],
                 capture_output=True,
-                text=True,
+                **konsole.UNTERPROZESS_TEXT,
                 timeout=GIT_HOOKS_TIMEOUT_S,
                 check=False,
+                **prozessbaum.fensterlos(),
             )
     except (OSError, subprocess.TimeoutExpired) as fehler:
         log.warning("Push-Sperre nicht eingerichtet: Installer von %s scheiterte (%s)", ref, fehler)
@@ -531,9 +591,11 @@ def _bws_geheimnisse(bws: str, projekt: str | None, token: str, environ: Mapping
     befehl = [bws, "secret", "list", *([projekt] if projekt else []), "--output", "json"]
     umgebung = {**environ, "BWS_ACCESS_TOKEN": token}
     try:
-        ergebnis = subprocess.run(befehl, env=umgebung, capture_output=True, text=True, check=False, timeout=120)
+        ergebnis = konsole.lauf_daten(befehl, env=umgebung, check=False, timeout=120)
     except (OSError, subprocess.TimeoutExpired) as fehler:
         raise NestFehler(f"bws nicht startbar ({type(fehler).__name__})") from fehler
+    if ergebnis is None:
+        raise NestFehler("bws-Ausgabe nicht lesbar (kein UTF-8)")
     if ergebnis.returncode != 0:
         grund = ergebnis.stderr.strip().replace(token, "***")[:200]
         raise NestFehler(f"bws scheiterte (Exit {ergebnis.returncode}): {grund}")
@@ -971,7 +1033,7 @@ def richte_parser_ein(unter: Any) -> None:
     nest_unter = p_nest.add_subparsers(dest="nest_befehl", required=True)
 
     p_on = nest_unter.add_parser("onboarding", help="~/.claude.json: Erststart + Vertrauen")
-    p_on.add_argument("--claude-json", type=Path, default=Path.home() / ".claude.json")
+    p_on.add_argument("--claude-json", type=Path, default=None, help="Vorgabe: ~/.claude.json")
     p_on.add_argument("--trust", action="append", default=[], help="Ordner (mehrfach)")
     p_on.add_argument("--theme", default="dark")
     p_on.add_argument("--kanal", default="terminal_bell", help="preferredNotifChannel")
@@ -1001,7 +1063,7 @@ def richte_parser_ein(unter: Any) -> None:
 
     p_mi = nest_unter.add_parser("mcp-import", help="MCP-Einträge in ~/.claude.json mischen")
     p_mi.add_argument("--quelle", type=Path, required=True)
-    p_mi.add_argument("--claude-json", type=Path, default=Path.home() / ".claude.json")
+    p_mi.add_argument("--claude-json", type=Path, default=None, help="Vorgabe: ~/.claude.json")
 
     p_aw = nest_unter.add_parser("auswahl", help="Namen für nest_push.sh")
     p_aw.add_argument("--art", choices=["skill", "mcp"], required=True)
@@ -1010,12 +1072,21 @@ def richte_parser_ein(unter: Any) -> None:
 
 def lauf(args: argparse.Namespace) -> int:
     """Führt ``to_spawn.py nest <unterbefehl>`` aus."""
-    heim = Path(os.environ.get("HOME") or Path.home())
     befehl = args.nest_befehl
     try:
         if befehl == "onboarding":
-            setze_onboarding(args.claude_json, list(args.trust), args.theme, args.kanal)
+            datei = args.claude_json or (config.heim_ordner() / ".claude.json")
+            setze_onboarding(datei, list(args.trust), args.theme, args.kanal)
             return 0
+        if befehl == "einstellungen":
+            uebernehme_einstellungen(args.quelle, args.ziel)
+            return 0
+        if befehl == "mcp-import":
+            datei = args.claude_json or (config.heim_ordner() / ".claude.json")
+            dazu = mcp_import(args.quelle, datei)
+            print(f"MCPs neu eingetragen: {', '.join(dazu) or '—'} (vorhandene bleiben)")
+            return 0
+        heim = config.heim_ordner()
         if befehl == "sandbox":
             repo = (args.repo or config.repo_wurzel()).resolve()
             git_hooks_einrichten(repo)
@@ -1037,16 +1108,9 @@ def lauf(args: argparse.Namespace) -> int:
             )
             print(bericht.text())
             return bericht.exit_code
-        if befehl == "einstellungen":
-            uebernehme_einstellungen(args.quelle, args.ziel)
-            return 0
         if befehl == "mcp-export":
             namen = mcp_export(heim / ".claude.json", list(args.namen), args.ziel)
             print(f"MCPs vorbereitet: {', '.join(namen) or '—'} (Schlüssel bleiben verdeckt)")
-            return 0
-        if befehl == "mcp-import":
-            dazu = mcp_import(args.quelle, args.claude_json)
-            print(f"MCPs neu eingetragen: {', '.join(dazu) or '—'} (vorhandene bleiben)")
             return 0
         if befehl == "auswahl":
             repo = (args.repo or config.repo_wurzel()).resolve()
@@ -1059,7 +1123,7 @@ def lauf(args: argparse.Namespace) -> int:
             skill = Path(__file__).resolve().parent.parent
             vorschlag = rechte_vorschlag(wt_dir, skill, Path(tempfile.gettempdir()))
             if args.eintragen:
-                ist_tty = sys.stdin.isatty() and sys.stdout.isatty()
+                ist_tty = konsole.stdin_ist_terminal() and sys.stdout.isatty()
                 return rechte_eintragen(datei, vorschlag, ist_tty)
             print(rechte_text(datei, vorschlag, skill / "to_spawn.py"))
             return 0

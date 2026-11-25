@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import itertools
+import json
+import logging
 import os
 import re
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
-from xml.etree import ElementTree
 
-from to_spawn.pruef import ausfuehren
+from to_spawn.pruef import ausfuehren, leiter, wackler
 from to_spawn.pruef.leiter import Plan
+
+log = logging.getLogger("to_spawn.pruef")
 
 #: Dateien, an denen ein Python-Repo zu erkennen ist.
 _MERKMALE = (
@@ -35,6 +40,14 @@ _SCHLUSS = re.compile(
     r"(?:, )?)+)(?: in [\d.]+s.*?)?\s*=*$",
     re.MULTILINE,
 )
+#: ``-o cache_dir=…`` im Befehl: je Lauf, der unabhängig vom vorigen sein muss, frisch.
+_CACHE_PREFIX = "cache_dir="
+#: ``--junitxml=…`` im Befehl: je Lauf ein eigener maschinenlesbarer Bericht (#149).
+_BERICHT_PREFIX = "--junitxml="
+#: Hilfsstarter im selben Ordner: schreibt neben ``--junitxml`` die exakten Knoten-Kennungen (#149).
+_PYTEST_LAUF = Path(__file__).resolve().with_name("_pytest_lauf.py")
+#: Abbruch-Zeile von pytest (``pytest.exit(..., returncode=0)`` oder ``Interrupted``).
+_ABBRUCH = re.compile(r"^!{3,}.*(?:Interrupted|_pytest\.outcomes\.Exit).*!{3,}$", re.MULTILINE)
 
 
 def _schluss(ausgabe: str) -> str | None:
@@ -45,26 +58,6 @@ def _schluss(ausgabe: str) -> str | None:
     """
     treffer = _SCHLUSS.findall(ausgabe)
     return treffer[0] if len(treffer) == 1 else None
-
-
-def _junit_kennung(knoten: str) -> tuple[str, str, str]:
-    """(file, classname, name) im JUnit-XML (``xunit1``) von pytest zur Knoten-Kennung.
-
-    ``classname`` allein ist nicht eindeutig (wie ``mangle_test_address``: ``/`` und ``.`` werden
-    beide ``.``, ``tests/a.b/`` gleich ``tests/a/b/``, #149 Fix 2); erst mit dem Datei-Pfad aus
-    ``file`` ist es eine Kennung je Test. Steht die Testfunktion in einer anderen Datei als ihr
-    Knoten (importiert), passt ``file`` nicht — dann ist sie nicht belegt (fail-closed).
-    """
-    pfad, klammer, parameter = knoten.partition("[")
-    teile = pfad.split("::")
-    datei = teile[0]
-    teile[0] = re.sub(r"\.py$", "", datei.replace("/", "."))
-    teile[-1] += klammer + parameter
-    return datei, ".".join(teile[:-1]), teile[-1]
-
-
-#: ``-o cache_dir=…`` im Befehl: je Lauf, der unabhängig vom vorigen sein muss, frisch.
-_CACHE_PREFIX = "cache_dir="
 
 
 #: Dateien, in denen ein Repo pytest-xdist als eigene Abhängigkeit nennt.
@@ -125,6 +118,93 @@ def _paket(repo: Path) -> str:
     return treffer[0] if len(treffer) == 1 else ""
 
 
+_cache_wurzel: tempfile.TemporaryDirectory[str] | None = None
+_bericht_nr = itertools.count(1)
+
+
+def _wurzel() -> str:
+    """Prozessweiter Temp-Ordner für pytest-Caches und -Berichte; räumt beim Prozessende auf (#355).
+
+    Alle liegen in einem Ordner ``to_spawn_pytest_cache_*`` je Prozess, den ``TemporaryDirectory``
+    beim Prozessende löscht — nach Erfolg, Ausnahme oder Zeitgrenze im Lauf. Eine Prüfung = ein
+    Prozess (``to_spawn.py pruefen``), Wiederholung und zweiter voller Lauf leben darin.
+    ponytail: bleibt bei SIGKILL liegen; je Prüfung räumen (Kontext in ``leiter.stufen``), wenn ein
+    Dauer-Prozess viele Prüfungen fährt.
+    """
+    global _cache_wurzel
+    if _cache_wurzel is None or not Path(_cache_wurzel.name).is_dir():
+        _cache_wurzel = tempfile.TemporaryDirectory(prefix="to_spawn_pytest_cache_", ignore_cleanup_errors=True)
+    return _cache_wurzel.name
+
+
+def _frischer_cache() -> str:
+    """Neuer, leerer pytest-``cache_dir`` je Plan; der Adapter räumt ihn selbst (#355)."""
+    return tempfile.mkdtemp(dir=_wurzel())
+
+
+def _frischer_bericht() -> str:
+    """Neuer, noch nicht angelegter JUnit-XML-Pfad je Lauf; fehlt er danach, ist nichts belegt (#149)."""
+    return str(Path(_wurzel()) / f"bericht-{next(_bericht_nr)}.xml")
+
+
+def _mit_bericht(befehl: list[str], pfad: str) -> list[str]:
+    """Setzt oder ersetzt ``--junitxml=…`` im Befehl für einen eigenen Lauf."""
+    eintrag = f"{_BERICHT_PREFIX}{pfad}"
+    if any(teil.startswith(_BERICHT_PREFIX) for teil in befehl):
+        return [eintrag if teil.startswith(_BERICHT_PREFIX) else teil for teil in befehl]
+    return [*befehl, eintrag]
+
+
+def _bericht_pfad(befehl: list[str]) -> Path | None:
+    """Letzter ``--junitxml=…``-Pfad aus ``befehl``; ``None``, wenn keiner gesetzt ist."""
+    pfad: str | None = None
+    for idx, teil in enumerate(befehl):
+        if teil.startswith(_BERICHT_PREFIX):
+            pfad = teil[len(_BERICHT_PREFIX) :]
+        elif teil == "--junitxml" and idx + 1 < len(befehl):
+            pfad = befehl[idx + 1]
+    return Path(pfad) if pfad else None
+
+
+def _xml_zahl(knoten: ET.Element, feld: str, vorgabe: int | None = None) -> int | None:
+    roh = knoten.get(feld)
+    if roh is None:
+        return vorgabe
+    try:
+        wert = int(roh)
+    except ValueError:
+        return None
+    return wert if wert >= 0 else None
+
+
+def _lese_beleg(xml_pfad: Path) -> tuple[frozenset[str], frozenset[str], bool] | None:
+    """Liest den Knoten-Beleg (``<xml>.beleg.json``) des Hilfsstarters; ``None`` = fehlt/kaputt."""
+    beleg_pfad = Path(f"{xml_pfad}.beleg.json")
+    try:
+        daten = json.loads(beleg_pfad.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as fehler:
+        log.warning("Knoten-Beleg %s unlesbar: %s", beleg_pfad, fehler)
+        return None
+    if not isinstance(daten, dict):
+        return None
+    alle_roh = daten.get("alle")
+    bestanden_roh = daten.get("bestanden")
+    abgebrochen = daten.get("abgebrochen")
+    if (
+        not isinstance(alle_roh, list)
+        or not isinstance(bestanden_roh, list)
+        or not isinstance(abgebrochen, bool)
+        or not all(isinstance(x, str) and x for x in alle_roh)
+        or not all(isinstance(x, str) and x for x in bestanden_roh)
+    ):
+        return None
+    alle = frozenset(alle_roh)
+    bestanden = frozenset(bestanden_roh)
+    if len(alle) != len(alle_roh) or len(bestanden) != len(bestanden_roh) or not bestanden <= alle:
+        return None
+    return alle, bestanden, abgebrochen
+
+
 class PythonAdapter:
     name = "py"
 
@@ -152,8 +232,8 @@ class PythonAdapter:
         # - ``--verbosity=-1`` setzt die Stufe fest (statt ``-q``, das sich mit ``-q``/``-v`` aus
         #   ``addopts`` aufaddiert): ``-qq`` nähme die Schlusszeile weg, ``-v`` änderte den Fortschritt.
         # ``--sw`` bricht trotzdem nach dem ersten Rot ab (Exit 2 = rot, nie Wackler).
-        # ponytail: Cache-Ordner bleiben im Temp-Verzeichnis liegen, Aufräumen im Leiter, wenn es stört.
-        cache = tempfile.mkdtemp(prefix="to_spawn_pytest_cache_")
+        cache = _frischer_cache()
+        bericht = _frischer_bericht()
         # Parallel nur, wenn das Repo pytest-xdist selbst nennt, es im Repo-Interpreter da ist und
         # > 1 Worker passt: ``worksteal`` gibt freien Workern Tests der langsamen ab (statt
         # ``loadfile``: eine Datei hält einen Worker fest).
@@ -168,14 +248,15 @@ class PythonAdapter:
             werkzeug=f"pytest@{version}" + (f"+xdist×{anzahl}" if parallel else ""),
             befehl=[
                 python,
-                "-m",
-                "pytest",
+                str(_PYTEST_LAUF),
                 "--verbosity=-1",
                 "--maxfail=0",
                 "-o",
                 f"cache_dir={cache}",
                 "-o",
                 "console_output_style=count",
+                f"{_BERICHT_PREFIX}{bericht}",
+                *(f"--ignore={ort}" for ort in leiter.WERKZEUG_ORTE),
                 *parallel,
             ],
             fehler="",
@@ -235,39 +316,80 @@ class PythonAdapter:
     def nochmal_befehl(self, befehl: list[str], code: int) -> list[str] | None:
         # Wiederholung nur bei echtem Test-Rot (1); Sammelfehler (2) wackeln nicht.
         # ``--lf`` ist pytest-eigen (cacheprovider); ``--lfnf none``: ohne Cache läuft nichts
-        # (Exit 5) statt alles, dann bleibt es beim ersten Rot.
-        return [*befehl, "--lf", "--lfnf", "none"] if code == 1 else None
+        # (Exit 5) statt alles, dann bleibt es beim ersten Rot. Eigener JUnit-Bericht je Lauf.
+        if code != 1:
+            return None
+        return [*_mit_bericht(befehl, _frischer_bericht()), "--lf", "--lfnf", "none"]
 
     def voll_nochmal_befehl(self, befehl: list[str]) -> list[str]:
-        # Zweiter voller Lauf mit frischem ``cache_dir``: ``--lf``/``--sw`` aus ``addopts`` sehen
-        # weder den ersten Lauf noch die Wiederholung, also läuft wieder alles.
-        cache = tempfile.mkdtemp(prefix="to_spawn_pytest_cache_")
-        return [f"{_CACHE_PREFIX}{cache}" if teil.startswith(_CACHE_PREFIX) else teil for teil in befehl]
+        # Zweiter voller Lauf mit frischem ``cache_dir`` und frischem JUnit-Bericht: ``--lf``/``--sw``
+        # aus ``addopts`` sehen weder den ersten Lauf noch die Wiederholung, also läuft wieder alles.
+        cache = _frischer_cache()
+        mit_cache = [f"{_CACHE_PREFIX}{cache}" if teil.startswith(_CACHE_PREFIX) else teil for teil in befehl]
+        return _mit_bericht(mit_cache, _frischer_bericht())
 
-    def mit_beleg(self, befehl: list[str], beleg: Path) -> list[str]:
-        # JUnit-XML ist pytest-eigen; ``junit_prefix`` aus der Repo-Konfig fälschte die Kennungen,
-        # ``junit_family=xunit1`` schreibt je Test den Datei-Pfad (``file``): eindeutige Kennung.
-        return [*befehl, f"--junitxml={beleg}", "-o", "junit_prefix=", "-o", "junit_family=xunit1"]
-
-    def alle_bestanden(self, beleg: Path, namen: set[str], gelaufen: int | None = None) -> bool:
-        # Bestanden = ``testcase`` ohne failure/error/skipped (skip und xfail stehen als skipped).
-        # Ein Name, der auch nur einmal anders als bestanden auftaucht, gilt nicht. Weicht die Zahl
-        # der ``testcase`` von ``gelaufen`` ab, fehlt ein Test oder kam einer dazu: nicht belegt.
+    def bericht(self, befehl: list[str], ausgabe: str) -> wackler.Bericht | None:
+        """Liest Test-Zähler aus dem maschinenlesbaren JUnit-XML-Bericht statt aus der Textzeile (#149)."""
+        pfad = _bericht_pfad(befehl)
+        if pfad is None:
+            return None
         try:
-            wurzel = ElementTree.parse(beleg).getroot()
-        except (OSError, ElementTree.ParseError):
-            return False
-        faelle = list(wurzel.iter("testcase"))
-        if gelaufen is not None and len(faelle) != gelaufen:
-            return False
-        gut: set[tuple[str, str, str]] = set()
-        schlecht: set[tuple[str, str, str]] = set()
-        for fall in faelle:
-            datei = fall.get("file", "").replace("\\", "/")
-            kennung = (datei, fall.get("classname", ""), fall.get("name", ""))
-            rot = any(kind.tag in ("failure", "error", "skipped") for kind in fall)
-            (schlecht if rot else gut).add(kennung)
-        return all(_junit_kennung(name) in gut - schlecht for name in namen)
+            wurzel = ET.parse(pfad).getroot()
+        except (OSError, ET.ParseError) as fehler:
+            log.warning("JUnit-Bericht %s unlesbar: %s", pfad, fehler)
+            return None
+        if wurzel.tag == "testsuite":
+            suites = [wurzel]
+        elif wurzel.tag == "testsuites":
+            suites = wurzel.findall("testsuite")
+        else:
+            return None
+        if not suites:
+            return None
+
+        gesamt = fehler_anz = ausnahmen = uebersprungen = xml_faelle = 0
+        abgebrochen = bool(_ABBRUCH.search(ausgabe))
+        for suite in suites:
+            t = _xml_zahl(suite, "tests")
+            f = _xml_zahl(suite, "failures", 0)
+            e = _xml_zahl(suite, "errors", 0)
+            s = _xml_zahl(suite, "skipped", 0)
+            if t is None or f is None or e is None or s is None:
+                return None
+            gesamt += t
+            fehler_anz += f
+            ausnahmen += e
+            uebersprungen += s
+            for fall in suite.findall("testcase"):
+                name = (fall.get("name") or "").strip()
+                if not name:
+                    # Offener Testfall ohne Namen entsteht bei ``pytest.exit(..., returncode=0)`` im Test.
+                    abgebrochen = True
+                    continue
+                xml_faelle += 1
+
+        xml_bestanden = gesamt - fehler_anz - ausnahmen - uebersprungen
+        if xml_bestanden < 0:
+            return None
+        beleg = _lese_beleg(pfad)
+        if beleg is None:
+            return None
+        alle_namen, bestanden_namen, beleg_abgebrochen = beleg
+        abgebrochen = abgebrochen or beleg_abgebrochen
+        im_bericht = len(alle_namen)
+        if abgebrochen:
+            return wackler.Bericht(None, None, im_bericht=im_bericht, abgebrochen=True)
+        if im_bericht != xml_faelle or len(bestanden_namen) > xml_bestanden:
+            return None
+        fortschritt = self.gelaufen(ausgabe)
+        gelaufen = fortschritt if fortschritt is not None and fortschritt == im_bericht else None
+        return wackler.Bericht(
+            gelaufen,
+            len(bestanden_namen),
+            im_bericht=im_bericht,
+            abgebrochen=False,
+            bestanden_namen=bestanden_namen,
+        )
 
     def rote(self, ausgabe: str) -> set[str]:
         return {treffer.strip() for treffer in _ROT_ZEILE.findall(ausgabe)}

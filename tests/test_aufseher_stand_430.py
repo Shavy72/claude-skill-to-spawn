@@ -20,7 +20,7 @@ import pytest
 SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL))
 
-from to_spawn import aufpasser, aufseher_stand
+from to_spawn import aufpasser, aufseher_stand, pc_fenster
 
 SPEC = 77
 JETZT = 1_800_000_000.0
@@ -47,9 +47,7 @@ class FakeWelt:
     """tmux + GitHub von außen; alles andere ist echt."""
 
     def __init__(self) -> None:
-        self.fenster: dict[
-            int, tuple[float, str]
-        ] = {}  # Ticket → (activity, Pane-Text)
+        self.fenster: dict[int, tuple[float, str]] = {}  # Ticket → (activity, Pane-Text)
         self.tickets: dict[int, dict[str, Any]] = {}
         self.uhr = JETZT
 
@@ -80,9 +78,7 @@ class FakeWelt:
         return [dict(t) for t in self.tickets.values()]
 
     def quellen(self, repo: Path) -> aufseher_stand.Quellen:
-        return aufseher_stand.Quellen(
-            repo=repo, kinder=self.kinder, tmux=self.tmux, jetzt=lambda: self.uhr
-        )
+        return aufseher_stand.Quellen(repo=repo, kinder=self.kinder, tmux=self.tmux, jetzt=lambda: self.uhr)
 
 
 def bau_log(repo: Path, n: int, *zeilen: dict[str, Any]) -> None:
@@ -194,6 +190,19 @@ def test_ticket_zu_und_kein_fenster(repo: Path, ordner: Path) -> None:
     assert "1 zu" in kurz.splitlines()[0]
 
 
+def test_ticket_verworfen_ohne_fenster_faellt_weg(repo: Path, ordner: Path) -> None:
+    w = FakeWelt()
+    w.ticket(434, zu=True)
+    w.tickets[434]["state_reason"] = "not_planned"
+    w.ticket(435)
+    text = aufseher_stand.stand(SPEC, w.quellen(repo), ordner=ordner, alle=True)
+    assert zeile_fuer(text, 434).startswith("#434 verworfen · kein Fenster · ")
+    # Ohne --alle fällt ein verworfenes Ticket ohne Fenster weg wie ein geschlossenes.
+    kurz = aufseher_stand.stand(SPEC, w.quellen(repo), ordner=ordner)
+    assert "#434 " not in kurz
+    assert "#435 " in kurz
+
+
 def test_zehn_tickets_hoechstens_elf_zeilen(repo: Path, ordner: Path) -> None:
     w = FakeWelt()
     roh = []
@@ -217,9 +226,7 @@ def test_zehn_tickets_hoechstens_elf_zeilen(repo: Path, ordner: Path) -> None:
     assert f"Spec #{SPEC}" in kopf and "10 offen" in kopf and "10 still" in kopf
 
 
-def test_quelle_fehlt_nur_strich_und_warnung(
-    repo: Path, ordner: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_quelle_fehlt_nur_strich_und_warnung(repo: Path, ordner: Path, caplog: pytest.LogCaptureFixture) -> None:
     """Kaputtes Bau-Log eines Tickets: Strich + Warnung, kein Absturz."""
     w = FakeWelt()
     w.ticket(436)
@@ -287,9 +294,7 @@ def test_stand_ordner_per_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
     monkeypatch.setenv("TO_SPAWN_AUFSEHER_STAND", str(tmp_path / "x"))
     assert aufseher_stand.stand_ordner() == tmp_path / "x"
     monkeypatch.delenv("TO_SPAWN_AUFSEHER_STAND")
-    assert aufseher_stand.stand_ordner() == (
-        Path.home() / ".local" / "state" / "to-spawn" / "aufseher"
-    )
+    assert aufseher_stand.stand_ordner() == (Path.home() / ".local" / "state" / "to-spawn" / "aufseher")
 
 
 # --- CLI über echte Programm-Nähte (gh-/tmux-Ersatz per Umgebung) ---------------
@@ -297,6 +302,7 @@ def test_stand_ordner_per_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
 TMUX_STUB = textwrap.dedent(
     """
     import json, os, sys
+    sys.stdout.reconfigure(encoding="utf-8")  # wie echtes tmux; Windows-Pipe wäre cp1252 (#68)
     welt = json.loads(open(os.environ["FAKE_WELT"], encoding="utf-8").read())
     args = sys.argv[1:]
     if args[0] == "list-windows":
@@ -335,10 +341,11 @@ def _cli_welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     datei = tmp_path / "welt.json"
     datei.write_text(json.dumps(welt), encoding="utf-8")
     monkeypatch.setenv("FAKE_WELT", str(datei))
-    monkeypatch.setenv(
-        "TO_SPAWN_TMUX", json.dumps([sys.executable, str(tmp_path / "tmux_stub.py")])
-    )
+    monkeypatch.setenv("TO_SPAWN_TMUX", json.dumps([sys.executable, str(tmp_path / "tmux_stub.py")]))
     monkeypatch.setenv("TO_SPAWN_GH_STUB", str(tmp_path / "gh_stub.py"))
+    # Bau-Server-Weg (tmux-Fenster) auf jeder Plattform; am PC (Windows) fragte die Weiche
+    # sonst Transkripte statt tmux und meldete „kein Fenster“ (#68). PC-Weg: test_pc_fenster_501.
+    monkeypatch.setattr(pc_fenster, "am_pc", lambda: False)
     return tmp_path / "stand"
 
 
@@ -373,9 +380,7 @@ def test_cli_aufseher_stand(
     assert (ordner / f"stand-{SPEC}.jsonl").is_file()
 
 
-def test_cli_ohne_gh_fehler(
-    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_cli_ohne_gh_fehler(repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """gh fehlt komplett → klarer Fehler, Exit ≠ 0 (eigener Prozess, PATH ohne gh)."""
     leer = tmp_path / "leer"
     leer.mkdir()
@@ -451,9 +456,7 @@ def test_cli_spec_ohne_sub_issues_exit_ungleich_null(
     assert spec and spec.loader
     cli = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(cli)
-    code = cli.main(
-        ["aufseher-stand", str(SPEC), "--gh-repo", "o/r", "--stand-ordner", str(ordner)]
-    )
+    code = cli.main(["aufseher-stand", str(SPEC), "--gh-repo", "o/r", "--stand-ordner", str(ordner)])
     fehler = capsys.readouterr().err
     assert code != 0
     assert "keine Sub-Issues" in fehler
@@ -465,9 +468,7 @@ def test_tmux_nicht_lesbar_strich_statt_kein_fenster(repo: Path, ordner: Path) -
     w = FakeWelt()
     w.ticket(460)
     w.ticket(461, zu=True)
-    q = aufseher_stand.Quellen(
-        repo=repo, kinder=w.kinder, tmux=lambda args: None, jetzt=lambda: w.uhr
-    )
+    q = aufseher_stand.Quellen(repo=repo, kinder=w.kinder, tmux=lambda args: None, jetzt=lambda: w.uhr)
     text = aufseher_stand.stand(SPEC, q, ordner=ordner, alle=True)
     kopf = text.splitlines()[0]
     assert "tmux nicht lesbar" in kopf
@@ -476,9 +477,7 @@ def test_tmux_nicht_lesbar_strich_statt_kein_fenster(repo: Path, ordner: Path) -
     assert "kein Fenster" not in text
 
 
-def test_sitzung_lesbar_fenster_fehlt_bleibt_kein_fenster(
-    repo: Path, ordner: Path
-) -> None:
+def test_sitzung_lesbar_fenster_fehlt_bleibt_kein_fenster(repo: Path, ordner: Path) -> None:
     w = FakeWelt()
     w.ticket(462)
     text = aufseher_stand.stand(SPEC, w.quellen(repo), ordner=ordner)

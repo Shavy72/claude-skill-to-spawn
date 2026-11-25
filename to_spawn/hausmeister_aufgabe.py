@@ -7,10 +7,10 @@ allein ``hausmeister``:
 
 - :func:`aufgabe_einrichten` legt die tägliche Aufgabe in der Windows-Aufgabenplanung
   an (idempotent, ``pythonw.exe`` ohne Fenster). Vorher hält sie den Altbestand fest,
-  damit der erste Lauf keine alten Ordner ohne Davids Ja löscht.
+  damit der erste Lauf keine alten Ordner ohne das Ja des Menschen löscht.
 - :func:`ticket_ende_anstossen` startet nach einer lokalen Bau-Session einen Lauf im
   Hintergrund (nur Windows; auf dem Server läuft der Aufpasser).
-- :func:`loesch_liste` schreibt die Altbestand-Liste für David (Trockenlauf, löscht
+- :func:`loesch_liste` schreibt die Altbestand-Liste für den Menschen (Trockenlauf, löscht
   nichts) und hält genau diese Ordner fest.
 
 Kein Mail-Versand, nur Log.
@@ -26,7 +26,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from to_spawn import hausmeister, starter
+from to_spawn import hausmeister, konsole, starter
 
 log = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ _GRUPPEN = (
     "Sichern + löschen",
     "Bleibt (mit Grund)",
     "Ohne Ticket-Nummer",
-    "Für David (selbst prüfen)",
+    "Für den Menschen (selbst prüfen)",
 )
 
 
@@ -53,9 +53,7 @@ def _ist_windows() -> bool:
     return sys.platform == "win32"
 
 
-def aufgabe_einrichten(
-    *, trocken: bool = False, python: str = sys.executable, uhrzeit: str = "03:30"
-) -> str:
+def aufgabe_einrichten(*, trocken: bool = False, python: str = sys.executable, uhrzeit: str = "03:30") -> str:
     """Tägliche Aufgabe anlegen oder ersetzen (idempotent); gibt einen Satz für Menschen.
 
     Gleiche Aufgabe (Befehl + Uhrzeit) schon da → nichts tun. Fehlt sie oder weicht
@@ -66,9 +64,7 @@ def aufgabe_einrichten(
         return "Hausmeister-Aufgabe gibt es nur unter Windows — hier nichts eingerichtet (Server: Aufpasser-Cron)."
     pythonw = Path(python).with_name("pythonw.exe")
     if not pythonw.is_file():
-        raise RuntimeError(
-            f"pythonw.exe fehlt neben {python} — ohne sie öffnet die Aufgabe jede Nacht ein Fenster."
-        )
+        raise RuntimeError(f"pythonw.exe fehlt neben {python} — ohne sie öffnet die Aufgabe jede Nacht ein Fenster.")
     argumente = f'"{_CLI}" ' + " ".join(_LAUF_ARGS)
     if _aufgabe_gleich(_abfrage(), str(pythonw), argumente, uhrzeit):
         return f"Hausmeister-Aufgabe schon eingerichtet (täglich {uhrzeit})."
@@ -90,9 +86,7 @@ def aufgabe_einrichten(
         befehl,
     )
     if lauf.returncode != 0:
-        raise RuntimeError(
-            f"schtasks /Create: {(lauf.stderr or lauf.stdout).strip()[:300]}"
-        )
+        raise RuntimeError(f"schtasks /Create: {(lauf.stderr or lauf.stdout).strip()[:300]}")
     return f"Hausmeister-Aufgabe eingerichtet: täglich {uhrzeit} {befehl}"
 
 
@@ -102,9 +96,7 @@ def _abfrage() -> str | None:
     return lauf.stdout if lauf.returncode == 0 else None
 
 
-def _aufgabe_gleich(
-    xml: str | None, pythonw: str, argumente: str, uhrzeit: str
-) -> bool:
+def _aufgabe_gleich(xml: str | None, pythonw: str, argumente: str, uhrzeit: str) -> bool:
     # Regex statt XML-Parser: schtasks kündigt UTF-16 an, liefert über die Pipe aber Text.
     if not xml:
         return False
@@ -126,20 +118,15 @@ def _schtasks(*args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             ["schtasks", *args],
             capture_output=True,
-            text=True,
-            errors="replace",
+            **konsole.UNTERPROZESS_TEXT,
             check=False,
             timeout=SCHTASKS_ZEITLIMIT_S,
             creationflags=CREATE_NO_WINDOW,
         )
     except FileNotFoundError as fehler:
-        raise RuntimeError(
-            "schtasks nicht gefunden — Windows-Aufgabenplanung fehlt"
-        ) from fehler
+        raise RuntimeError("schtasks nicht gefunden — Windows-Aufgabenplanung fehlt") from fehler
     except subprocess.TimeoutExpired as fehler:
-        raise RuntimeError(
-            f"schtasks {args[0]} hängt (über {SCHTASKS_ZEITLIMIT_S} s)"
-        ) from fehler
+        raise RuntimeError(f"schtasks {args[0]} hängt (über {SCHTASKS_ZEITLIMIT_S} s)") from fehler
 
 
 def ticket_ende_anstossen() -> None:
@@ -169,18 +156,16 @@ def ticket_ende_anstossen() -> None:
 
 
 def loesch_liste(ziel: Path) -> Path:
-    """Altbestand-Liste für David schreiben (Trockenlauf, löscht nichts); gibt ``ziel``.
+    """Altbestand-Liste für den Menschen schreiben (Trockenlauf, löscht nichts); gibt ``ziel``.
 
     Danach sind alle gelisteten Ordner festgehalten — der Hausmeister lässt sie
-    stehen, bis David sie freigibt. ``RuntimeError``, wenn der Lauf scheitert oder
+    stehen, bis der Mensch sie freigibt. ``RuntimeError``, wenn der Lauf scheitert oder
     ein anderer Lauf die Sperre hält.
     """
     ergebnisse = hausmeister.aufraeumen_alles(loeschen=False)
     # aufraeumen_alles liefert bei belegter Sperre [] — leer trotz Kandidaten heißt: kein Lauf.
     if ergebnisse is None or (not ergebnisse and hausmeister._kandidaten()):
-        raise RuntimeError(
-            "Hausmeister-Lauf gescheitert oder Sperre belegt (anderer Lauf) — Liste nicht geschrieben"
-        )
+        raise RuntimeError("Hausmeister-Lauf gescheitert oder Sperre belegt (anderer Lauf) — Liste nicht geschrieben")
     gruppen: dict[str, list[hausmeister.Ergebnis]] = {g: [] for g in _GRUPPEN}
     for erg in ergebnisse:
         gruppen[_gruppe(erg)].append(erg)
@@ -211,7 +196,7 @@ def _markdown(gruppen: dict[str, list[hausmeister.Ergebnis]], altbestand: Path) 
         f"Stand: {stand}",
         "",
         (
-            "**Gelöscht wird erst nach Davids Ja.** Bis dahin bleiben alle Ordner stehen "
+            "**Gelöscht wird erst nach dem Ja des Menschen.** Bis dahin bleiben alle Ordner stehen "
             f'(Freigabe: `"freigegeben": true` in `{altbestand}`).'
         ),
         "",

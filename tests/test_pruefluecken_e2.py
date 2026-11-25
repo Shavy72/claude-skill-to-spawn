@@ -19,9 +19,7 @@ from test_hausmeister_l1_konfig import _home, _maschine, ohne_naehte  # noqa: F4
 from to_spawn import hausmeister
 
 
-@pytest.mark.parametrize(
-    "wurzel", ["~/wt-*/.ssh", "~/x/wt-*/.ssh", "~/x/*/.config/*", "~/x/wt-*/../.ssh/*"]
-)
+@pytest.mark.parametrize("wurzel", ["~/wt-*/.ssh", "~/x/wt-*/.ssh", "~/x/*/.config/*", "~/x/wt-*/../.ssh/*"])
 def test_versteckter_ordner_nach_glob_abgelehnt(
     ohne_naehte: None,  # noqa: F811
     monkeypatch: pytest.MonkeyPatch,
@@ -38,9 +36,7 @@ def test_versteckter_ordner_nach_glob_abgelehnt(
 def test_tausch_in_ausnahme_bei_gleicher_zahl_gemeldet() -> None:
     schluessel = ("to_spawn/capo.py", "duoplus")
     assert schluessel in AUSNAHMEN
-    erlaubt = len(
-        _treffer()[schluessel]
-    )  # heute erlaubte Zahl, unabhängig vom Format der Ausnahme
+    erlaubt = len(_treffer()[schluessel])  # heute erlaubte Zahl, unabhängig vom Format der Ausnahme
     funde: dict[tuple[str, str], list[str]] = {}
     _zeilen_treffer(
         schluessel[0],
@@ -48,6 +44,4 @@ def test_tausch_in_ausnahme_bei_gleicher_zahl_gemeldet() -> None:
         funde,
     )
     assert len(funde[schluessel]) == erlaubt
-    assert _verstoesse({schluessel: funde[schluessel]}), (
-        "Tausch bei gleicher Zahl blieb unbemerkt"
-    )
+    assert _verstoesse({schluessel: funde[schluessel]}), "Tausch bei gleicher Zahl blieb unbemerkt"

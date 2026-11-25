@@ -11,8 +11,8 @@ Ablauf: Spec + Kind + Sub-Issue-Kante → Wegwerf-Repo mit Konfig und passender
 Belegseite ``docs/verify-hard/<Kind>_beleg.md`` (damit nur ``commit_ohne_nummer``
 greift) → erster Tick (Kind offen) → Kind schließen + Commit ohne Nummer → zweiter
 Tick → Kind wieder OPEN, Kommentar nennt ``commit_ohne_nummer``, nicht
-``beweis_fehlt`` → noch einmal schließen → dritter Tick → Kind wieder OPEN, zweiter
-Kommentar (Entscheidung 21.09.: keine Einmal-Sperre). Zum Schluss werden beide
+``beweis_fehlt`` → noch einmal schließen → dritter Tick → Kind bleibt CLOSED, ein
+zweiter Kommentar meldet den Verstoß einmal (seit #275: Einmal-Regel je Ticket + Regel). Zum Schluss werden beide
 Issues geschlossen.
 """
 
@@ -41,9 +41,7 @@ pytestmark = pytest.mark.skipif(
 
 
 def _gh(*args: str) -> str:
-    fertig = subprocess.run(
-        ["gh", *args], capture_output=True, text=True, encoding="utf-8", check=True
-    )
+    fertig = subprocess.run(["gh", *args], capture_output=True, text=True, encoding="utf-8", check=True)
     return fertig.stdout.strip()
 
 
@@ -66,9 +64,7 @@ def _commit_push(repo: Path, betreff: str, dateien: dict[str, str]) -> None:
     _git(repo, "push", "-q", "origin", "HEAD:master")
 
 
-def _tick(
-    repo: Path, spec: int, tmp_path: Path, umgebung: dict[str, str]
-) -> subprocess.CompletedProcess[str]:
+def _tick(repo: Path, spec: int, tmp_path: Path, umgebung: dict[str, str]) -> subprocess.CompletedProcess[str]:
     ergebnis = subprocess.run(
         [
             sys.executable,
@@ -92,19 +88,11 @@ def _tick(
     return ergebnis
 
 
-def test_capo_echt_ohne_sofort_schalter(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_capo_echt_ohne_sofort_schalter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("TO_SPAWN_WAECHTER_SOFORT", raising=False)
-    umgebung = {
-        k: v
-        for k, v in os.environ.items()
-        if k not in ("TO_SPAWN_GH_STUB", "TO_SPAWN_WAECHTER_SOFORT")
-    }
+    umgebung = {k: v for k, v in os.environ.items() if k not in ("TO_SPAWN_GH_STUB", "TO_SPAWN_WAECHTER_SOFORT")}
     zustand_ordner = tmp_path / "waechter"
-    umgebung.update(
-        {"TO_SPAWN_WAECHTER_ORDNER": str(zustand_ordner), "TO_SPAWN_REPO": ""}
-    )
+    umgebung.update({"TO_SPAWN_WAECHTER_ORDNER": str(zustand_ordner), "TO_SPAWN_REPO": ""})
     assert "TO_SPAWN_WAECHTER_SOFORT" not in umgebung
 
     spec = _neues_issue(
@@ -128,9 +116,7 @@ def test_capo_echt_ohne_sofort_schalter(
         )
 
         fern = tmp_path / "fern.git"
-        subprocess.run(
-            ["git", "init", "-q", "--bare", "-b", "master", str(fern)], check=True
-        )
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "master", str(fern)], check=True)
         repo = tmp_path / "repo"
         repo.mkdir()
         _git(repo, "init", "-q", "-b", "master")
@@ -174,8 +160,7 @@ def test_capo_echt_ohne_sofort_schalter(
         _commit_push(repo, "feat: Bauteil ohne Ticket-Nummer", {"a.txt": "x\n"})
         closed_at = _gh("api", f"repos/{GH_REPO}/issues/{kind}", "--jq", ".closed_at")
         abstand = (
-            datetime.fromisoformat(closed_at.replace("Z", "+00:00"))
-            - datetime.fromisoformat(zustand["erster_tick"])
+            datetime.fromisoformat(closed_at.replace("Z", "+00:00")) - datetime.fromisoformat(zustand["erster_tick"])
         ).total_seconds()
         print(
             f"Uhr-Vergleich: closed_at (GitHub) {closed_at} − erster_tick (lokal) "
@@ -201,16 +186,14 @@ def test_capo_echt_ohne_sofort_schalter(
         )
         print(f"Kind #{kind} nach Tick 2: {daten['state']}")
         assert daten["state"] == "OPEN"
-        waechter = [
-            c["body"] for c in daten["comments"] if c["body"].startswith(capo.WAECHTER_KOPF)
-        ]
+        waechter = [c["body"] for c in daten["comments"] if c["body"].startswith(capo.WAECHTER_KOPF)]
         print(f"Wächter-Kommentar: {waechter}")
         assert len(waechter) == 1
         assert "commit_ohne_nummer" in waechter[0]
         assert "beweis_fehlt" not in waechter[0]
 
-        # Entscheidung 21.09. (#213): zweites Schließen mit demselben Verstoß
-        # öffnet wieder — früher gab es dafür nur einen Kommentar.
+        # Seit #275: zweites Schließen mit demselben Verstoß öffnet nicht wieder,
+        # sondern meldet einmal (ersetzt die strenge Fassung aus #213).
         _gh(
             "issue",
             "close",
@@ -235,11 +218,9 @@ def test_capo_echt_ohne_sofort_schalter(
             )
         )
         print(f"Kind #{kind} nach dem zweiten Schließen: {daten['state']}")
-        waechter = [
-            c["body"] for c in daten["comments"] if c["body"].startswith(capo.WAECHTER_KOPF)
-        ]
+        waechter = [c["body"] for c in daten["comments"] if c["body"].startswith(capo.WAECHTER_KOPF)]
         print(f"Wächter-Kommentare: {len(waechter)}")
-        assert daten["state"] == "OPEN"
+        assert daten["state"] == "CLOSED"
         assert len(waechter) == 2
         assert all("commit_ohne_nummer" in k for k in waechter)
     finally:

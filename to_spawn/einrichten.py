@@ -10,7 +10,8 @@ Harte Regeln:
 
 * Getrackte Dateien im App-Repo werden nie geschrieben — auch nicht die
   ``.gitignore``; Ignore-Zeilen gehen nach ``.git/info/exclude`` (lokal).
-* ``pruefen=True`` schreibt nichts: Exit 0 = alles da und aktuell, 3 = Abweichung.
+* ``pruefen=True`` schreibt nichts: Exit 0 = alles da und aktuell, 3 = Abweichung
+  (auch: Arbeitsordner hinter ``origin/<Hauptzweig>`` oder Stand nicht prüfbar, #283).
 * Kaputte oder fehlende ``stand.json`` = neu einrichten, nie Abbruch.
 * Eine große Lücke wird gemeldet und hält nicht auf; nur ein Anleger-Fehler
   (Ausnahme) gibt Exit 1.
@@ -31,14 +32,25 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
-from . import config, gh, setup, skill_stand, umzug
+from . import (
+    arbeitsstand,
+    config,
+    gh,
+    konsole,
+    manifest,
+    prozessbaum,
+    setup,
+    skill_stand,
+    umzug,
+)
 
 log = logging.getLogger("to_spawn.einrichten")
 
 EXIT_ABWEICHUNG = 3
 STAND_PFAD = Path(".to-spawn") / "stand.json"
 _SKILL = Path(__file__).resolve().parent.parent
-#: Vorlagen der Weiterleitungen und des Manifest-Musters im Skill.
+#: Vorlagen der Weiterleitungen im Skill. ``_default.json`` daneben ist die Start-Text-Vorlage:
+#: sie bleibt im Skill und wird nie ins Repo kopiert (#274 P1).
 _VORLAGEN = _SKILL / "repo-scripts"
 _MANIFEST_VORLAGE = "_default.json"
 _EXCLUDE_KOPF = "# to-spawn Einrichter: lokale Laufdateien (nicht versioniert)"
@@ -48,9 +60,38 @@ _GH_TIMEOUT = 15.0
 _GIT_TIMEOUT = 15.0
 
 #: Ergebnis von ``pruefe``: ``DA`` = in Ordnung, ``FEHLT`` = ``lege_an`` kann es
-#: richten, ``LUECKE`` = nur von Hand zu richten (große Lücke).
-DA, FEHLT, LUECKE = "da_aktuell", "fehlt", "grosse_luecke"
+#: richten, ``LUECKE`` = nur von Hand zu richten (große Lücke),
+#: ``NICHT_PRUEFBAR`` = hier/jetzt nicht prüfbar (kein Fehler, keine Abweichung).
+DA, FEHLT, LUECKE, NICHT_PRUEFBAR = (
+    "da_aktuell",
+    "fehlt",
+    "grosse_luecke",
+    "nicht_pruefbar",
+)
 Befund = tuple[str, str]
+
+#: Die drei Zustände für ``einrichten --pruefen`` (#216): Text und Zustand kommen
+#: aus genau einer Stelle (:func:`_pruefe_baustein`) und können sich nicht widersprechen.
+PRUEF_OK = DA
+PRUEF_ABWEICHUNG = "weicht_ab"
+PRUEF_UNPRUEFBAR = NICHT_PRUEFBAR
+PRUEF_ZUSTAENDE: tuple[str, str, str] = (
+    PRUEF_OK,
+    PRUEF_ABWEICHUNG,
+    PRUEF_UNPRUEFBAR,
+)
+
+
+@dataclass(frozen=True)
+class PruefBefund:
+    """Prüf-Ergebnis eines Bausteins für ``--pruefen``: Zustand und Text aus einer Stelle."""
+
+    zustand: str
+    text: str
+
+    @property
+    def weicht_ab(self) -> bool:
+        return self.zustand == PRUEF_ABWEICHUNG
 
 
 @dataclass(frozen=True)
@@ -83,11 +124,10 @@ def _git(wurzel: Path, *args: str) -> tuple[int, str]:
             errors="replace",
             check=False,
             timeout=_GIT_TIMEOUT,
+            **prozessbaum.fensterlos(),
         )
     except subprocess.TimeoutExpired:
-        log.warning(
-            "git %s: Zeitlimit %s s überschritten", " ".join(args[:2]), _GIT_TIMEOUT
-        )
+        log.warning("git %s: Zeitlimit %s s überschritten", " ".join(args[:2]), _GIT_TIMEOUT)
         return 124, ""
     except OSError:
         return 127, ""
@@ -138,13 +178,6 @@ def _schreib_schutz(wurzel: Path, datei: Path, *, grenze: Path | None = None) ->
         raise SchreibVerbot(f"Ziel außerhalb {basis}, nicht geschrieben: {pfad}")
 
 
-def _rel(wurzel: Path, datei: Path) -> str | None:
-    try:
-        return datei.resolve().relative_to(wurzel.resolve()).as_posix()
-    except ValueError:
-        return None
-
-
 # --- Bausteine --------------------------------------------------------------
 
 
@@ -165,7 +198,7 @@ def _lege_konfig_an(ort: Ort) -> None:
     if datei.exists():
         return
     _schreib_schutz(ort.wurzel, datei)
-    if sys.stdin.isatty():
+    if konsole.stdin_ist_terminal():
         setup.erster_start(
             ort.wurzel,
             ist_tty=True,
@@ -173,7 +206,7 @@ def _lege_konfig_an(ort: Ort) -> None:
             ausgabe=ort.ausgabe,
         )
         return
-    # Wie config.sicherstellen, aber ohne .gitignore-Schreiben (getrackt im App-Repo).
+    # Wie config.sicherstellen, aber ohne Exclude-Zeilen (eigener Baustein gitignore).
     inhalt = copy.deepcopy(config.DEFAULTS)
     inhalt["worktree_basis"] = config.worktree_basis_vorgabe(ort.wurzel)
     datei.parent.mkdir(parents=True, exist_ok=True)
@@ -206,43 +239,34 @@ def _pruefe_worktree_basis(ort: Ort) -> Befund:
 def _lege_worktree_basis_an(ort: Ort) -> None:
     datei = _konfig_datei(ort)
     roh = setup.lies_roh(datei)
-    if (
-        roh is None
-        or _getrackt(ort.wurzel, datei)
-        or str(roh.get("worktree_basis") or "").strip()
-    ):
+    if roh is None or _getrackt(ort.wurzel, datei) or str(roh.get("worktree_basis") or "").strip():
         return
     roh["worktree_basis"] = config.worktree_basis_vorgabe(ort.wurzel)
     _schreib_schutz(ort.wurzel, datei)
     setup._schreibe_atomar(datei, roh)
 
 
-def _manifest_datei(ort: Ort) -> Path:
-    return config.pfad(config.lade(ort.wurzel), "manifeste") / _MANIFEST_VORLAGE
+def _manifest_ordner(ort: Ort) -> Path:
+    return config.pfad(config.lade(ort.wurzel), "manifeste")
 
 
 def _pruefe_manifest(ort: Ort) -> Befund:
-    datei = _manifest_datei(ort)
-    return (DA, str(datei)) if datei.is_file() else (FEHLT, f"fehlt: {datei}")
+    """Nur der Manifest-Ordner — keine Regel-Kopie ``_default.json`` mehr (#274 P1)."""
+    ordner = _manifest_ordner(ort)
+    return (DA, str(ordner)) if ordner.is_dir() else (FEHLT, f"fehlt: {ordner}")
 
 
 def _lege_manifest_an(ort: Ort) -> None:
-    datei = _manifest_datei(ort)
-    if datei.exists():
+    ordner = _manifest_ordner(ort)
+    if ordner.exists():
         return
-    _schreib_schutz(ort.wurzel, datei)
-    datei.parent.mkdir(parents=True, exist_ok=True)
-    datei.write_bytes((_VORLAGEN / _MANIFEST_VORLAGE).read_bytes())
+    _schreib_schutz(ort.wurzel, ordner)
+    ordner.mkdir(parents=True, exist_ok=True)
 
 
 def _zu_ignorieren(ort: Ort) -> dict[str, str]:
     """Pfad (relativ) → Exclude-Zeile für alles, was der Einrichter ungetrackt anlegt."""
-    ziele = {STAND_PFAD.as_posix(): ".to-spawn/*"}
-    manifest = _manifest_datei(ort)
-    rel = _rel(ort.wurzel, manifest)
-    if rel is not None and not _getrackt(ort.wurzel, manifest):
-        ziele[rel] = f"/{rel}"
-    return ziele
+    return {STAND_PFAD.as_posix(): ".to-spawn/*"}
 
 
 def _nicht_ignoriert(ort: Ort) -> dict[str, str]:
@@ -256,6 +280,8 @@ def _nicht_ignoriert(ort: Ort) -> dict[str, str]:
 
 
 def _pruefe_gitignore(ort: Ort) -> Befund:
+    if _git(ort.wurzel, "rev-parse", "--git-dir")[0] != 0:
+        return NICHT_PRUEFBAR, "kein Git-Repo"
     offen = _nicht_ignoriert(ort)
     if not offen:
         return DA, "Laufdateien ignoriert"
@@ -273,14 +299,10 @@ def _lege_gitignore_an(ort: Ort) -> None:
     code, git_ordner = _git(ort.wurzel, "rev-parse", "--git-common-dir")
     if code != 0 or not git_ordner:
         raise OSError("git rev-parse --git-common-dir scheiterte")
-    grenze = (
-        Path(git_ordner) if Path(git_ordner).is_absolute() else ort.wurzel / git_ordner
-    )
+    grenze = Path(git_ordner) if Path(git_ordner).is_absolute() else ort.wurzel / git_ordner
     _schreib_schutz(ort.wurzel, datei, grenze=grenze)
     vorhanden = datei.read_text(encoding="utf-8") if datei.is_file() else ""
-    zeilen = [
-        z for z in dict.fromkeys(offen.values()) if z not in vorhanden.splitlines()
-    ]
+    zeilen = [z for z in dict.fromkeys(offen.values()) if z not in vorhanden.splitlines()]
     if not zeilen:
         return
     trenner = "" if not vorhanden or vorhanden.endswith("\n") else "\n"
@@ -290,27 +312,54 @@ def _lege_gitignore_an(ort: Ort) -> None:
         strom.write(trenner + kopf + "\n".join(zeilen) + "\n")
 
 
+#: Standard-Label für startbereite Tickets (``/to-tickets``, #404).
+READY_LABEL = "ready-for-agent"
+_READY_LABEL_FARBE = "0e8a16"
+_READY_LABEL_BESCHREIBUNG = "Bereit zur Umsetzung durch einen Agenten"
+_CHECKPOINT_LABEL_FARBE = "d93f0b"
+_CHECKPOINT_LABEL_BESCHREIBUNG = "Ticket wartet auf menschliche Abnahme (to-spawn)"
+
+
 def _label(ort: Ort) -> str:
-    regularien = config.lade(ort.wurzel).get("regularien") or {}
-    return str(regularien.get("checkpoint_label") or "checkpoint:human")
+    return manifest.checkpoint_label(config.lade(ort.wurzel))
+
+
+def _ticket_labels(ort: Ort) -> list[tuple[str, str, str]]:
+    """Beide Ticket-Labels, die ``/to-tickets`` vor dem ersten Issue braucht (#404)."""
+    checkpoint = _label(ort)
+    liste = [(checkpoint, _CHECKPOINT_LABEL_FARBE, _CHECKPOINT_LABEL_BESCHREIBUNG)]
+    if checkpoint != READY_LABEL:
+        liste.append((READY_LABEL, _READY_LABEL_FARBE, _READY_LABEL_BESCHREIBUNG))
+    return liste
 
 
 def _pruefe_label(ort: Ort) -> Befund:
-    label = _label(ort)
-    pfad = "repos/{owner}/{repo}/labels/" + urllib.parse.quote(label, safe="")
-    code, _ = gh.lauf(["api", pfad], cwd=ort.wurzel, timeout=_GH_TIMEOUT)
-    if code == 0:
-        return DA, label
-    if code == 127:
-        return LUECKE, f"gh fehlt — von Hand: gh label create {label}"
-    if code == 124:
-        return LUECKE, f"gh Zeitlimit — von Hand: gh label create {label}"
-    return FEHLT, f"{label} fehlt im GitHub-Repo"
+    labels = _ticket_labels(ort)
+    fehlend: list[str] = []
+    for label, _, _ in labels:
+        pfad = "repos/{owner}/{repo}/labels/" + urllib.parse.quote(label, safe="")
+        code, _ = gh.lauf(["api", pfad], cwd=ort.wurzel, timeout=_GH_TIMEOUT)
+        if code == 127:
+            return LUECKE, f"gh fehlt — von Hand: gh label create {label}"
+        if code == 124:
+            return LUECKE, f"gh Zeitlimit — von Hand: gh label create {label}"
+        if code != 0:
+            fehlend.append(label)
+    if fehlend:
+        return FEHLT, f"{', '.join(fehlend)} fehlt im GitHub-Repo"
+    return DA, ", ".join(label for label, _, _ in labels)
 
 
 def _lege_label_an(ort: Ort) -> None:
     # Scheitern/Zeitlimit gibt False (Warnung im Log); die Nachprüfung meldet die Lücke.
-    gh.label_sicherstellen(ort.wurzel, _label(ort), timeout=_GH_TIMEOUT)
+    for label, farbe, beschreibung in _ticket_labels(ort):
+        gh.label_sicherstellen(
+            ort.wurzel,
+            label,
+            farbe=farbe,
+            beschreibung=beschreibung,
+            timeout=_GH_TIMEOUT,
+        )
 
 
 def _maschinen_soll(ort: Ort) -> dict[str, str]:
@@ -337,11 +386,12 @@ def _pruefe_maschine(ort: Ort) -> Befund:
             LUECKE,
             f"Maschinen-Liste unlesbar ({fehler}) — von Hand reparieren: {datei}",
         )
+    veraltet = config.veraltete_ticket_repos()
+    if veraltet:
+        return FEHLT, "veraltetes ticket_repo: " + "; ".join(a.zeile() for a in veraltet)
     for eintrag in config.maschine()["repos"]:
         try:
-            gleich = (
-                Path(eintrag["pfad"]).expanduser().resolve() == ort.wurzel.resolve()
-            )
+            gleich = Path(eintrag["pfad"]).expanduser().resolve() == ort.wurzel.resolve()
         except (OSError, ValueError):
             gleich = False
         if gleich:
@@ -350,8 +400,34 @@ def _pruefe_maschine(ort: Ort) -> Befund:
     return FEHLT, f"Repo nicht eingetragen: {datei}"
 
 
+def _belegtes_ticket_repo(wurzel: Path) -> str:
+    """``nameWithOwner`` des origin-Repos, nur wenn gh es kennt und Issues an sind; sonst ``""``."""
+    slug = gh.github_slug_aus_origin(wurzel)
+    if not slug:
+        return ""
+    antwort = gh.json_lauf(
+        ["repo", "view", slug, "--json", "hasIssuesEnabled,nameWithOwner"],
+        cwd=wurzel,
+        timeout=_GH_TIMEOUT,
+    )
+    if isinstance(antwort, dict) and antwort.get("hasIssuesEnabled") is True:
+        return str(antwort.get("nameWithOwner") or "")
+    return ""
+
+
 def _lege_maschine_an(ort: Ort) -> None:
-    config.maschine_eintragen(ort.wurzel)
+    for aenderung in config.maschine_ticket_repos_nachziehen():
+        if ort.ausgabe is not None:
+            ort.ausgabe.write(f"  {aenderung.zeile()}\n")
+    eintrag = config.maschine_eintragen(ort.wurzel)
+    if eintrag["slug"] and not eintrag["ticket_repo"]:  # #542: nur mit Beleg, nie geraten (#66)
+        beleg = _belegtes_ticket_repo(ort.wurzel)
+        eintrag = config.maschine_eintragen(ort.wurzel, ticket_repo=beleg) if beleg else eintrag
+        if not eintrag["ticket_repo"] and ort.ausgabe is not None:
+            ort.ausgabe.write(
+                "  Hinweis: ticket_repo fehlt – Aufräumen nach Live läuft für dieses Repo nicht; "
+                f"eintragen in {config.maschine_datei()} (Feld ticket_repo = <besitzer>/<name>)\n"
+            )
 
 
 def _weiterleitungen(ort: Ort) -> list[tuple[Path, Path]]:
@@ -402,7 +478,10 @@ def _pruefe_server_klon(ort: Ort) -> Befund:
     if (Path(ordner).expanduser() / ".git").exists():
         return DA, f"{ordner} auf diesem Rechner"
     # ponytail: kein SSH-Aufruf je Spawn, Server-Klon nur lokal geprüft; Upgrade: ssh test -d in Etappe 3.
-    return DA, f"{ordner} auf {umzug.ssh_ziel(konfig)} nicht geprüft (kein Netz-Aufruf)"
+    return (
+        NICHT_PRUEFBAR,
+        f"{ordner} auf {umzug.ssh_ziel(konfig)} nicht geprüft (kein Netz-Aufruf)",
+    )
 
 
 def _pruefe_gh(ort: Ort) -> Befund:
@@ -421,9 +500,13 @@ def _pruefe_venv(ort: Ort) -> Befund:
 
 
 def _pruefe_skill_aktuell(ort: Ort) -> Befund:
-    """Installierte Kopie gegen ``main`` des Skill-Repos; nicht erreichbar = nur Hinweis."""
+    """Installierte Kopie gegen ``main`` des Skill-Repos; unbekannt = nicht prüfbar."""
     zustand, text = skill_stand.vergleich()
-    return (LUECKE, text) if zustand == skill_stand.VERALTET else (DA, text)
+    if zustand == skill_stand.AKTUELL:
+        return DA, text
+    if zustand == skill_stand.VERALTET:
+        return LUECKE, text
+    return NICHT_PRUEFBAR, text
 
 
 _BAUSTEINE: list[Baustein] = [
@@ -431,8 +514,8 @@ _BAUSTEINE: list[Baustein] = [
     Baustein("worktree_basis", 1, _pruefe_worktree_basis, _lege_worktree_basis_an),
     Baustein("manifest", 1, _pruefe_manifest, _lege_manifest_an),
     Baustein("gitignore", 1, _pruefe_gitignore, _lege_gitignore_an),
-    Baustein("checkpoint_label", 1, _pruefe_label, _lege_label_an),
-    Baustein("maschinen_liste", 1, _pruefe_maschine, _lege_maschine_an),
+    Baustein("checkpoint_label", 2, _pruefe_label, _lege_label_an),
+    Baustein("maschinen_liste", 2, _pruefe_maschine, _lege_maschine_an),
     Baustein("weiterleitungen", 1, _pruefe_weiterleitungen, _lege_weiterleitungen_an),
     Baustein("server_klon", 1, _pruefe_server_klon),
     Baustein("gh", 1, _pruefe_gh),
@@ -463,9 +546,26 @@ def _sicher(aufruf: Callable[[Ort], Befund], ort: Ort) -> Befund:
         return LUECKE, f"Prüfung scheiterte: {fehler}"
 
 
-def einrichten(
-    repo: Path, *, pruefen: bool = False, ausgabe: TextIO = sys.stdout
-) -> int:
+def _pruefe_baustein(baustein: Baustein, ort: Ort, version_alt: int | None) -> PruefBefund:
+    """Wertet einen Baustein für ``--pruefen`` an genau einer Stelle aus (#216).
+
+    Liefert immer einen der drei Zustände aus :data:`PRUEF_ZUSTAENDE` zusammen mit
+    dem dazu passenden Text — Zustand und Text können sich nicht widersprechen.
+    """
+    befund, text = _sicher(baustein.pruefe, ort)
+    if befund == NICHT_PRUEFBAR:
+        return PruefBefund(PRUEF_UNPRUEFBAR, text)
+    if befund != DA:
+        return PruefBefund(PRUEF_ABWEICHUNG, text)
+    if version_alt is not None and version_alt != baustein.version:
+        return PruefBefund(
+            PRUEF_ABWEICHUNG,
+            f"Stand-Version {version_alt} statt {baustein.version} ({text})",
+        )
+    return PruefBefund(PRUEF_OK, text)
+
+
+def einrichten(repo: Path, *, pruefen: bool = False, ausgabe: TextIO = sys.stdout) -> int:
     """Richtet ``repo`` für to-spawn ein (``pruefen=True``: nur prüfen, schreibt nichts).
 
     Exit: 0 = eingerichtet (große Lücken nur gemeldet) bzw. alles da und aktuell;
@@ -482,18 +582,15 @@ def einrichten(
     ausgabe.write(f"{'Prüfen' if pruefen else 'Einrichten'}: {ort.wurzel}\n")
     for baustein in _BAUSTEINE:
         version_alt = alt.get(baustein.name)
+        if pruefen:
+            ergebnis = _pruefe_baustein(baustein, ort, version_alt)
+            if ergebnis.weicht_ab:
+                abweichungen.append(baustein.name)
+            ausgabe.write(f"  {baustein.name}: {ergebnis.zustand} — {ergebnis.text}\n")
+            continue
         befund, text = _sicher(baustein.pruefe, ort)
-        if befund == DA and (
-            version_alt == baustein.version or (version_alt is None and not pruefen)
-        ):
+        if befund in (DA, NICHT_PRUEFBAR) and (version_alt == baustein.version or version_alt is None):
             zustand = DA
-        elif pruefen:
-            zustand = (
-                befund
-                if befund != DA
-                else ("veraltet" if version_alt is not None else "nicht eingerichtet")
-            )
-            abweichungen.append(baustein.name)
         else:
             if baustein.lege_an is not None:
                 try:
@@ -505,9 +602,7 @@ def einrichten(
                     continue
                 except (OSError, ValueError, subprocess.SubprocessError) as fehler:
                     log.error("Anleger %s scheiterte: %s", baustein.name, fehler)
-                    ausgabe.write(
-                        f"  {baustein.name}: {LUECKE} — Anleger scheiterte: {fehler}\n"
-                    )
+                    ausgabe.write(f"  {baustein.name}: {LUECKE} — Anleger scheiterte: {fehler}\n")
                     luecken.append(baustein.name)
                     code = 1
                     continue
@@ -515,11 +610,9 @@ def einrichten(
                 befund, text = _sicher(baustein.pruefe, ort)
             else:
                 vorher = befund
-            if befund != DA:
+            if befund not in (DA, NICHT_PRUEFBAR):
                 zustand = LUECKE
-            elif vorher == DA or (
-                version_alt is not None and version_alt != baustein.version
-            ):
+            elif vorher in (DA, NICHT_PRUEFBAR) or (version_alt is not None and version_alt != baustein.version):
                 zustand = "nachgezogen"
             else:
                 zustand = "angelegt"
@@ -529,6 +622,11 @@ def einrichten(
             neu[baustein.name] = baustein.version
         ausgabe.write(f"  {baustein.name}: {zustand} — {text}\n")
     if pruefen:
+        # Zustand statt Baustein (#283): kein Versions-Stand, nichts anzulegen — nur melden.
+        stand_ordner = arbeitsstand.sicherstellen(ort.wurzel, nachziehen=False)
+        ausgabe.write(f"  arbeitsstand: {stand_ordner.zustand} — {stand_ordner.text}\n")
+        if not stand_ordner.ok:
+            abweichungen.append("arbeitsstand")
         if abweichungen:
             ausgabe.write(f"Abweichung: {', '.join(abweichungen)}\n")
             return EXIT_ABWEICHUNG
@@ -545,7 +643,5 @@ def einrichten(
             log.error("stand.json nicht geschrieben (%s): %s", stand_datei, fehler)
             code = 1
     if luecken:
-        ausgabe.write(
-            f"Große Lücke (nur gemeldet, hält nicht auf): {', '.join(luecken)}\n"
-        )
+        ausgabe.write(f"Große Lücke (nur gemeldet, hält nicht auf): {', '.join(luecken)}\n")
     return code

@@ -64,9 +64,7 @@ def test_remote_main_gemeldeter_stand_zweig_weg(mw: tuple[Welt, Path, Path]) -> 
     git(haupt, "push", "-q", "origin", "ticket/70-test")
     git(haupt, "checkout", "-q", "main")
     w.ticket(70, "OPEN")
-    r = hausmeister.zweig_aufraeumen(
-        SKILL_URL, "ticket/70-test", uebernommen_tip=tip, loeschen=True
-    )
+    r = hausmeister.zweig_aufraeumen(SKILL_URL, "ticket/70-test", uebernommen_tip=tip, loeschen=True)
     assert r.art == "gelöscht" and not r.fehler, r.grund
     assert "ticket/70-test" not in _heads(bare)
 
@@ -103,8 +101,6 @@ def test_git_fehler_grund_einzeilig(mw: tuple[Welt, Path, Path]) -> None:
     git(haupt, "branch", "ticket/73-test")
     git(haupt, "remote", "set-url", "origin", str(w.tmp / "gibt-es-nicht.git"))
     w.ticket(73, "CLOSED", vor_stunden=48)
-    r = hausmeister.zweig_aufraeumen(
-        haupt, "ticket/73-test", ort="lokal", loeschen=True
-    )
+    r = hausmeister.zweig_aufraeumen(haupt, "ticket/73-test", ort="lokal", loeschen=True)
     assert r.art == "bleibt" and r.fehler
     assert r.grund and "\n" not in r.grund, r.grund

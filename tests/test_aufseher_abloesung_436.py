@@ -10,6 +10,7 @@ Fake-Werkzeug mit virtueller Uhr hinein — wie ``test_respawn_431*.py``.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import time
@@ -135,6 +136,43 @@ zeile = {
 }
 with (ordner / f"{sid}.jsonl").open("a", encoding="utf-8") as fh:
     fh.write(json.dumps(zeile) + "\n")
+# Optional (#353): statt fest FAKE_SCHLAF zu schlafen, nur so lange laufen, bis das
+# gestellte tmux FAKE_ENDE_NACH_GETIPPT Eingaben hat (Obergrenze FAKE_SCHLAF), dann
+# FAKE_NACHLAUF_S nachlaufen und regulär enden — mit Marke „.ende“. Wird sie von außen
+# beendet (SIGTERM), schreibt sie stattdessen „.beendet“; der Nachlauf deckt ein spätes
+# Beenden nach der Ablösung ab und lässt der Aufsicht Zeit, „blockiert“ zu loggen.
+# FAKE_ENDE_NACH_LOG (Pfade, os.pathsep-getrennt): zusätzlich warten, bis dort eine
+# Bau-Log-Zeile „blockiert“ steht — der Nachlauf zählt dann ab diesem Ereignis.
+ziel = int(os.environ.get("FAKE_ENDE_NACH_GETIPPT", "0"))
+if ziel:
+    import signal
+    def _beendet(signum, frame):
+        Path(os.environ["FAKE_PROTOKOLL"]).with_suffix(".beendet").write_text(str(signum))
+        sys.exit(143)
+    signal.signal(signal.SIGTERM, _beendet)
+    getippt = Path(os.environ["FAKE_TMUX_ORDNER"]) / "getippt.jsonl"
+    ende = time.monotonic() + float(os.environ.get("FAKE_SCHLAF", "100"))
+    while time.monotonic() < ende:
+        if getippt.is_file() and len(getippt.read_text(encoding="utf-8").splitlines()) >= ziel:
+            break
+        time.sleep(0.1)
+    def _blockiert():
+        for pfad in filter(None, os.environ.get("FAKE_ENDE_NACH_LOG", "").split(os.pathsep)):
+            datei = Path(pfad)
+            if not datei.is_file():
+                continue
+            for z in datei.read_text(encoding="utf-8").splitlines():
+                try:
+                    if json.loads(z).get("typ") == "blockiert":
+                        return True
+                except ValueError:  # halb geschriebene Zeile
+                    continue
+        return False
+    while os.environ.get("FAKE_ENDE_NACH_LOG") and time.monotonic() < ende and not _blockiert():
+        time.sleep(0.1)
+    time.sleep(float(os.environ.get("FAKE_NACHLAUF_S", "5")))
+    Path(os.environ["FAKE_PROTOKOLL"]).with_suffix(".ende").write_text("regulär")
+    sys.exit(0)
 time.sleep(float(os.environ.get("FAKE_SCHLAF", "100")))
 """
 
@@ -143,6 +181,8 @@ time.sleep(float(os.environ.get("FAKE_SCHLAF", "100")))
 FAKE_TMUX = r"""#!/usr/bin/env python3
 import json, os, re, sys
 from pathlib import Path
+sys.stdout.reconfigure(encoding="utf-8")  # tmux spricht UTF-8, auch unter Windows (#602)
+sys.stdin.reconfigure(encoding="utf-8")
 args = sys.argv[1:]
 ordner = Path(os.environ["FAKE_TMUX_ORDNER"])
 ordner.mkdir(parents=True, exist_ok=True)
@@ -203,9 +243,7 @@ def _getippt(welt: dict[str, Path]) -> list[dict[str, str]]:
     return [json.loads(z) for z in datei.read_text(encoding="utf-8").splitlines() if z]
 
 
-def test_kontext_ueber_grenze_abloesung_ohne_zutun(
-    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_kontext_ueber_grenze_abloesung_ohne_zutun(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
     """Grenze erreicht → respawn-Tür tippt den Handoff-Auftrag, Nachfolger startet mit Handoff + Stand."""
     env = _abloese_welt(welt, monkeypatch)
     beginn = time.monotonic()
@@ -236,9 +274,7 @@ def test_kontext_ueber_grenze_abloesung_ohne_zutun(
     assert zeilen[0]["kontext"] >= 60_000
 
 
-def test_ohne_tmux_keine_abloesung_nur_spur(
-    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_ohne_tmux_keine_abloesung_nur_spur(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
     """Ohne ``TMUX_PANE`` (kein Bau-Server-Fenster) kein Tippen — nur eine Bau-Log-Zeile."""
     env = _abloese_welt(welt, monkeypatch)
     env.pop("TMUX_PANE")
@@ -319,7 +355,7 @@ def test_abloese_datei_nur_zwei_schreiber() -> None:
     assert quelle.count("def abloesung_schreiben(") == 1
     wache = (SKILL / "skripte" / "wache.py").read_text(encoding="utf-8")
     assert "waechter_lauf.abloesung_schreiben(" in wache
-    assert ".write_text(json.dumps({\"handoff\"" not in wache
+    assert '.write_text(json.dumps({"handoff"' not in wache
 
 
 def test_bau_log_kennt_aufseher_abloesung() -> None:
@@ -338,9 +374,7 @@ def _smart_zone(env: dict[str, str], haupt_k: int, nicht_opus_k: int) -> None:
     )
 
 
-def test_kontext_unter_grenze_keine_abloesung(
-    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_kontext_unter_grenze_keine_abloesung(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
     """Kontext 60,5k unter der Opus-Grenze 100k → nichts getippt, keine Bau-Log-Zeile."""
     env = _abloese_welt(welt, monkeypatch)
     _smart_zone(env, 100, 40)
@@ -352,9 +386,7 @@ def test_kontext_unter_grenze_keine_abloesung(
     assert _log_zeilen(welt, "aufseher_abloesung") == []
 
 
-def test_nicht_opus_modell_nimmt_nicht_opus_grenze(
-    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_nicht_opus_modell_nimmt_nicht_opus_grenze(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
     """Aufseher auf Nicht-Opus: ``haupt_nicht_opus.handoff_k`` (40k) greift, nicht ``haupt`` (100k)."""
     env = _abloese_welt(welt, monkeypatch)
     _smart_zone(env, 100, 40)
@@ -454,9 +486,7 @@ def _exit2() -> Any:
     return respawn_aufseher.AufseherErgebnis(2, "abgebrochen — fehlt")
 
 
-def test_abloesung_nach_fehlschlag_wiederholt_mit_abstand(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_abloesung_nach_fehlschlag_wiederholt_mit_abstand(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Befund 1: Exit 2 → nach dem Mindestabstand ein zweiter Versuch; Exit 0 → Ablöse-Datei."""
     wl, zeiten, zeilen = _faden_welt(tmp_path, monkeypatch, [_exit2(), _ok(tmp_path)])
     ab = wl.Abloesung(tmp_path, 900, tmp_path, versuche_max=3, abstand_s=0.3, warte_s=1)
@@ -475,7 +505,11 @@ def test_abloesung_nach_fehlschlag_wiederholt_mit_abstand(
     assert not ab.faden.is_alive()
     assert len(zeiten) == 2, zeiten
     assert len(beginne) == 2, beginne
-    assert beginne[1] - beginne[0] >= 0.3
+    # Toleranz 20 ms: ``Abloesung`` wartet per ``Event.wait`` auf echter Uhr (keine
+    # eingespritzte Uhr). Unter Windows (Takt ~15,6 ms) kehrt das Warten minimal früher
+    # zurück, als ``time.monotonic`` misst — gemessen 0,2998 s (#623). Ein fehlender
+    # Abstand (0 s) bleibt klar rot.
+    assert beginne[1] - beginne[0] >= 0.3 - 0.02
     assert [z["exit"] for z in zeilen if z["typ"] == "aufseher_abloesung"] == [2, 0]
     assert json.loads((tmp_path / "abloesung.json").read_text(encoding="utf-8"))["start"] == "Start bitte"
     # Erledigt → ein weiteres Auslösen startet nichts mehr.
@@ -527,16 +561,12 @@ def test_abloese_faden_faengt_oserror_unicode_abbruch(
     assert (tmp_path / "abloesung.json").is_file()
 
 
-def test_abloese_faden_stoppt_bei_session_ende_vor_tippen(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_abloese_faden_stoppt_bei_session_ende_vor_tippen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Befund 3: Session-Ende → Faden endet (join), tippt keinen Weiter-Auftrag mehr ins Pane."""
     from to_spawn import respawn
 
     tmux: list[tuple[str, ...]] = []
-    monkeypatch.setattr(
-        respawn.TmuxWerkzeug, "_tmux", lambda _self, *a, eingabe=None: tmux.append(a) or ""
-    )
+    monkeypatch.setattr(respawn.TmuxWerkzeug, "_tmux", lambda _self, *a, eingabe=None: tmux.append(a) or "")
     wl, _zeiten, _zeilen = _faden_welt(tmp_path, monkeypatch, None)
     ab = wl.Abloesung(tmp_path, 900, tmp_path, versuche_max=3, abstand_s=0.01, warte_s=60)
     ab.ausloesen(lambda: 60_000, 50_000, lambda: True)
@@ -552,24 +582,33 @@ def test_abloese_faden_stoppt_bei_session_ende_vor_tippen(
     assert len(eingefuegt) == 1, tmux  # nur der Handoff-Auftrag, kein Weiter-Auftrag
 
 
-def test_exit_2_ueber_echte_aufsicht_kein_nachfolger(
-    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_exit_2_ueber_echte_aufsicht_kein_nachfolger(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
     """Befund 4: Aufseher schreibt nichts (Exit 2) → kein Nachfolger, alter läuft weiter, sichtbar."""
+    from to_spawn import bau_log
+
     env = _abloese_welt(welt, monkeypatch)
     env.update(
         {
             "FAKE_TMUX_SCHREIBT": "0",
             "FAKE_SCHLAF": "30",
+            # #353: alter Aufseher endet regulär 2 Haupt-Takte (TAKT_S = 5 s) nach der
+            # Bau-Log-Zeile „blockiert“, statt fest 30 s zu schlafen; wird er bis dahin
+            # von außen beendet, steht die Marke „.beendet“ (PR 379: Lücke 4–10 s zu;
+            # FAKE_NACHLAUF_S = 20 s hält die Attrappe mit Puffer über die 2 Takte hinaus).
+            "FAKE_ENDE_NACH_GETIPPT": "4",
+            "FAKE_ENDE_NACH_LOG": os.pathsep.join(
+                str(pfad(welt["repo"], SPEC)) for pfad in (bau_log.log_pfad, bau_log.lauf_pfad)
+            ),
+            "FAKE_NACHLAUF_S": "20",
             "TO_SPAWN_ABLOESE_WARTE_S": "1",
             "TO_SPAWN_ABLOESE_ABSTAND_S": "1",
             "TO_SPAWN_ABLOESE_VERSUCHE": "2",
         }
     )
-    beginn = time.monotonic()
     ergebnis = _wache(welt["repo"], env=env, timeout=150)
+    assert not (welt["tmp"] / "claude_aufrufe.beendet").exists(), "alter Aufseher wurde beendet"
     assert ergebnis.returncode == 0, _text(ergebnis)
-    assert time.monotonic() - beginn >= 25, "alter Aufseher wurde beendet"
+    assert (welt["tmp"] / "claude_aufrufe.ende").is_file(), "alter Aufseher wurde beendet"
     assert len(_aufrufe(welt)) == 1, "Nachfolger gestartet"
     getippt = _getippt(welt)
     assert [g["ziel"] for g in getippt] == ["%77"] * 4, getippt
@@ -616,9 +655,7 @@ def test_gestoppter_versuch_ist_kein_fehlschlag(
     assert ab.versuche == 0 and not ab.fertig
 
 
-def test_abloesung_session_endete_bleibt_wiederholbar(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_abloesung_session_endete_bleibt_wiederholbar(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Befund J: respawn Exit 0, Session lief nicht mehr → nicht fertig, nächste Session darf."""
     wl, zeiten, _zeilen = _faden_welt(tmp_path, monkeypatch, [_ok(tmp_path), _ok(tmp_path)])
     ab = wl.Abloesung(tmp_path, 900, tmp_path, versuche_max=3, abstand_s=0.01, warte_s=1)

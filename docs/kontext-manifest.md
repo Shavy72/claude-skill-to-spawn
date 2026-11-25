@@ -44,7 +44,7 @@ Loop-Prompt (Domino: wartet auf Blocker → claimt Ticket → `/implement` → s
 
 ## Core-Set (immer geladen, unabhängig vom Manifest)
 
-`docs/agents/manifests/_default.json`:
+Skill-Vorlage `repo-scripts/_default.json`:
 
 - Skills: `fable-1080`, `implement`, `prp-commit`, `code-review`, `verify-hard`,
   `german-umlauts`, `loop`, `run`, `diagnosing-bugs`
@@ -53,22 +53,21 @@ Loop-Prompt (Domino: wartet auf Blocker → claimt Ticket → `/implement` → s
   `{N}` (Ticket), `{S}` (Spec), `{TITLE}`, `{WT}` (Worktree-Pfad), `{REPO}`
   (`owner/name` aus dem Origin), `{HAUPTZWEIG}` (`master`/`main`/…, aus
   `gh.hauptzweig`), `{CHECKPOINT_LABEL}` (aus `regularien.checkpoint_label`) und
-  `{KONTEXT}` (Kontext-Paket). `bau.py` füllt sie über `build_prompt`; die Vorlage
-  kommt aus `docs/agents/manifests/_default.json` des Repos, fehlt sie, aus der
-  Skill-Vorlage `repo-scripts/_default.json`.
+  `{KONTEXT}` (Kontext-Paket). `bau.py` füllt sie über `build_prompt`. Start-Text kommt aus der Skill-Vorlage;
+  Repo-Regeln über `start_text.zusatz_datei`.
 
 Verfügbare MCP-Namen zur Auswahl im Manifest (Stand 2026-09-12, `bau.py` löst sie über
 `~/.claude.json` global + Projekt-Eintrag, Repo-`.mcp.json` und
 `~/.claude/toolbox/mcp-archive.json` auf): `claude-in-chrome` (Builtin),
-`chrome-devtools`, `firecrawl`, `perplexity`, `sensei`, `postproxy` (Projekt),
+`chrome-devtools`, `firecrawl`, `perplexity`, `sensei`, `projekt-api` (Projekt),
 `n8n-mcp`, `n8n-mcp-lite`, `context7`, `kapture`, `windows-mcp`, `scrape-creators`,
 `instagram-mcp`, `replicate`, `dataforseo`, `shadcn`, `stitch`, `supabase`.
 Nicht steuerbar: die claude.ai-Connectoren (Airtable, Gmail, Notion, …) — sie hängen
 am Login, nicht an `--mcp-config`.
 
 Projekt-Pflicht-Skills je Bereich (aus `CLAUDE.md`/`projekt-routing`), die ein Ticket
-bei Bedarf zusätzlich listet: `duoplus-api` (Cloud-Phone-API), `postproxy-api` /
-`postproxy-n8n` (Posting), `n8n-mastery` (Workflows), `mastery-knowledge` (Proxy/APIs),
+bei Bedarf zusätzlich listet: `duoplus-api` (Cloud-Phone-API), `projekt-api` /
+`projekt-n8n` (Posting), `n8n-mastery` (Workflows), `mastery-knowledge` (Proxy/APIs),
 `user-flow-lens` + `auto-polish` (UI-Fläche), `asteragon-reel-concept-scanner` (Reels).
 
 ## Ablauf: to-spec → to-tickets → to-spawn → `bau N`

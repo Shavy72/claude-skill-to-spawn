@@ -6,15 +6,20 @@ Statusdatei schreibt hier der Test selbst, im Format von ``safe_deploy_vps.sh``.
 
 from __future__ import annotations
 
+import ctypes
 import json
+import logging
 import os
 import subprocess
 import sys
+import types
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 import pytest
+
+from to_spawn import deploy_status, prozessbaum
 
 SKILL = Path(__file__).resolve().parent.parent
 CLI = SKILL / "to_spawn.py"
@@ -37,9 +42,7 @@ def _ts(vor_min: float = 0) -> str:
     return zeit.isoformat(timespec="seconds")
 
 
-def _zeile(
-    phase: str, sek: int, marker: str = "", lauf: str = "100-1", **extra: Any
-) -> str:
+def _zeile(phase: str, sek: int, marker: str = "", lauf: str = "100-1", **extra: Any) -> str:
     daten: dict[str, Any] = {
         "ts": extra.pop("ts", _ts()),
         "lauf": lauf,
@@ -79,9 +82,7 @@ def _laeuft(lauf: str = "100-1", vor_min: float = 0) -> tuple[str, ...]:
     )
 
 
-def _cli(
-    repo: Path, *args: str, env: dict[str, str] | None = None
-) -> subprocess.CompletedProcess[str]:
+def _cli(repo: Path, *args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(CLI), "deploy-status", *args],
         cwd=str(repo),
@@ -99,11 +100,7 @@ def _log_zeilen(repo: Path, ticket: str = TICKET) -> list[dict[str, Any]]:
     datei = repo / ".to-spawn" / "bau_log" / f"{ticket}.jsonl"
     if not datei.is_file():
         return []
-    return [
-        json.loads(z)
-        for z in datei.read_text(encoding="utf-8").splitlines()
-        if z.strip()
-    ]
+    return [json.loads(z) for z in datei.read_text(encoding="utf-8").splitlines() if z.strip()]
 
 
 def test_laufender_deploy_meldet_exit_3_und_die_phase(repo: Path) -> None:
@@ -215,9 +212,7 @@ def test_neuer_lauf_schreibt_seine_phasen_neu(repo: Path) -> None:
     assert laeufe == ["100-1"] * 3 + ["200-2"] * 3
 
 
-def test_datei_aus_umgebung_und_ohne_ticket_nur_anzeigen(
-    repo: Path, tmp_path: Path
-) -> None:
+def test_datei_aus_umgebung_und_ohne_ticket_nur_anzeigen(repo: Path, tmp_path: Path) -> None:
     anderswo = tmp_path / "woanders.jsonl"
     anderswo.write_text("".join(z + "\n" for z in _laeuft()), encoding="utf-8")
     ergebnis = _cli(repo, env={"DEPLOY_STATUS_DATEI": str(anderswo)})
@@ -232,7 +227,10 @@ def test_datei_aus_umgebung_und_ohne_ticket_nur_anzeigen(
 
 def _tote_pid() -> int:
     """PID eines echten, schon beendeten und eingesammelten Prozesses."""
-    kind = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    kind = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+        **prozessbaum.ohne_fenster(),
+    )
     kind.kill()  # plattformneutral (#68)
     kind.wait(timeout=10)
     return kind.pid
@@ -274,9 +272,7 @@ def test_vorgabe_grenze_ist_60_minuten(repo: Path) -> None:
     assert _cli(repo, "--ticket", TICKET).returncode == 4
 
 
-def test_datei_im_fremden_repo_bestimmt_bau_log_und_ticket(
-    repo: Path, tmp_path: Path
-) -> None:
+def test_datei_im_fremden_repo_bestimmt_bau_log_und_ticket(repo: Path, tmp_path: Path) -> None:
     """--datei zeigt ins Worktree ``wt-555``; Aufruf aus einem anderen Repo."""
     wt = tmp_path / "wt-555"
     wt.mkdir()
@@ -299,11 +295,83 @@ def test_bau_ticket_aus_der_umgebung(repo: Path) -> None:
 def test_kaputte_bytes_werden_ersetzt_statt_abbruch(repo: Path) -> None:
     datei = repo / ".deploy_status.jsonl"
     start, vor, pytest_zeile = _laeuft()
-    datei.write_bytes(
-        (start + "\n").encode()
-        + b"\xff\xfe kaputt\n"
-        + (vor + "\n" + pytest_zeile + "\n").encode()
-    )
+    datei.write_bytes((start + "\n").encode() + b"\xff\xfe kaputt\n" + (vor + "\n" + pytest_zeile + "\n").encode())
     ergebnis = _cli(repo, "--ticket", TICKET)
     assert ergebnis.returncode == 3, ergebnis.stdout + ergebnis.stderr
     assert [z["phase"] for z in _log_zeilen(repo)] == ["start", "pre-flight", "pytest"]
+
+
+# --- Issue #642: prozess_lebt fragt die eine Stelle prozessbaum.lebt ---------
+
+
+def test_prozess_lebt_nutzt_prozessbaum_auch_unter_windows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """deploy_status.prozess_lebt delegiert immer an prozessbaum.lebt — auch unter Windows."""
+    aufrufe: list[int] = []
+
+    def spion(pid: int) -> bool:
+        aufrufe.append(pid)
+        return pid == 12
+
+    monkeypatch.setattr(prozessbaum, "lebt", spion)
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    assert deploy_status.prozess_lebt(12) is True
+    assert deploy_status.prozess_lebt(30) is False
+    assert aufrufe == [12, 30]
+
+    start, vor, pytest_zeile = _laeuft()
+    daten = json.loads(start)
+    daten["pid"] = 30
+    zeilen = [daten, json.loads(vor), json.loads(pytest_zeile)]
+    text, code = deploy_status.bericht(zeilen, 60, datetime.now(timezone.utc))
+    assert code == deploy_status.EXIT_ROT
+    assert "Gate-Prozess 30 ohne Ende-Zeile beendet" in text
+
+
+def test_prozess_lebt_windows_kernel_pfad(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Unter Windows führt prozess_lebt über prozessbaum.lebt in den Kernel-Weg."""
+    lebende = {12: 259, 30: 0}  # 259 = STILL_ACTIVE, 0 = beendet (Griff noch offen)
+
+    def oeffnen(_recht: int, _erben: bool, pid: int) -> int:
+        return pid if pid in lebende else 0
+
+    def exit_code(griff: int, ziel: object) -> int:
+        ziel._obj.value = lebende[griff]  # type: ignore[attr-defined]
+        return 1
+
+    kernel = types.SimpleNamespace(
+        OpenProcess=oeffnen,
+        GetExitCodeProcess=exit_code,
+        CloseHandle=lambda _g: 1,
+    )
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(prozessbaum, "_WINDOWS", True)
+    monkeypatch.setattr(prozessbaum, "_PROC", tmp_path / "kein-proc")
+    monkeypatch.setattr(ctypes, "windll", types.SimpleNamespace(kernel32=kernel), raising=False)
+
+    assert deploy_status.prozess_lebt(12) is True
+    assert deploy_status.prozess_lebt(30) is False
+    assert deploy_status.prozess_lebt(99) is False
+
+
+def test_prozess_lebt_ungueltige_pid_und_fehler(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Ungültige PIDs und OSError aus prozessbaum.lebt liefern None (unbekannt)."""
+    aufrufe: list[int] = []
+
+    def fehlerhaft(pid: int) -> bool:
+        aufrufe.append(pid)
+        raise OSError("gesperrt")
+
+    monkeypatch.setattr(prozessbaum, "lebt", fehlerhaft)
+    for ungueltig in (None, "12", True, False, 0, -5, 2**31):
+        assert deploy_status.prozess_lebt(ungueltig) is None
+    assert aufrufe == []
+
+    with caplog.at_level(logging.WARNING, logger="to_spawn.deploy_status"):
+        assert deploy_status.prozess_lebt(42) is None
+    assert aufrufe == [42]
+    assert "PID 42 nicht prüfbar" in caplog.text

@@ -24,16 +24,12 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import respawn, uebergabe_sichern
+from . import anleitung, respawn, uebergabe_sichern
 
 log = logging.getLogger("to_spawn.respawn_aufseher")
 
 #: Wird dem Aufseher getippt, wenn die Ablösung nach Schritt a abbricht.
-WEITER_AUFTRAG_AUFSEHER = (
-    "Ablösung abgebrochen (respawn). Der Nachfolge-Aufseher startet nicht — arbeite als "
-    "Bau-Aufseher normal weiter (nächster Tick wie gehabt). Handoff-Datei und Start-Prompt "
-    "dürfen liegen bleiben."
-)
+WEITER_AUFTRAG_AUFSEHER = anleitung.WEITER_AUFTRAG_AUFSEHER
 
 
 @dataclass(frozen=True)
@@ -81,18 +77,14 @@ def aufseher_abloesen(
     try:
         w.tippen(
             ziel,
-            respawn._handoff_auftrag(
-                str(handoff.relative_to(wurzel)), str(start.relative_to(wurzel))
-            ),
+            respawn._handoff_auftrag(str(handoff.relative_to(wurzel)), str(start.relative_to(wurzel))),
         )
     except respawn.TmuxFehler as fehler:
         log.warning("%s: Handoff-Auftrag an %s nicht getippt: %s", kopf, ziel, fehler)
         return AufseherErgebnis(respawn.EXIT_NICHT_BEWIESEN, f"{kopf}: tmux — {fehler}")
     log.info("%s: Handoff-Auftrag an %s getippt.", kopf, ziel)
     try:
-        gefunden, _start, prompt = respawn._warte_dateien(
-            w, handoff, start, seit, schluessel, warte_max
-        )
+        gefunden, _start, prompt = respawn._warte_dateien(w, handoff, start, seit, schluessel, warte_max)
     except respawn._Abbruch as abbruch:
         try:
             w.tippen(ziel, WEITER_AUFTRAG_AUFSEHER)

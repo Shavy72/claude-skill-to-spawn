@@ -24,9 +24,7 @@ TO_TICKETS = KETTE / "skills" / "to-tickets" / "SKILL.md"
 #: ``to_spawn.py <befehl> <rest der Zeile>`` — Befehl = erstes Wort nach dem Skript, auch mit
 #: Anführungszeichen um Pfad oder Befehl und in jeder Groß-/Kleinschreibung (#144); Variablen wie
 #: ``"$X"`` vor dem Befehl werden übersprungen (#156). Zeilenumbrüche mit ``\`` löst ``_befehle`` auf.
-BEFEHL = re.compile(
-    r"to_spawn\.py[\"']?(?:\s+[\"']?\$[^\s\"'`]*[\"']?)*\s+[\"']?([A-Za-z][A-Za-z0-9-]*)([^\n`]*)"
-)
+BEFEHL = re.compile(r"to_spawn\.py[\"']?(?:\s+[\"']?\$[^\s\"'`]*[\"']?)*\s+[\"']?([A-Za-z][A-Za-z0-9-]*)([^\n`]*)")
 UMBRUCH = re.compile(r"\\\r?\n[ \t]*")
 SCHALTER = re.compile(r"(?<![\w-])(--[A-Za-z][A-Za-z0-9-]*)")
 VERBOTEN = ("Shavy72/", "docs/agents/manifests")
@@ -40,10 +38,35 @@ PFLICHT_TO_TICKETS = (
     "## Werkzeuge",
     "checkpoint:human",
     "to_spawn.py anhaengen",
-    "to_spawn.py pruefen <S>",
+    "to_spawn.py regularien <S>",
     "pfade.manifeste",
     ".to-spawn/kette.md",
+    "Projekt-Vorrang",
+    "Repo-Zuordnung",
 )
+
+#: #579 (E15, E29): Pflicht-Bausteine für Schritt „Repo-Zuordnung“ in to-spec und to-tickets.
+PFLICHT_REPO_ZUORDNUNG = (
+    "Repo-Zuordnung",
+    "Skill-Repo",
+    "App-Repo",
+    "beide",
+    "Querverweis",
+    "eigenständig",
+    "begleitet",
+)
+
+
+def pruefe_repo_zuordnung_und_projekt_vorrang(text: str, name: str) -> None:
+    """#579 (E15, E29): Prüft Pflicht-Zeile „Projekt-Vorrang“ und Schritt „Repo-Zuordnung“."""
+    assert "Projekt-Vorrang" in text, f"{name}: Pflicht-Zeile 'Projekt-Vorrang' fehlt"
+    assert "statt des restlichen Texts" not in text, f"{name}: alter Projekt-Vorrang (ersetzt) noch drin"
+    assert text.index("Projekt-Vorrang") < text.index("## Process"), (
+        f"{name}: 'Projekt-Vorrang' muss vor '## Process' stehen"
+    )
+    prozess = text[text.index("## Process") :]
+    for baustein in PFLICHT_REPO_ZUORDNUNG:
+        assert baustein in prozess, f"{name}: Baustein {baustein!r} fehlt im Schritt 'Repo-Zuordnung'"
 
 
 def _texte() -> dict[Path, str]:
@@ -93,9 +116,7 @@ def test_to_tickets_skill_liegt_in_der_kette() -> None:
 
 def test_jeder_to_spawn_befehl_existiert_im_parser() -> None:
     aufrufe = _aufrufe()
-    assert any(b == "anhaengen" for _, b, _ in aufrufe), (
-        "kein to_spawn.py-Aufruf in kette/"
-    )
+    assert any(b == "anhaengen" for _, b, _ in aufrufe), "kein to_spawn.py-Aufruf in kette/"
     fehler = []
     for datei, befehl, rest in aufrufe:
         code, hilfe = _hilfe(befehl)
@@ -103,9 +124,7 @@ def test_jeder_to_spawn_befehl_existiert_im_parser() -> None:
             fehler.append(f"{datei}: to_spawn.py {befehl} — Befehl unbekannt")
             continue
         fehler += [
-            f"{datei}: to_spawn.py {befehl} {s} — Schalter unbekannt"
-            for s in SCHALTER.findall(rest)
-            if s not in hilfe
+            f"{datei}: to_spawn.py {befehl} {s} — Schalter unbekannt" for s in SCHALTER.findall(rest) if s not in hilfe
         ]
     assert not fehler, "\n".join(fehler)
 
@@ -129,9 +148,7 @@ def test_to_tickets_kanten_nur_ueber_anhaengen() -> None:
     """Keine handgesetzten Kanten mehr: ``anhaengen`` ist die eine Tür (E2-2)."""
     text = TO_TICKETS.read_text(encoding="utf-8") if TO_TICKETS.is_file() else ""
     assert "dependencies/blocked_by" not in text
-    assert "statt des restlichen Texts" not in text, (
-        "alter Projekt-Vorrang (ersetzt) noch drin"
-    )
+    assert "statt des restlichen Texts" not in text, "alter Projekt-Vorrang (ersetzt) noch drin"
     assert text.index("<!-- pflicht:beschluss-protokoll -->") < text.index("## Process")
 
 
@@ -201,3 +218,11 @@ def test_parent_satz_widerspricht_anhaengen_nicht() -> None:
     text = TO_TICKETS.read_text(encoding="utf-8") if TO_TICKETS.is_file() else ""
     assert "modify any parent issue" not in text
     assert "Unter-Issue" in text
+
+
+@pytest.mark.parametrize("skill", ("to-spec", "to-tickets"))
+def test_kette_skill_hat_repo_zuordnung_und_projekt_vorrang_579(skill: str) -> None:
+    """#579 (E15, E29): Beide Skill-Texte führen „Projekt-Vorrang“ und „Repo-Zuordnung“ mit drei Werten."""
+    pfad = KETTE / "skills" / skill / "SKILL.md"
+    assert pfad.is_file(), f"{pfad} fehlt"
+    pruefe_repo_zuordnung_und_projekt_vorrang(pfad.read_text(encoding="utf-8"), skill)

@@ -31,10 +31,17 @@ def test_halte_sperrdatei_ist_ordner_wirft(tmp_path: Path) -> None:
     with pytest.raises(sperre.SperreNichtOeffenbar) as info:
         with sperre.halte(datei):
             raise AssertionError("darf nicht gehalten werden")
-    assert isinstance(
-        info.value, OSError
-    )  # alte ``except OSError``-Aufrufer bleiben heil
+    assert isinstance(info.value, OSError)  # alte ``except OSError``-Aufrufer bleiben heil
     assert str(datei) in str(info.value)
+
+
+def test_fehlertext_nennt_pfad_ohne_repr() -> None:
+    """Windows-Pfad (Backslashes) steht einfach im Text, nicht als ``repr`` verdoppelt (#68)."""
+    pfad = r"C:\tmp\sperren\lock"
+    fehler = sperre.SperreNichtOeffenbar(13, "Sperr-Datei nicht öffenbar: verweigert", pfad)
+    assert pfad in str(fehler)
+    assert "\\\\" not in str(fehler)
+    assert fehler.filename == pfad and fehler.errno == 13
 
 
 def test_halte_ordner_nicht_anlegbar_wirft(tmp_path: Path) -> None:
@@ -49,9 +56,7 @@ def test_halte_ordner_nicht_anlegbar_wirft(tmp_path: Path) -> None:
     os.name != "posix" or os.geteuid() == 0,
     reason="Rechte-Probe braucht Nicht-root unter POSIX",
 )
-def test_halte_excl_rueckfall_ohne_rechte_wirft(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_halte_excl_rueckfall_ohne_rechte_wirft(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sperre, "_fcntl", None)
     monkeypatch.setattr(sperre, "_msvcrt", None)
     ordner = tmp_path / "nur-lesen"
@@ -76,9 +81,7 @@ def test_halte_belegt_bleibt_false(tmp_path: Path) -> None:
 # --- aufpasser: Exit 1 statt still 0 ----------------------------------------------------
 
 
-def test_aufpasser_sperrdatei_nicht_oeffenbar_exit_1(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_aufpasser_sperrdatei_nicht_oeffenbar_exit_1(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     zustand = tmp_path / "zustand"
     (zustand / "lock").mkdir(parents=True)
     a = aufpasser.Aufpasser.__new__(aufpasser.Aufpasser)
@@ -103,9 +106,7 @@ def test_capo_sperre_nicht_oeffenbar_wirft(tmp_path: Path) -> None:
             raise AssertionError("darf nicht gehalten werden")
 
 
-def test_capo_tick_sperrdatei_nicht_oeffenbar(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_capo_tick_sperrdatei_nicht_oeffenbar(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     datei = tmp_path / "zustand.json"
     (tmp_path / "zustand.json.lock").mkdir()
     monkeypatch.setattr(capo, "_zustand_datei", lambda *_a: datei)
@@ -117,9 +118,7 @@ def test_capo_tick_sperrdatei_nicht_oeffenbar(
     assert "läuft schon" not in text
 
 
-def test_capo_katalog_sperrdatei_nicht_oeffenbar(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_capo_katalog_sperrdatei_nicht_oeffenbar(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pfad = tmp_path / "FEHLERKATALOG.md"
     (tmp_path / "FEHLERKATALOG.md.lock").mkdir()
     monkeypatch.setattr(vorfall, "katalog_pfad", lambda *_a, **_k: pfad)

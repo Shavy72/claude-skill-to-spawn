@@ -1,9 +1,9 @@
 """Staging-Schalter einer fertigen Spec automatisch AN schalten (#563, Spec #548 E3/E12).
 
-Sobald der Aufseher „SPEC FERTIG“ meldet, soll David morgens die ganze Spec auf
+Sobald der Aufseher „SPEC FERTIG“ meldet, soll der Mensch morgens die ganze Spec auf
 Staging testen können. Dafür schaltet dieser Baustein den Hauptschalter der Spec
 auf Staging AN. Live schaltet er nie: das Ziel ist fest :data:`ZIEL`, es gibt
-keinen Parameter dafür (Live-Freigabe gibt nur David).
+keinen Parameter dafür (Live-Freigabe gibt nur der Mensch).
 
 Welcher Schalter zur Spec gehört, steht im Spec-Text im Abschnitt
 ``## Hauptschalter``, Zeile „Name des Hauptschalters“ (Vorlage
@@ -26,11 +26,11 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import config, gh
+from . import config, gh, prozessbaum
 
 log = logging.getLogger(__name__)
 
-#: Einziges Ziel dieses Bausteins. Live schaltet nur David von Hand.
+#: Einziges Ziel dieses Bausteins. Live schaltet nur der Mensch von Hand.
 ZIEL = "staging"
 #: Vorgabe des Schalter-Skripts im App-Repo (Ticket #560); es gilt ``staging.schalter`` (L1 #46).
 SKRIPT: str = config.DEFAULTS["staging"]["schalter"]
@@ -65,9 +65,7 @@ def hauptschalter(spec_text: str) -> str | None:
     (Platzhalter ``<spec-kurzname>.an``), kommt :class:`NameUnlesbar` — nie ein
     anderer Name aus derselben Zeile (Vorbild ``story_macher.an``).
     """
-    abschnitt = re.search(
-        r"^##\s+Hauptschalter\s*$(.*?)(?=^##\s|\Z)", spec_text, re.MULTILINE | re.DOTALL
-    )
+    abschnitt = re.search(r"^##\s+Hauptschalter\s*$(.*?)(?=^##\s|\Z)", spec_text, re.MULTILINE | re.DOTALL)
     if not abschnitt:
         return None
     for zeile in abschnitt.group(1).splitlines():
@@ -128,21 +126,19 @@ def schalte_an(repo: Path, gh_repo: str, spec: int, dry_run: bool) -> Ergebnis:
     """
     text = _spec_text(gh_repo, spec)
     if text is None:
-        return Ergebnis(
-            [f"FEHLER: Staging-Schalter — Spec-Text #{spec} nicht lesbar (gh)."], False
-        )
+        return Ergebnis([f"FEHLER: Staging-Schalter — Spec-Text #{spec} nicht lesbar (gh)."], False)
     try:
         name = hauptschalter(text)
     except NameUnlesbar as fehler:
         log.warning("Staging-Schalter: Name in Spec #%s unlesbar: %s", spec, fehler)
         return Ergebnis(
-            [
-                f"FEHLER: Staging-Schalter — Name des Hauptschalters in Spec #{spec} unlesbar: {fehler}"
-            ],
+            [f"FEHLER: Staging-Schalter — Name des Hauptschalters in Spec #{spec} unlesbar: {fehler}"],
             False,
         )
     if name is None:
-        meldung = f"Staging-Schalter: Spec #{spec} hat kein Hauptschalter-Feld — nichts geschaltet (kein Hauptschalter)."
+        meldung = (
+            f"Staging-Schalter: Spec #{spec} hat kein Hauptschalter-Feld — nichts geschaltet (kein Hauptschalter)."
+        )
         log.info("%s", meldung)
         return Ergebnis([meldung], True)
     skript = _skript(repo)
@@ -170,13 +166,12 @@ def schalte_an(repo: Path, gh_repo: str, spec: int, dry_run: bool) -> Ergebnis:
             errors="replace",
             timeout=ZEITLIMIT_S,
             check=False,
+            **prozessbaum.fensterlos(),
         )
     except (OSError, subprocess.TimeoutExpired) as fehler:
         log.warning("Staging-Schalter %s: Aufruf gescheitert: %s", name, fehler)
         return Ergebnis(
-            [
-                f"FEHLER: Staging-Schalter {name} nicht geschaltet ({fehler}) — nächster Tick versucht es wieder."
-            ],
+            [f"FEHLER: Staging-Schalter {name} nicht geschaltet ({fehler}) — nächster Tick versucht es wieder."],
             False,
         )
     if lauf.returncode != 0:

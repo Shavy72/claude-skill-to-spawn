@@ -34,9 +34,7 @@ pytestmark = pytest.mark.skipif(
 
 
 def _gh(*args: str) -> str:
-    fertig = subprocess.run(
-        ["gh", *args], capture_output=True, text=True, encoding="utf-8", check=True
-    )
+    fertig = subprocess.run(["gh", *args], capture_output=True, text=True, encoding="utf-8", check=True)
     return fertig.stdout.strip()
 
 
@@ -80,9 +78,7 @@ def test_capo_oeffnet_echtes_issue_wieder(tmp_path: Path) -> None:
         )
 
         fern = tmp_path / "fern.git"
-        subprocess.run(
-            ["git", "init", "-q", "--bare", "-b", "master", str(fern)], check=True
-        )
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "master", str(fern)], check=True)
         repo = tmp_path / "repo"
         repo.mkdir()
         _git(repo, "init", "-q", "-b", "master")
@@ -137,9 +133,7 @@ def test_capo_oeffnet_echtes_issue_wieder(tmp_path: Path) -> None:
         print(f"Kind #{kind} nach capo: {daten['state']}")
         assert daten["state"] == "OPEN"
         waechter = [
-            c["body"]
-            for c in daten["comments"]
-            if c["body"].startswith(f"{capo.WAECHTER_KOPF} commit_ohne_nummer")
+            c["body"] for c in daten["comments"] if c["body"].startswith(f"{capo.WAECHTER_KOPF} commit_ohne_nummer")
         ]
         print(f"Wächter-Kommentar: {waechter[:1]}")
         assert len(waechter) == 1

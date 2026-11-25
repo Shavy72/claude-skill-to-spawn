@@ -47,6 +47,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from to_spawn import prozessbaum
 
 log = logging.getLogger("to_spawn.inventur")
 
@@ -92,8 +93,10 @@ VORSCHLAEGE: dict[str, tuple[str, tuple[str, ...]]] = {
     "zweitmeinung": ("eine Zweitmeinung einrichten", ("codex-consult", "code-review", "council")),
 }
 
-# Projekt-Wörter: treffen immer ``projekt`` (erste Regel).
-PROJEKT_WOERTER: tuple[str, ...] = ("duoplus", "postproxy", "n8n", "adb", "airtable")
+# Projekt-Wörter: treffen immer ``projekt`` (erste Regel); private/repo-eigene Wörter
+# kommen zusätzlich aus ``.to-spawn/config.json`` (``inventur.projekt_woerter``) und der
+# privaten Review-Config ``~/.claude/review/config.json`` (#424).
+PROJEKT_WOERTER: tuple[str, ...] = ("duoplus", "n8n", "adb", "airtable")
 
 # Einordnungs-Regeln als Daten: (Kategorie, Schlüsselwörter). Reihenfolge = Vorrang.
 # Am echten Katalog nachgerechnet (Prüfpanel #209 F8): ``bauen`` steht früh mit engen
@@ -264,9 +267,7 @@ EINGEBAUTE_KOMMANDOS: frozenset[str] = frozenset(
 )  # fmt: skip
 
 # Befehle aus der Bash-Historie, die als Unterbau gezählt werden.
-UNTERBAU_BEFEHLE: frozenset[str] = frozenset(
-    {"ffmpeg", "adb", "codex", "gemini", "docker", "ssh", "gh"}
-)
+UNTERBAU_BEFEHLE: frozenset[str] = frozenset({"ffmpeg", "adb", "codex", "gemini", "docker", "ssh", "gh"})
 
 
 @dataclass(frozen=True)
@@ -387,12 +388,8 @@ class Inventur:
         self.fehlend_abgewaehlt = sorted(abgewaehlt - set(self.namen))
 
     def text(self) -> str:
-        zeilen = [
-            f"Werkzeug-Inventur für {self.repo} — Standard: alles an, abwählen statt anwählen"
-        ]
-        sprachen = ", ".join(
-            f"{s['endung']} {s['dateien']}" for s in self.projekt.get("sprachen", [])
-        )
+        zeilen = [f"Werkzeug-Inventur für {self.repo} — Standard: alles an, abwählen statt anwählen"]
+        sprachen = ", ".join(f"{s['endung']} {s['dateien']}" for s in self.projekt.get("sprachen", []))
         merkmale = ", ".join(self.projekt.get("merkmale", [])) or "keine"
         projekt = f"Projekt: {sprachen or 'keine Dateien'} · Merkmale: {merkmale}"
         if self.projekt.get("hinweis"):
@@ -468,12 +465,46 @@ def _trifft(text: str, woerter: list[str], schluesselwoerter: tuple[str, ...]) -
     return False
 
 
-def ordne_ein(name: str, beschreibung: str, claude_md: str = "", repo_name: str = "") -> str:
+def _lade_extra_projektwoerter(repo: Path, claude_home: Path) -> tuple[str, ...]:
+    """Liest zusätzliche Projekt-Wörter aus Repo-Konfig und privater Review-Config (#424)."""
+    gesehen: dict[str, None] = {}
+
+    def _merke(eintraege: Iterable[object]) -> None:
+        for wert in eintraege:
+            if isinstance(wert, str) and (sauber := wert.strip().lower()):
+                gesehen.setdefault(sauber, None)
+
+    repo_cfg = _lies_json(repo / ".to-spawn" / "config.json")
+    if isinstance(repo_cfg, dict):
+        inv_cfg = repo_cfg.get("inventur")
+        if isinstance(inv_cfg, dict) and isinstance(inv_cfg.get("projekt_woerter"), list):
+            _merke(inv_cfg["projekt_woerter"])
+
+    review_cfg = _lies_json(claude_home / "review" / "config.json")
+    if isinstance(review_cfg, dict):
+        je_signal = review_cfg.get("projekt_woerter")
+        if isinstance(je_signal, dict):
+            for liste in je_signal.values():
+                if isinstance(liste, list):
+                    _merke(liste)
+
+    return tuple(gesehen)
+
+
+def ordne_ein(
+    name: str,
+    beschreibung: str,
+    claude_md: str = "",
+    repo_name: str = "",
+    extra_woerter: Iterable[str] = (),
+) -> str:
     """Kategorie-Schlüssel für ein Werkzeug (Ablauf siehe Modul-Doku)."""
     regeln = list(REGELN)
+    zusatz: list[str] = [w.strip().lower() for w in extra_woerter if w and w.strip()]
     if repo_name:
-        eigene = tuple({repo_name.lower(), repo_name.lower().split("-")[0]} - {""})
-        regeln[0] = ("projekt", PROJEKT_WOERTER + eigene)
+        zusatz.extend(sorted({repo_name.lower(), repo_name.lower().split("-")[0]} - {""}))
+    if zusatz:
+        regeln[0] = ("projekt", tuple(dict.fromkeys((*PROJEKT_WOERTER, *zusatz))))
     for text in (name, beschreibung):
         klein = text.lower()
         woerter = _woerter(klein)
@@ -592,9 +623,7 @@ def lies_katalog(repo: Path, claude_home: Path, home_json: Path) -> Katalog:
     """Alle installierten Werkzeuge (Kategorie nur bei eingebauten schon gesetzt)."""
     werkzeuge: list[Werkzeug] = []
     befunde: list[str] = []
-    kommandos = _kommandos_in(claude_home / "commands") | _kommandos_in(
-        repo / ".claude" / "commands"
-    )
+    kommandos = _kommandos_in(claude_home / "commands") | _kommandos_in(repo / ".claude" / "commands")
 
     for skill_ordner in (claude_home / "skills", repo / ".claude" / "skills"):
         for name, beschreibung, datei in _skills_in(skill_ordner, befunde):
@@ -618,15 +647,11 @@ def lies_katalog(repo: Path, claude_home: Path, home_json: Path) -> Katalog:
                     continue
                 fm = _frontmatter(datei)
                 name = f"{plugin}:{fm.get('name') or ordner.name}"
-                werkzeuge.append(
-                    Werkzeug(name, "plugin-skill", "", str(ordner), fm.get("description", ""))
-                )
+                werkzeuge.append(Werkzeug(name, "plugin-skill", "", str(ordner), fm.get("description", "")))
             kommandos |= _kommandos_in(install / "commands", f"{plugin}:")
             mcp = manifest.get("mcpServers") if isinstance(manifest, dict) else None
             for server in mcp if isinstance(mcp, dict) else {}:
-                werkzeuge.append(
-                    Werkzeug(f"plugin_{plugin}_{server}", "mcp", "", str(install), plugin)
-                )
+                werkzeuge.append(Werkzeug(f"plugin_{plugin}_{server}", "mcp", "", str(install), plugin))
 
     for agent_ordner in (claude_home / "agents", repo / ".claude" / "agents"):
         for name, beschreibung, datei in _agenten_in(agent_ordner):
@@ -657,10 +682,7 @@ def lies_katalog(repo: Path, claude_home: Path, home_json: Path) -> Katalog:
     eindeutig: list[Werkzeug] = []
     for w in werkzeuge:
         if w.name in erster:
-            befunde.append(
-                f"doppelt: `{w.name}` aus {erster[w.name].quelle} und {w.quelle} — "
-                "nur der erste zählt"
-            )
+            befunde.append(f"doppelt: `{w.name}` aus {erster[w.name].quelle} und {w.quelle} — nur der erste zählt")
             continue
         erster[w.name] = w
         eindeutig.append(w)
@@ -730,14 +752,13 @@ def lies_projekt(repo: Path) -> dict[str, Any]:
             errors="replace",
             timeout=60,
             check=False,
+            **prozessbaum.fensterlos(),
         )
         if lauf.returncode == 0:
             dateien = lauf.stdout.splitlines()
         else:
             fehlertext = lauf.stderr.strip()
-            log.warning(
-                "git ls-files fehlgeschlagen (Exit %s) in %s: %s", lauf.returncode, repo, fehlertext
-            )
+            log.warning("git ls-files fehlgeschlagen (Exit %s) in %s: %s", lauf.returncode, repo, fehlertext)
             erste = fehlertext.splitlines()[0] if fehlertext else "ohne Meldung"
             hinweis = f"git ls-files fehlgeschlagen (Exit {lauf.returncode}): {erste}"
     except (OSError, subprocess.SubprocessError) as fehler:
@@ -876,7 +897,7 @@ def _fuehre_aus(befehl: list[str]) -> int:
     """Echte Prüfung (z. B. ``gh auth status``): Exit-Code, Fehler zählen als 1."""
     try:
         return subprocess.run(
-            befehl, capture_output=True, timeout=30, check=False, stdin=subprocess.DEVNULL
+            befehl, capture_output=True, timeout=30, check=False, stdin=subprocess.DEVNULL, **prozessbaum.fensterlos()
         ).returncode
     except (OSError, subprocess.SubprocessError) as fehler:
         log.warning("Prüfung %s gescheitert: %s", " ".join(befehl), fehler)
@@ -909,9 +930,7 @@ def pruefe_unterbauten(
             gruende.append(" und ".join(f"Befehl `{b}`" for b in u.befehle) + " nicht im PATH")
         if u.schluessel:
             gruende.append(
-                ("weder " if len(u.schluessel) > 1 else "")
-                + " noch ".join(u.schluessel)
-                + " in Umgebung oder .env"
+                ("weder " if len(u.schluessel) > 1 else "") + " noch ".join(u.schluessel) + " in Umgebung oder .env"
             )
         for d in u.dateien:
             gruende.append(f"~/{d} fehlt")
@@ -968,9 +987,10 @@ def erstelle(
             werkzeuge.append(Werkzeug(server, "mcp", "", "claude.ai-Connector (Historie)"))
 
     claude_md = _lies_text(repo / "CLAUDE.md")
+    extra_woerter = _lade_extra_projektwoerter(repo, claude_home)
     for w in werkzeuge:
         if not w.kategorie:
-            w.kategorie = ordne_ein(w.name, w.beschreibung, claude_md, repo.name)
+            w.kategorie = ordne_ein(w.name, w.beschreibung, claude_md, repo.name, extra_woerter=extra_woerter)
         w.genutzt = _nutzung(w, historie)
 
     befunde = list(katalog.befunde)
@@ -991,9 +1011,7 @@ def erstelle(
         katalog_befunde=befunde,
         kommando_dateien=katalog.kommandos,
     )
-    inventur.setup_zeilen = pruefe_unterbauten(
-        umgebung, set(projekt["env_schluessel"]), heim, which, ausfuehren
-    )
+    inventur.setup_zeilen = pruefe_unterbauten(umgebung, set(projekt["env_schluessel"]), heim, which, ausfuehren)
     inventur.tote_winkel = _tote_winkel(inventur)
     return inventur
 
@@ -1021,10 +1039,7 @@ def _tote_winkel(inventur: Inventur) -> list[str]:
     namen = {w.name for w in inventur.werkzeuge}
     for schluessel, liste in inventur.je_kategorie().items():
         if not liste:
-            hinweise.append(
-                f"Kategorie „{KATEGORIEN[schluessel]}“ leer — "
-                f"Vorschlag: {_vorschlag(schluessel, namen)}"
-            )
+            hinweise.append(f"Kategorie „{KATEGORIEN[schluessel]}“ leer — Vorschlag: {_vorschlag(schluessel, namen)}")
     hinweise.extend(inventur.katalog_befunde)
 
     je_kurzname: dict[str, list[str]] = {}
@@ -1039,9 +1054,7 @@ def _tote_winkel(inventur: Inventur) -> list[str]:
     historie = inventur.historie
     if historie.get("dateien", 0) == 0:
         if historie.get("ordner_da"):
-            hinweise.append(
-                f"Historie: {historie['ordner']} hat 0 Dateien — Nutzung unbekannt (alles 0×)"
-            )
+            hinweise.append(f"Historie: {historie['ordner']} hat 0 Dateien — Nutzung unbekannt (alles 0×)")
         else:
             hinweise.append(f"Historie: {historie['ordner']} fehlt — Nutzung unbekannt (alles 0×)")
     for skill, anzahl in sorted(historie["skills"].items()):
@@ -1087,10 +1100,7 @@ def schreibe(inventur: Inventur, datei: Path) -> Path:
         "stand": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "standard": "alles an",
         "abgewaehlt": inventur.abgewaehlt,
-        "kategorien": {
-            schluessel: [w.name for w in liste]
-            for schluessel, liste in inventur.je_kategorie().items()
-        },
+        "kategorien": {schluessel: [w.name for w in liste] for schluessel, liste in inventur.je_kategorie().items()},
         "setup_zeilen": [z.als_dict() for z in inventur.setup_zeilen],
         "tote_winkel": list(inventur.tote_winkel),
     }

@@ -1,8 +1,10 @@
-"""Thermo-Review einer fertigen Spec: Aufbau-Prüfung planen und Befunde im Marker sammeln.
+"""Thermo-Review einer fertigen Spec: Aufbau-Prüfung und Prüfung „Bereit für Live?“ planen und sammeln.
 
 Aufruf:
 ``python thermo_lauf.py plan <S> [--repo <pfad>] [--basis <sha>] [--kopf <ref>]``
 ``python thermo_lauf.py sammeln <S> [--repo <pfad>]`` (``--ohne-github`` ohne Wirkung seit E15)
+``python thermo_lauf.py live-bereit plan <S> [--repo <pfad>] [--basis <sha>] [--kopf <ref>] [--neu]``
+``python thermo_lauf.py live-bereit sammeln <S> [--repo <pfad>] [--ohne-github]``
 
 ``plan`` bestimmt den Code-Diff der ganzen Spec, teilt ihn auf parallele Prüfer (Subagenten mit
 ``model: opus``) auf und gibt JSON mit fertigen Prompts aus. Jeder Prompt nennt die neuen Namen der
@@ -14,6 +16,14 @@ Code-Änderung, 4 = schon erledigt (Marker da) oder läuft schon (Sperre jünger
 (E15, #582). Nur Befunde — kein Umbau in der Spec.
 Exit 0 = fertig, 1 = Fehler, 3 = mindestens ein Teil fehlt (kein Marker, ``lauf.json`` bleibt liegen —
 fehlenden Teil erneut starten, dann ``sammeln`` wiederholen).
+
+``live-bereit`` (#369, L9 A57) nutzt dieselbe Form „Auftrag → Lese-Helfer → sammeln“ als festen
+Teil ``live_bereit`` VOR ``abschluss_paket.py ablegen --stand abnahme`` (nur lesend): prüft
+(1) jede Zeile in ``entscheidungen_<S>.md`` im Code umgesetzt, (2) bei Änderung von Live-Daten
+Sicherung und Rückweg vorhanden, (3) Abnahme-Beleg je Bau-Ticket. ``sammeln`` ergänzt den
+maschinenlesbaren Beleg-Check, legt je Lücke ein Folge-Ticket an der Spec an (``befund.melde``)
+und schreibt ``docs/agents/live_bereit_<S>.md``. Exit 0 = bereit, 2 = Lücken gefunden (kein
+stilles Weiterlaufen), 3 = Antwort fehlt, 1 = Fehler.
 """
 
 from __future__ import annotations
@@ -33,7 +43,7 @@ from typing import Any
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import config, gh  # noqa: E402
+from to_spawn import befund, belege, briefkasten, capo, config, gh, manifest, prozessbaum  # noqa: E402
 from to_spawn.manifest import manifest_pfad  # noqa: E402
 
 log = logging.getLogger("thermo_lauf")
@@ -78,6 +88,7 @@ def _git(repo: Path, *args: str) -> str:
         encoding="utf-8",
         errors="replace",
         check=False,
+        **prozessbaum.fensterlos(),
     )
     if lauf.returncode != 0:
         raise Fehler(f"git {' '.join(args)} fehlgeschlagen: {lauf.stderr.strip()}")
@@ -421,9 +432,7 @@ def _tabelle(befunde: list[dict[str, Any]]) -> list[str]:
     return zeilen
 
 
-def _marker_text(
-    spec: int, lauf: dict[str, Any], befunde: list[dict[str, Any]], vermerke: list[str]
-) -> str:
+def _marker_text(spec: int, lauf: dict[str, Any], befunde: list[dict[str, Any]], vermerke: list[str]) -> str:
     basis, kopf = str(lauf.get("basis") or "?")[:7], str(lauf.get("kopf") or "?")[:7]
     zeilen = [
         f"# Thermo-Review Spec #{spec}",
@@ -522,12 +531,552 @@ def sammeln(repo: Path, spec: int) -> int:
         sperre.unlink(missing_ok=True)
 
 
+# --- #369 (L9 A57): fester Teil „live_bereit“ vor „bereit zur Abnahme“ ---------------------------
+
+LIVE_BEREIT_TEIL = "live_bereit"
+LIVE_BEREIT_FRAGEN: tuple[tuple[str, str], ...] = (
+    ("entscheidungen", "Jede Zeile in `entscheidungen_{spec}.md` ist im Code umgesetzt?"),
+    ("live_daten", "Ändert die Spec Live-Daten, gibt es Sicherung und Rückweg?"),
+    ("abnahme_belege", "Hat jedes Ticket seinen Abnahme-Beleg?"),
+)
+_ERGEBNIS_ZEILE = re.compile(r"^Ergebnis:\s*(.+)$", re.M)
+_FOLGE_NR = re.compile(r"Folge-Ticket #(\d+)")
+_FRAGE_ZEILE = re.compile(r"^\|\s*([123])\s*\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|$", re.M)
+
+
+@dataclass(frozen=True)
+class LiveBereitStand:
+    """Geprüfter Stand der „Bereit für Live?“-Prüfung einer Spec (#369)."""
+
+    bereit: bool
+    zeile: str
+    maengel: list[str]
+    marker: str
+
+
+def live_bereit_ordner(repo: Path, spec: int) -> Path:
+    return repo / ".to-spawn" / f"live_bereit_{spec}"
+
+
+def live_bereit_marker_pfad(repo: Path, spec: int) -> Path:
+    return repo_ordner(repo, "agenten") / f"live_bereit_{spec}.md"
+
+
+def _rel_pfad(repo: Path, pfad: Path) -> str:
+    try:
+        return pfad.resolve().relative_to(repo.resolve()).as_posix()
+    except ValueError:
+        return pfad.as_posix()
+
+
+def _ist_abnahme_ticket(titel: str) -> bool:
+    return titel.strip().lower().startswith("abnahme")
+
+
+def _ist_live_bereit_folge(eintrag: Any) -> bool:
+    return (
+        isinstance(eintrag, dict)
+        and "gelb_von" in eintrag
+        and str(eintrag.get("umfang") or "").strip().startswith("Bereit für Live (")
+    )
+
+
+def belege_pruefen(
+    repo: Path, spec: int, tickets: dict[str, Any] | None = None
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Prüft für jedes Bau-Ticket der Spec den Abnahme-Beleg über ``to_spawn.belege`` (nur lesend)."""
+    if tickets is None:
+        try:
+            _, tickets = lade_manifest(repo, spec)
+        except Fehler:
+            return [], []
+    konfig = config.lade(repo)
+    ordner_rel = capo.belege_ordner(konfig)
+    verify_hard = repo / ordner_rel
+    uebersicht: list[dict[str, Any]] = []
+    luecken: list[dict[str, Any]] = []
+    for nr in sorted(tickets, key=manifest.ticket_schluessel):
+        eintrag = tickets[nr]
+        titel = str(eintrag.get("title") or "").strip() if isinstance(eintrag, dict) else ""
+        if _ist_abnahme_ticket(titel):
+            uebersicht.append(
+                {"ticket": nr, "titel": titel, "status": "abnahme", "beleg": "Abnahme-Ticket (offen vor Abnahme)"}
+            )
+            continue
+        ausw = belege.auswerten(verify_hard, str(nr))
+        if ausw.status == "gruen":
+            quelle = ausw.lauf.datei if ausw.lauf else (ausw.abnahme_datei or ", ".join(ausw.dateien))
+            uebersicht.append({"ticket": nr, "titel": titel, "status": "gruen", "beleg": f"{ordner_rel}/{quelle}"})
+            continue
+        if not ausw.dateien:
+            grund = f"kein Abnahme-Beleg in {ordner_rel}"
+        elif ausw.status == "rot":
+            quelle = ausw.lauf.datei if ausw.lauf else (ausw.abnahme_datei or ", ".join(ausw.dateien))
+            detail = ausw.abnahme or (ausw.lauf.zeile if ausw.lauf else "fehlgeschlagen")
+            grund = f"Abnahme-Beleg rot ({ordner_rel}/{quelle}: {detail})"
+        elif ausw.hinweis:
+            grund = f"Abnahme-Beleg offen: {ausw.hinweis}"
+        else:
+            grund = f"Abnahme-Beleg offen/unvollständig ({', '.join(ausw.dateien)})"
+        uebersicht.append({"ticket": nr, "titel": titel, "status": ausw.status, "beleg": grund})
+        nr_int = int(nr) if str(nr).isdigit() else None
+        luecke: dict[str, Any] = {
+            "frage": "abnahme_belege",
+            "ticket": nr_int,
+            "titel": f"Abnahme-Beleg für #{nr} fehlt/nicht grün",
+            "grund": grund,
+        }
+        if _ist_live_bereit_folge(eintrag) and nr_int is not None:
+            # Offenes Bereit-für-Live-Folge-Ticket ist selbst schon das Folge-Ticket (keine Endlos-Kette).
+            luecke["bestehende_folge"] = nr_int
+        luecken.append(luecke)
+    return uebersicht, luecken
+
+
+def _entscheidungen_lesen(repo: Path, spec: int, tickets: dict[str, Any]) -> tuple[str, list[str]]:
+    """Liest Entscheidungszeilen aus ``entscheidungen_<S>.md`` und ``briefkasten.liste`` (nur lesend)."""
+    datei = capo.entscheidungs_datei(repo, spec)
+    rel = _rel_pfad(repo, datei)
+    zeilen: list[str] = []
+    if datei.is_file():
+        try:
+            zeilen = [z for z in datei.read_text(encoding="utf-8").splitlines() if z.startswith("| #")]
+        except OSError as fehler:
+            log.warning("Entscheidungs-Datei %s nicht lesbar: %s", datei, fehler)
+    if not zeilen:
+        nummern = sorted(int(n) for n in tickets if str(n).isdigit())
+        for e in briefkasten.liste(nummern, log_repo=repo, hauptbaum=repo):
+            quelle = _zelle(str(e.get("beleg") or "").strip()) or "keine Quelle"
+            zeilen.append(
+                f"| #{e.get('ticket', '')} | {_zelle(str(e.get('was') or ''))} | "
+                f"{_zelle(str(e.get('warum') or ''))} | {quelle} |"
+            )
+    return rel, zeilen
+
+
+def _optionale_git_spanne(repo: Path, manifest_datei: Path, basis: str | None, kopf_ref: str) -> tuple[str, str]:
+    """Löst ``basis..kopf`` auf; explizites ``--basis`` bricht bei Fehler ab, sonst Best-Effort."""
+    if basis:
+        b = _git(repo, "rev-parse", "--verify", f"{basis}^{{commit}}").strip()
+        k = _git(repo, "rev-parse", "--verify", f"{kopf_ref}^{{commit}}").strip()
+        return b, k
+    try:
+        b = basis_aus_manifest(repo, manifest_datei)
+        k = _git(repo, "rev-parse", "--verify", f"{kopf_ref}^{{commit}}").strip()
+        return b, k
+    except Fehler as fehler:
+        log.warning("Git-Spanne für live_bereit nicht ermittelt (%s) — plane ohne Diff-Spanne", fehler)
+        return "", ""
+
+
+def live_bereit_prompt(
+    repo: Path,
+    spec: int,
+    basis: str,
+    kopf: str,
+    dateien: list[str],
+    ent_pfad: str,
+    ent_zeilen: list[str],
+    beleg_uebersicht: list[dict[str, Any]],
+) -> str:
+    """Nur-lesender Auftrag für den Prüfer des festen Teils ``live_bereit`` (#369)."""
+    diff_zeile = (
+        f"Diff: git -C {repo} diff {basis}..{kopf}" + (f" -- {' '.join(dateien)}" if dateien else "")
+        if basis and kopf
+        else f"Repo: {repo} (kein Git-Diff-Bereich ermittelt — geänderte Dateien direkt lesen)"
+    )
+    ent_block = ent_zeilen or ["(keine Entscheidungen gefunden)"]
+    beleg_block = [
+        f"- #{b['ticket']} ({b['titel'] or 'ohne Titel'}): {b['status']} — {b['beleg']}" for b in beleg_uebersicht
+    ] or ["- (keine Tickets im Manifest)"]
+    schema = (
+        '{"teil": "live_bereit", "fragen": {'
+        '"entscheidungen": {"ok": true, "beleg": "..."}, '
+        '"live_daten": {"ok": true, "aendert_live_daten": false, "beleg": "..."}, '
+        '"abnahme_belege": {"ok": true, "beleg": "..."}}, '
+        '"luecken": [{"frage": "entscheidungen|live_daten|abnahme_belege", "ticket": 123, '
+        '"titel": "...", "grund": "..."}]}'
+    )
+    return "\n".join(
+        [
+            "Schätzung: ~40k Token · Lese-Budget: Entscheidungs-Liste, Spec-Diff und Belegseiten lesen",
+            f"Rolle: Prüfer Bereit für Live (Teil {LIVE_BEREIT_TEIL}), Spec #{spec}.",
+            "Verbote: nie Dateien ändern (kein Edit/Write), keine Git-Schreibbefehle, kein stash/checkout, "
+            "keine Hintergrund-Befehle, nichts auf Live anfassen.",
+            diff_zeile,
+            "Beantworte alle drei Fragen mit konkretem Beleg (Datei:Zeile, Diff-Stelle oder Belegdatei):",
+            f"1. Jede Zeile in `{ent_pfad}` ist im Code umgesetzt?",
+            *ent_block,
+            (
+                "2. Ändert die Spec Live-Daten (Migrationen, Datenbank-Schema, Live-Skripte, Produktiv-Konfig), "
+                "gibt es Sicherung und Rückweg? Falls keine Live-Daten geändert werden, mit Beleg aus dem Diff bestätigen."
+            ),
+            "3. Hat jedes Bau-Ticket seinen Abnahme-Beleg? (Vorprüfung aus den Belegseiten):",
+            *beleg_block,
+            "Jede ungelöste Lücke gehört als eigener Eintrag in `luecken` (nie still übergehen).",
+            "Antwort NUR JSON:",
+            schema,
+        ]
+    )
+
+
+def live_bereit_plan(repo: Path, spec: int, basis: str | None, kopf_ref: str, *, neu: bool = False) -> int:
+    """Plant den festen Lese-Prüfschritt ``live_bereit`` vor ``ablegen --stand abnahme`` (#369)."""
+    ordner = live_bereit_ordner(repo, spec)
+    marker = live_bereit_marker_pfad(repo, spec)
+    if not neu and marker.is_file():
+        stand = live_bereit_pruefen(repo, spec)
+        if stand.bereit:
+            print(f"Schon erledigt: {marker} · {stand.zeile}")
+            return 4
+    sperre = ordner / "lauf.json"
+    if not neu and sperre_aktiv(sperre):
+        print(f"Bereit-für-Live-Prüfung Spec #{spec} läuft schon (Sperre {sperre}, jünger als {SPERRE_MIN} min).")
+        return 4
+    manifest_datei, tickets = lade_manifest(repo, spec)
+    b, k = _optionale_git_spanne(repo, manifest_datei, basis, kopf_ref)
+    kandidaten = {
+        f for t in tickets.values() if isinstance(t, dict) for f in t.get("files") or [] if isinstance(f, str)
+    }
+    if b and k:
+        kandidaten |= ticket_dateien(repo, b, k, [str(n) for n in tickets])
+    dateien = sorted(kandidaten)
+    ent_pfad, ent_zeilen = _entscheidungen_lesen(repo, spec, tickets)
+    beleg_uebersicht, beleg_luecken = belege_pruefen(repo, spec, tickets)
+    prompt_text = live_bereit_prompt(repo, spec, b, k, dateien, ent_pfad, ent_zeilen, beleg_uebersicht)
+    teil = {"nr": LIVE_BEREIT_TEIL, "dateien": dateien, "prompt": prompt_text}
+    ordner.mkdir(parents=True, exist_ok=True)
+    antwort_pfad = ordner / f"teil-{LIVE_BEREIT_TEIL}.json"
+    antwort_pfad.unlink(missing_ok=True)
+    lauf = {
+        "start": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "spec": spec,
+        "teil": LIVE_BEREIT_TEIL,
+        "basis": b,
+        "kopf": k,
+        "teil_details": [{"nr": LIVE_BEREIT_TEIL, "prompt": prompt_text}],
+    }
+    sperre.write_text(json.dumps(lauf, ensure_ascii=False, indent=2), encoding="utf-8")
+    ausgabe = {
+        "spec": spec,
+        "teil": LIVE_BEREIT_TEIL,
+        "basis": b,
+        "kopf": k,
+        "befunde_ordner": str(ordner),
+        "antwort_datei": str(antwort_pfad),
+        "teile": [teil],
+        "vorpruefung": {
+            "entscheidungen": ent_zeilen,
+            "belege_luecken": beleg_luecken,
+        },
+    }
+    print(json.dumps(ausgabe, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _ticket_int(wert: Any) -> int | None:
+    if isinstance(wert, bool):
+        return None
+    if isinstance(wert, int):
+        return wert
+    text = str(wert or "").strip().lstrip("#")
+    return int(text) if text.isdigit() else None
+
+
+def _lies_live_bereit_antwort(pfad: Path) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
+    """Liest und prüft ``teil-live_bereit.json``; fehlende Frage oder leerer Beleg zählt als Lücke."""
+    try:
+        roh = json.loads(pfad.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as fehler:
+        raise Fehler(f"Antwort {pfad} nicht lesbar: {fehler}") from fehler
+    if not isinstance(roh, dict):
+        raise Fehler(f"Antwort {pfad}: JSON-Objekt erwartet")
+    fragen_roh = roh.get("fragen")
+    if not isinstance(fragen_roh, dict):
+        raise Fehler(f"Antwort {pfad}: Feld 'fragen' fehlt oder ist kein Objekt")
+    fragen: dict[str, dict[str, Any]] = {}
+    luecken: list[dict[str, Any]] = []
+    for schluessel, _text in LIVE_BEREIT_FRAGEN:
+        eintrag = fragen_roh.get(schluessel)
+        if not isinstance(eintrag, dict):
+            fragen[schluessel] = {"ok": False, "beleg": "Antwort fehlt"}
+            luecken.append(
+                {
+                    "frage": schluessel,
+                    "ticket": None,
+                    "titel": f"Antwort zu Frage „{schluessel}“ fehlt",
+                    "grund": "Prüf-Antwort unvollständig",
+                }
+            )
+            continue
+        ok = bool(eintrag.get("ok"))
+        beleg = str(eintrag.get("beleg") or "").strip()
+        if not beleg:
+            ok = False
+            beleg = "Beleg fehlt"
+            luecken.append(
+                {
+                    "frage": schluessel,
+                    "ticket": None,
+                    "titel": f"Beleg zu Frage „{schluessel}“ fehlt",
+                    "grund": "Jede Frage braucht einen konkreten Beleg",
+                }
+            )
+        norm: dict[str, Any] = {"ok": ok, "beleg": beleg}
+        if schluessel == "live_daten":
+            norm["aendert_live_daten"] = bool(eintrag.get("aendert_live_daten"))
+        fragen[schluessel] = norm
+    for eintrag in roh.get("luecken") or []:
+        if not isinstance(eintrag, dict):
+            continue
+        frage = str(eintrag.get("frage") or "").strip()
+        if frage not in {k for k, _ in LIVE_BEREIT_FRAGEN}:
+            frage = "entscheidungen"
+        titel = str(eintrag.get("titel") or "").strip() or f"Lücke in {frage}"
+        grund = str(eintrag.get("grund") or "").strip() or titel
+        luecken.append(
+            {
+                "frage": frage,
+                "ticket": _ticket_int(eintrag.get("ticket")),
+                "titel": titel,
+                "grund": grund,
+            }
+        )
+    for schluessel, _text in LIVE_BEREIT_FRAGEN:
+        if not fragen[schluessel]["ok"] and not any(l["frage"] == schluessel for l in luecken):
+            luecken.append(
+                {
+                    "frage": schluessel,
+                    "ticket": None,
+                    "titel": f"Lücke in Frage „{schluessel}“",
+                    "grund": fragen[schluessel]["beleg"],
+                }
+            )
+    return fragen, luecken
+
+
+def _folge_tickets_anlegen(
+    repo: Path, spec: int, luecken: list[dict[str, Any]], *, ohne_github: bool
+) -> list[dict[str, Any]]:
+    """Legt je Lücke genau ein Folge-Ticket an der Spec an (``befund.melde``, idempotent)."""
+    slug = "" if ohne_github else gh.repo_aus_origin(repo)
+    hat_gh = bool(slug and gh.gh_befehl() is not None)
+    ergebnis_liste: list[dict[str, Any]] = []
+    for luecke in luecken:
+        eintrag = dict(luecke)
+        ursprung = eintrag["ticket"] if isinstance(eintrag.get("ticket"), int) else spec
+        text = f"Bereit für Live ({eintrag['frage']}): {eintrag['titel']} — {eintrag['grund']}"
+        if hat_gh:
+            erg = befund.melde(repo, slug, spec, ursprung, "gelb", text)
+            zeilen_text = " | ".join(erg.zeilen)
+            treffer = _FOLGE_NR.search(zeilen_text)
+            eintrag["folge_ticket"] = int(treffer.group(1)) if treffer else None
+            if not erg.ok:
+                log.warning("Folge-Ticket für Lücke (%s) nicht vollständig angelegt: %s", eintrag["titel"], zeilen_text)
+                eintrag["folge_hinweis"] = zeilen_text
+        else:
+            eintrag["folge_ticket"] = None
+            eintrag["folge_hinweis"] = (
+                f"ohne GitHub — von Hand: to_spawn.py befund --spec {spec} --ticket {ursprung} --stufe gelb"
+            )
+        ergebnis_liste.append(eintrag)
+    return ergebnis_liste
+
+
+def _frage_urteil(schluessel: str, daten: dict[str, Any]) -> str:
+    if not daten.get("ok"):
+        return "nein"
+    if schluessel == "live_daten" and not daten.get("aendert_live_daten"):
+        return "entfällt"
+    return "ja"
+
+
+def _live_bereit_marker_text(
+    spec: int,
+    lauf: dict[str, Any],
+    fragen: dict[str, dict[str, Any]],
+    luecken: list[dict[str, Any]],
+) -> tuple[str, str]:
+    """Baut Ergebniszeile + Marker-Markdown für ``docs/agents/live_bereit_<S>.md``."""
+    basis = str(lauf.get("basis") or "?")[:7]
+    kopf = str(lauf.get("kopf") or "?")[:7]
+    if not luecken:
+        ergebnis = "BEREIT — 3/3 Fragen belegt, 0 Lücken"
+    else:
+        nummern = [f"#{l['folge_ticket']}" for l in luecken if l.get("folge_ticket")]
+        folge_text = ", ".join(nummern) if nummern else "offen"
+        wort = "Lücke" if len(luecken) == 1 else "Lücken"
+        label = "Folge-Ticket" if len(luecken) == 1 else "Folge-Tickets"
+        ergebnis = f"NICHT BEREIT — {len(luecken)} {wort} ({label}: {folge_text})"
+    zeilen = [
+        f"# Bereit für Live? Spec #{spec}",
+        "",
+        f"Stand: {datetime.now().astimezone().isoformat(timespec='seconds')}",
+        f"Basis..Kopf: `{basis}..{kopf}`",
+        f"Ergebnis: {ergebnis}",
+        "",
+        "## Drei Fragen",
+        "",
+        "| # | Frage | Urteil | Beleg |",
+        "|---|---|---|---|",
+    ]
+    for idx, (schluessel, vorlage) in enumerate(LIVE_BEREIT_FRAGEN, 1):
+        frage_text = vorlage.format(spec=spec)
+        urteil = _frage_urteil(schluessel, fragen[schluessel])
+        beleg = _zelle(str(fragen[schluessel].get("beleg") or ""))
+        zeilen.append(f"| {idx} | {_zelle(frage_text)} | {urteil} | {beleg} |")
+    zeilen += ["", f"## Lücken ({len(luecken)})", ""]
+    if not luecken:
+        zeilen.append("Keine Lücken.")
+    else:
+        for luecke in luecken:
+            ticket_tag = f" (#{luecke['ticket']})" if luecke.get("ticket") else ""
+            if luecke.get("folge_ticket"):
+                folge = f"Folge-Ticket: #{luecke['folge_ticket']}"
+            else:
+                folge = f"Folge-Ticket: {luecke.get('folge_hinweis') or 'offen'}"
+            zeilen.append(f"- [{luecke['frage']}]{ticket_tag} {luecke['titel']} — {luecke['grund']} · {folge}")
+    return ergebnis, "\n".join(zeilen) + "\n"
+
+
+def live_bereit_sammeln(repo: Path, spec: int, *, ohne_github: bool = False) -> int:
+    """Sammelt ``teil-live_bereit.json``, ergänzt Beleg-Check, legt Folge-Tickets an, schreibt Marker."""
+    ordner = live_bereit_ordner(repo, spec)
+    marker = live_bereit_marker_pfad(repo, spec)
+    sperre = ordner / "lauf.json"
+    antwort_pfad = ordner / f"teil-{LIVE_BEREIT_TEIL}.json"
+    try:
+        lauf = json.loads(sperre.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as fehler:
+        log.warning("lauf.json fehlt/unlesbar (%s) — Basis/Kopf unbekannt", fehler)
+        lauf = {}
+    if not antwort_pfad.is_file():
+        prompt_text = ""
+        for d in lauf.get("teil_details") or []:
+            if isinstance(d, dict) and d.get("nr") == LIVE_BEREIT_TEIL:
+                prompt_text = str(d.get("prompt") or "")
+                break
+        meldung = (
+            f"Teil {LIVE_BEREIT_TEIL} fehlt — Subagent für diesen Teil erneut starten, "
+            "dann live-bereit sammeln erneut aufrufen."
+        )
+        if prompt_text:
+            meldung += f"\nPrompt Teil {LIVE_BEREIT_TEIL}:\n{prompt_text}"
+        print(meldung)
+        return 3
+    try:
+        fragen, luecken = _lies_live_bereit_antwort(antwort_pfad)
+        _uebersicht, beleg_luecken = belege_pruefen(repo, spec)
+        offene_folgen = [b for b in beleg_luecken if b.get("bestehende_folge")]
+        neue_beleg_luecken = [b for b in beleg_luecken if not b.get("bestehende_folge")]
+        for bl in neue_beleg_luecken:
+            if not any(l["frage"] == "abnahme_belege" and l.get("ticket") == bl.get("ticket") for l in luecken):
+                luecken.append(bl)
+        gesehen: set[tuple[str, int | None, str]] = set()
+        eindeutig: list[dict[str, Any]] = []
+        for luecke in luecken:
+            key = (luecke["frage"], luecke.get("ticket"), luecke["titel"].lower())
+            if key not in gesehen:
+                gesehen.add(key)
+                eindeutig.append(luecke)
+        mit_folgen = _folge_tickets_anlegen(repo, spec, eindeutig, ohne_github=ohne_github) if eindeutig else []
+        abgedeckt = {l["folge_ticket"] for l in mit_folgen if l.get("folge_ticket")}
+        unabgedeckt_folgen: list[dict[str, Any]] = []
+        for bl in offene_folgen:
+            if bl["bestehende_folge"] not in abgedeckt:
+                eintrag = {k: v for k, v in bl.items() if k != "bestehende_folge"}
+                eintrag["folge_ticket"] = bl["bestehende_folge"]
+                unabgedeckt_folgen.append(eintrag)
+        mit_folgen.extend(unabgedeckt_folgen)
+        alle_beleg_luecken = [*neue_beleg_luecken, *unabgedeckt_folgen]
+        if alle_beleg_luecken:
+            fragen["abnahme_belege"]["ok"] = False
+            fehlend_text = ", ".join(f"#{b['ticket']}" for b in alle_beleg_luecken if b.get("ticket"))
+            if fehlend_text and fehlend_text not in fragen["abnahme_belege"]["beleg"]:
+                fragen["abnahme_belege"]["beleg"] = (
+                    f"{fragen['abnahme_belege']['beleg']} (Beleg-Prüfung rot/fehlend: {fehlend_text})"
+                )
+        ergebnis, text = _live_bereit_marker_text(spec, lauf, fragen, mit_folgen)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(text, encoding="utf-8")
+        print(f"Bereit für Live?: {ergebnis} · Marker: {marker}")
+        for eintrag in mit_folgen:
+            ticket_tag = f" #{eintrag['ticket']}" if eintrag.get("ticket") else ""
+            folge_tag = f" → Folge-Ticket #{eintrag['folge_ticket']}" if eintrag.get("folge_ticket") else ""
+            print(f"- [{eintrag['frage']}]{ticket_tag} {eintrag['titel']}: {eintrag['grund']}{folge_tag}")
+        return 0 if not mit_folgen else 2
+    finally:
+        sperre.unlink(missing_ok=True)
+
+
+def live_bereit_pruefen(repo: Path, spec: int) -> LiveBereitStand:
+    """Einzige Stelle der Prüfung von ``docs/agents/live_bereit_<S>.md`` (für ``abschluss_paket.py``)."""
+    marker = live_bereit_marker_pfad(repo, spec)
+    rel = _rel_pfad(repo, marker)
+    if not marker.is_file():
+        _, beleg_luecken = belege_pruefen(repo, spec)
+        extra = [f"Lücke ({b['frage']}): {b['titel']} — {b['grund']}" for b in beleg_luecken]
+        return LiveBereitStand(
+            bereit=False,
+            zeile=f"fehlt ({rel})",
+            maengel=[
+                (
+                    f"Prüfung „Bereit für Live?“ fehlt ({rel}) — erst "
+                    f"`thermo_lauf.py live-bereit plan {spec}` + Lese-Prüfer + "
+                    f"`thermo_lauf.py live-bereit sammeln {spec}` ausführen."
+                ),
+                *extra,
+            ],
+            marker=rel,
+        )
+    try:
+        text = marker.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as fehler:
+        return LiveBereitStand(
+            bereit=False,
+            zeile=f"unlesbar ({rel})",
+            maengel=[f"Marker {rel} nicht lesbar: {fehler}"],
+            marker=rel,
+        )
+    treffer = _ERGEBNIS_ZEILE.search(text)
+    if not treffer:
+        return LiveBereitStand(
+            bereit=False,
+            zeile=f"ungültig ({rel})",
+            maengel=[f"Marker {rel} enthält keine `Ergebnis:`-Zeile — Prüfung erneut ausführen."],
+            marker=rel,
+        )
+    ergebnis = treffer.group(1).strip()
+    if not ergebnis.startswith("BEREIT"):
+        luecken_zeilen = [z.lstrip("- ").strip() for z in text.splitlines() if z.startswith("- [")]
+        return LiveBereitStand(
+            bereit=False,
+            zeile=f"{ergebnis} ({rel})",
+            maengel=[f"Bereit für Live? {ergebnis} ({rel})", *luecken_zeilen],
+            marker=rel,
+        )
+    fragen_treffer = {m.group(1): (m.group(3).strip().lower(), m.group(4).strip()) for m in _FRAGE_ZEILE.finditer(text)}
+    maengel: list[str] = []
+    for nr in ("1", "2", "3"):
+        if nr not in fragen_treffer:
+            maengel.append(f"Marker {rel}: Frage {nr} fehlt in der Tabelle.")
+            continue
+        urteil, beleg = fragen_treffer[nr]
+        if urteil == "nein" or not beleg:
+            maengel.append(f"Marker {rel}: Frage {nr} nicht mit positivem Beleg beantwortet ({urteil}).")
+    if maengel:
+        return LiveBereitStand(bereit=False, zeile=f"unvollständig ({rel})", maengel=maengel, marker=rel)
+    return LiveBereitStand(bereit=True, zeile=f"{ergebnis} ({rel})", maengel=[], marker=rel)
+
+
 def main(argv: list[str] | None = None) -> int:
     for strom in (sys.stdout, sys.stderr):
         if hasattr(strom, "reconfigure"):
             strom.reconfigure(encoding="utf-8")
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
-    parser = argparse.ArgumentParser(description="Thermo-Review einer Spec planen und Befunde sammeln.")
+    parser = argparse.ArgumentParser(
+        description="Thermo-Review und Prüfung „Bereit für Live?“ einer Spec planen und sammeln."
+    )
     unter = parser.add_subparsers(dest="befehl", required=True)
     p_plan = unter.add_parser("plan")
     p_plan.add_argument("spec", type=int)
@@ -538,11 +1087,33 @@ def main(argv: list[str] | None = None) -> int:
     p_sam.add_argument("spec", type=int)
     p_sam.add_argument("--repo", default=".")
     p_sam.add_argument("--ohne-github", action="store_true", help="ohne Wirkung seit E15 (kein Issue mehr)")
+    p_lb = unter.add_parser("live-bereit", help="Prüfung „Bereit für Live?“ vor „bereit zur Abnahme“ (#369)")
+    lb_unter = p_lb.add_subparsers(dest="lb_befehl", required=True)
+    p_lb_plan = lb_unter.add_parser("plan")
+    p_lb_plan.add_argument("spec", type=int)
+    p_lb_plan.add_argument("--repo", default=".")
+    p_lb_plan.add_argument("--basis")
+    p_lb_plan.add_argument("--kopf", help="Standard: origin/<Hauptzweig>")
+    p_lb_plan.add_argument("--neu", action="store_true", help="auch bei bestehendem Marker neu planen")
+    p_lb_sam = lb_unter.add_parser("sammeln")
+    p_lb_sam.add_argument("spec", type=int)
+    p_lb_sam.add_argument("--repo", default=".")
+    p_lb_sam.add_argument("--ohne-github", action="store_true", help="keine Folge-Tickets auf GitHub anlegen")
     args = parser.parse_args(argv)
     repo = Path(args.repo).resolve()
     try:
         if args.befehl == "plan":
             return plan(repo, args.spec, args.basis, args.kopf or f"origin/{gh.hauptzweig(repo)}")
+        if args.befehl == "live-bereit":
+            if args.lb_befehl == "plan":
+                return live_bereit_plan(
+                    repo,
+                    args.spec,
+                    args.basis,
+                    args.kopf or f"origin/{gh.hauptzweig(repo)}",
+                    neu=args.neu,
+                )
+            return live_bereit_sammeln(repo, args.spec, ohne_github=args.ohne_github)
         return sammeln(repo, args.spec)
     except Fehler as fehler:
         log.error("%s", fehler)

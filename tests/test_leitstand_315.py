@@ -19,9 +19,7 @@ import pytest
 SKILL = Path(__file__).resolve().parent.parent
 PY = sys.executable
 
-nur_linux = pytest.mark.skipif(
-    sys.platform == "win32", reason="Linux-Semantik — Bau-Server"
-)
+nur_linux = pytest.mark.skipif(sys.platform == "win32", reason="Linux-Semantik — Bau-Server")
 
 
 def _umgebung(ordner: Path) -> dict:
@@ -97,11 +95,9 @@ def test_halter_gibt_frei_wenn_elternprozess_stirbt(tmp_path: Path) -> None:
         check=True,
     )
     try:
-        assert _warte_bis(Path(f"{stop}.hat").exists), (
-            "Halter hat das Nest nie genommen"
+        assert _warte_bis(Path(f"{stop}.hat").exists), "Halter hat das Nest nie genommen"
+        assert _warte_bis(lambda: json.loads(_stand(tmp_path).stdout)[0]["halter"] is None), (
+            "Halter hält das Nest weiter, obwohl sein Elternprozess tot ist"
         )
-        assert _warte_bis(
-            lambda: json.loads(_stand(tmp_path).stdout)[0]["halter"] is None
-        ), "Halter hält das Nest weiter, obwohl sein Elternprozess tot ist"
     finally:
         stop.touch()

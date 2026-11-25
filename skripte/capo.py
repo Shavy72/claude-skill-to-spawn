@@ -26,16 +26,12 @@ from pathlib import Path
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import bau_log, capo, config, gh
+from to_spawn import auswahl, bau_log, capo, config, gh
 
 log = logging.getLogger("capo")
 #: Repo, in dem gearbeitet wird: ``TO_SPAWN_REPO`` (setzt die Weiterleitung im Repo), sonst
 #: Git-Wurzel des aktuellen Ordners — nie der Ort dieses Skripts (liegt im Skill, #205).
-REPO_ORDNER = (
-    Path(os.environ["TO_SPAWN_REPO"]).resolve()
-    if os.environ.get("TO_SPAWN_REPO")
-    else config.repo_wurzel()
-)
+REPO_ORDNER = Path(os.environ["TO_SPAWN_REPO"]).resolve() if os.environ.get("TO_SPAWN_REPO") else config.repo_wurzel()
 
 
 def main() -> int:
@@ -44,12 +40,8 @@ def main() -> int:
             strom.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     ap.add_argument("spec", type=int, help="Spec-Issue-Nummer")
-    ap.add_argument(
-        "--repo-dir", default=str(REPO_ORDNER), help="Git-Repo (Vorgabe: TO_SPAWN_REPO)"
-    )
-    ap.add_argument(
-        "--gh-repo", default="", help="owner/name auf GitHub (Vorgabe: aus origin)"
-    )
+    ap.add_argument("--repo-dir", default=str(REPO_ORDNER), help="Git-Repo (Vorgabe: TO_SPAWN_REPO)")
+    ap.add_argument("--gh-repo", default="", help="owner/name auf GitHub (Vorgabe: aus origin)")
     ap.add_argument(
         "--wt-basis",
         default=None,
@@ -85,19 +77,17 @@ def main() -> int:
     if not gh_repo:
         print("FEHLER: GitHub-Repo unbekannt — --gh-repo owner/name angeben.")
         return 2
-    wt_basis = (
-        a.wt_basis if a.wt_basis is not None else str(konfig.get("wt_basis") or "")
-    )
+    wt_basis = a.wt_basis if a.wt_basis is not None else str(konfig.get("wt_basis") or "")
 
     if a.uebersicht:
-        ref = capo.haupt_ref(repo)
         liste = capo.kinder(gh_repo, a.spec)
         if liste is not None:
             tickets = [int(i["number"]) for i in liste]
         else:
             log.warning("Sub-Issues nicht lesbar — nehme alle Bau-Logs des Repos.")
             tickets = [int(t) for t in bau_log.alle_tickets(repo)]
-        print(capo.uebersicht(repo, ref, a.spec, tickets))
+        tickets = auswahl.filtere_nummern(tickets, auswahl.lesen(repo, a.spec))
+        print(capo.uebersicht(repo, a.spec, tickets))
         return 0
 
     ergebnis = capo.tick(

@@ -27,12 +27,6 @@ from test_hausmeister_ticket_repo_176 import APP, SKILL, TAG, WEGWERF, Repos, re
 from to_spawn import config, hausmeister
 
 
-@pytest.fixture(autouse=True)
-def eigenes_tmux(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("TMUX", raising=False)
-    monkeypatch.setenv("TMUX_TMPDIR", str(tmp_path))
-
-
 def _vorgabe(repos: Repos, *extra: tuple[str, str]) -> None:
     """Maschinen-Liste wie die Vorgabe (slug + ticket_repo), Pfade auf die Test-Klone."""
     repos.repo(SKILL)

@@ -29,7 +29,7 @@ from test_hausmeister_1368 import (  # noqa: F401 — ``welt`` ist ein Fixture
 
 from windows_attrappen import windows_starter
 
-from to_spawn import hausmeister, hausmeister_windows
+from to_spawn import hausmeister, hausmeister_windows, prozessbaum
 
 # Aufzeichnung: Get-CimInstance Win32_Process | Select-Object ProcessId,CommandLine,
 # ExecutablePath | ConvertTo-Json -Compress (gekürzt; System-Prozesse ohne Pfad).
@@ -70,6 +70,11 @@ def win(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> Welt:
     aufzeichnung = welt.tmp / "ps.json"
     monkeypatch.setenv("PS_AUFZEICHNUNG", str(aufzeichnung))
     _prozesse(welt, AUFZEICHNUNG_LEER)
+    # Unter Windows sieht die PEB-Prüfung sonst jeden echten Prozess des Runners
+    # (z. B. parallele pytest-Worker mit wechselnder cwd oder ohne cwd-Griff, #649);
+    # die ``win``-Tests stellen die Prozessliste über die PowerShell-Attrappe nach
+    # (echte PEB-Prozesse prüft ``test_echt_windows_unterprozess_mit_cwd_im_ordner_bleibt``).
+    monkeypatch.setattr(prozessbaum, "arbeitsordner_in_windows", lambda _ordner: {})
     # Laptop nach dem Einrichten: leere Altbestand-Liste (ohne Datei hielte der erste
     # echte Lauf alles fest, siehe test_win_ohne_altbestand_datei_haelt_erst_alles_fest).
     altbestand = hausmeister.altbestand_pfad()
@@ -79,9 +84,7 @@ def win(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> Welt:
 
 
 def _prozesse(welt: Welt, daten: object) -> None:
-    (welt.tmp / "ps.json").write_text(
-        json.dumps(daten, separators=(",", ":")), encoding="utf-8"
-    )
+    (welt.tmp / "ps.json").write_text(json.dumps(daten, separators=(",", ":")), encoding="utf-8")
 
 
 # --- Kern-Fälle im Windows-Zweig ------------------------------------------------
@@ -102,9 +105,7 @@ def test_win_geaendert_gesichert_und_geloescht(win: Welt) -> None:
     r = win.aufraeumen(wt, loeschen=True)
     assert r.art == "gesichert und gelöscht" and r.sicherung
     assert not wt.exists()
-    assert "geaendert.txt" in win.im_bare(
-        "ls-tree", "-r", "--name-only", "sicherung/32"
-    )
+    assert "geaendert.txt" in win.im_bare("ls-tree", "-r", "--name-only", "sicherung/32")
 
 
 def test_win_ticket_offen_bleibt(win: Welt) -> None:
@@ -191,9 +192,7 @@ def test_win_nachbarordner_mit_laengerem_namen_zaehlt_nicht(win: Welt) -> None:
     assert win.aufraeumen(wt).art == "gelöscht"
 
 
-def test_win_umbenennen_verweigert_bleibt(
-    win: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_win_umbenennen_verweigert_bleibt(win: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     wt = win.worktree(38)
     win.ticket(38, "CLOSED", 48)
 
@@ -227,10 +226,7 @@ def test_win_rueckbenennen_scheitert_bleibt_laut(
     assert r.art == "bleibt" and r.fehler
     probe = wt.with_name(wt.name + ".hausmeister-probe")
     assert probe.is_dir()  # nichts gelöscht, liegt unter dem Probe-Namen
-    assert any(
-        rec.levelno == logging.ERROR and str(probe) in rec.getMessage()
-        for rec in caplog.records
-    )
+    assert any(rec.levelno == logging.ERROR and str(probe) in rec.getMessage() for rec in caplog.records)
 
 
 def test_win_probeziel_existiert_bleibt(win: Welt) -> None:
@@ -252,22 +248,16 @@ def test_win_powershell_ausgabe_kaputt_bleibt_fehler(win: Welt, ausgabe: str) ->
     assert wt.is_dir()
 
 
-def test_win_powershell_fehlt_bleibt_fehler(
-    win: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_win_powershell_fehlt_bleibt_fehler(win: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     wt = win.worktree(42)
     win.ticket(42, "CLOSED", 48)
-    monkeypatch.setattr(
-        hausmeister_windows, "_POWERSHELL", str(win.tmp / "gibt-es-nicht")
-    )
+    monkeypatch.setattr(hausmeister_windows, "_POWERSHELL", str(win.tmp / "gibt-es-nicht"))
     r = win.aufraeumen(wt, loeschen=True)
     assert r.art == "bleibt" and r.fehler and "PowerShell" in r.grund
     assert wt.is_dir()
 
 
-def test_win_powershell_zeitlimit_bleibt_fehler(
-    win: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_win_powershell_zeitlimit_bleibt_fehler(win: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     wt = win.worktree(43)
     win.ticket(43, "CLOSED", 48)
     attrappe(win.tmp / "bin", "powershell", "import time\ntime.sleep(5)\n")
@@ -300,9 +290,7 @@ def test_nur_lese_dateien_werden_geloescht(win: Welt) -> None:
 # --- Platte der Wurzeln ---------------------------------------------------------
 
 
-def test_platte_der_wurzel_gemessen(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_platte_der_wurzel_gemessen(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("TO_SPAWN_HAUSMEISTER_PLATTE", raising=False)
     gemessen: list[Path] = []
 
@@ -316,9 +304,7 @@ def test_platte_der_wurzel_gemessen(
     assert welt.heim / "wt" in gemessen
 
 
-def test_platte_ohne_existierende_wurzel_misst_home(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_platte_ohne_existierende_wurzel_misst_home(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("TO_SPAWN_HAUSMEISTER_PLATTE", raising=False)
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_WURZELN", str(welt.tmp / "nix" / "wt-*"))
     gemessen: list[Path] = []
@@ -337,6 +323,7 @@ def test_platte_ohne_existierende_wurzel_misst_home(
 
 def test_altbestand_festhalten_schreibt_einmal(welt: Welt) -> None:
     a, b = welt.worktree(51), welt.worktree(52)
+    hausmeister.altbestand_pfad().unlink(missing_ok=True)  # Windows-Welt legt sie an (#68)
     pfad = hausmeister.altbestand_festhalten([a])
     assert pfad == hausmeister.altbestand_pfad() == welt.log.parent / "altbestand.json"
     daten = json.loads(pfad.read_text(encoding="utf-8"))
@@ -355,7 +342,7 @@ def test_altbestand_gelistet_bleibt(win: Welt) -> None:
     liste = hausmeister.altbestand_festhalten([wt])
     r = win.aufraeumen(wt, loeschen=True)
     assert r.art == "bleibt" and not r.fehler
-    assert r.grund == f"Altbestand, wartet auf Davids Ja (Liste {liste})"
+    assert r.grund == f"Altbestand, wartet auf das Ja des Menschen (Liste {liste})"
     assert wt.is_dir()
 
 
@@ -390,9 +377,24 @@ def test_altbestand_kaputt_alles_bleibt(win: Welt, inhalt: str) -> None:
     assert wt.is_dir()
 
 
-def test_altbestand_fehlt_keine_wirkung_auf_server(welt: Welt) -> None:
+def test_altbestand_fehlt_keine_wirkung_auf_server(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     wt = welt.worktree(59)
     welt.ticket(59, "CLOSED", 48)
+    hausmeister.altbestand_pfad().unlink(missing_ok=True)  # Windows-Welt legt sie an (#68)
+    if hausmeister._ist_windows():
+        # Server nachstellen: Linux-Regeln, die Prozess-Prüfung aber mit dem, was dieser
+        # Rechner hat (kein /proc unter Windows).
+        windows_pruefung = hausmeister._kein_prozess
+
+        def pruefen(ordner: Path, *, probe: bool = False) -> None:
+            hausmeister._PLATTFORM = "win32"
+            try:
+                windows_pruefung(ordner, probe=probe)
+            finally:
+                hausmeister._PLATTFORM = "linux"
+
+        monkeypatch.setattr(hausmeister, "_PLATTFORM", "linux")
+        monkeypatch.setattr(hausmeister, "_kein_prozess", pruefen)
     assert not hausmeister.altbestand_pfad().exists()
     assert welt.aufraeumen(wt, loeschen=True).art == "gelöscht"
 
@@ -405,9 +407,7 @@ def test_echt_windows_unterprozess_mit_cwd_im_ordner_bleibt(welt: Welt) -> None:
     wt = welt.worktree(60)
     welt.ticket(60, "CLOSED", 48)
     (wt / "unter").mkdir()
-    proc = subprocess.Popen(
-        [sys.executable, "-c", "import time; time.sleep(60)"], cwd=wt / "unter"
-    )
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], cwd=wt / "unter")
     try:
         r = welt.aufraeumen(wt, loeschen=True)
         assert r.art == "bleibt" and not r.fehler, r.grund
@@ -432,15 +432,11 @@ def test_win_ohne_altbestand_datei_haelt_erst_alles_fest(win: Welt) -> None:
     assert wt.resolve().as_posix() in daten["ordner"]
 
 
-def test_win_trockenlauf_ohne_umbenennungs_probe(
-    win: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_win_trockenlauf_ohne_umbenennungs_probe(win: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     wt = win.worktree(52)
     win.ticket(52, "CLOSED", 48)
     aufrufe: list[str] = []
-    monkeypatch.setattr(
-        hausmeister_windows, "_umbenennen", lambda alt, neu: aufrufe.append(str(neu))
-    )
+    monkeypatch.setattr(hausmeister_windows, "_umbenennen", lambda alt, neu: aufrufe.append(str(neu)))
     assert win.aufraeumen(wt).art == "gelöscht"
     assert hausmeister.aufraeumen_alles(jetzt=win.jetzt)
     assert aufrufe == [] and wt.is_dir()
@@ -461,9 +457,7 @@ class _Msvcrt:
             raise self.fehler
 
 
-def test_win_sperre_belegt_raeumt_nicht_auf(
-    win: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_win_sperre_belegt_raeumt_nicht_auf(win: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     wt = win.worktree(53)
     win.ticket(53, "CLOSED", 48)
     m = _Msvcrt(OSError(errno.EACCES, "Permission denied"))
@@ -481,3 +475,78 @@ def test_win_sperre_frei_raeumt_auf(win: Welt, monkeypatch: pytest.MonkeyPatch) 
     assert m.aufrufe == [(2, 1)]
     assert [e.art for e in erg if e.ordner.name == "wt-54"] == ["gelöscht"]
     assert not wt.exists()
+
+
+def test_win_fixture_entkoppelt_peb_prozessliste(win: Welt) -> None:
+    """Die ``win``-Fixture simuliert Prozesse per PowerShell-Attrappe, nie über echte Runner-PEBs."""
+    wt = win.worktree(55)
+    assert prozessbaum.arbeitsordner_in_windows(wt) == {}
+    hausmeister_windows._kein_arbeitsordner_drin(wt)
+
+
+def test_arbeitsordner_griff_wiederholt_bei_kurzem_cwd_wechsel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ein einmaliger cwd-Wechsel im fremden Prozess während der PEB-Probe wird wiederholt;
+    dauerhafter Wechsel bleibt fail-closed und schließt alle kopierten Griffe."""
+    geschlossen: list[int] = []
+    naechster_griff = 500
+
+    class _Kernel:
+        def OpenProcess(self, _zugriff: int, _erbe: bool, _pid: int) -> int:
+            return 100
+
+        def GetCurrentProcess(self) -> int:
+            return 200
+
+        def GetExitCodeProcess(self, _griff: int, code_ptr: object) -> int:
+            code_ptr._obj.value = prozessbaum._STILL_ACTIVE  # type: ignore[attr-defined]
+            return 1
+
+        def DuplicateHandle(
+            self,
+            _quelle: int,
+            _fremd: int,
+            _ziel: int,
+            kopie_ptr: object,
+            _zugriff: int,
+            _erbe: bool,
+            _optionen: int,
+        ) -> int:
+            nonlocal naechster_griff
+            naechster_griff += 1
+            kopie_ptr._obj.value = naechster_griff  # type: ignore[attr-defined]
+            return 1
+
+        def CloseHandle(self, griff: object) -> int:
+            wert = getattr(griff, "value", griff)
+            assert isinstance(wert, int)
+            geschlossen.append(wert)
+            return 1
+
+    monkeypatch.setattr(prozessbaum, "_win32", lambda: (_Kernel(), object()))
+    monkeypatch.setattr(prozessbaum.ctypes, "set_last_error", lambda _e: None, raising=False)
+    monkeypatch.setattr(prozessbaum.ctypes, "get_last_error", lambda: 0, raising=False)
+
+    # Fall 1: erster Versuch sieht cwd-Wechsel, zweiter Versuch ist stabil → gelingt, alter Griff zu.
+    alt = b"A" * 16 + (111).to_bytes(8, "little")
+    neu = b"B" * 16 + (222).to_bytes(8, "little")
+    antworten = iter([alt, neu, neu, neu])
+    monkeypatch.setattr(prozessbaum, "_curdir", lambda _p, _pid: next(antworten))
+    griff = prozessbaum._arbeitsordner_griff_windows(816)
+    assert griff == 502
+    assert 501 in geschlossen and 100 in geschlossen
+
+    # Fall 2: cwd wechselt bei jedem Versuch → bleibt fail-closed, alle kopierten Griffe zu.
+    geschlossen.clear()
+    zaehler = 0
+
+    def _wechselnd(_p: int, _pid: int) -> bytes:
+        nonlocal zaehler
+        zaehler += 1
+        return b"X" * 16 + zaehler.to_bytes(8, "little")
+
+    monkeypatch.setattr(prozessbaum, "_curdir", _wechselnd)
+    with pytest.raises(OSError, match="cwd wechselte"):
+        prozessbaum._arbeitsordner_griff_windows(816)
+    assert 503 in geschlossen and 504 in geschlossen and 505 in geschlossen and 100 in geschlossen

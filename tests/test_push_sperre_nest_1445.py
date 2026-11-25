@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 from test_bau_ohne_prompt_431 import _lade_bau
 from test_nest_210 import _cli, _git, _neues_repo, _umgebung
+from test_rolle_statt_name_323 import NAME, NAMEN, NAMEN_DATEI
 
 from to_spawn import nest
 
@@ -172,9 +173,7 @@ def test_installer_kommt_aus_origin_nicht_aus_dem_arbeitsordner(tmp_path: Path) 
     """B2: Ein im Arbeitsordner veränderter Installer läuft nie, es zählt ``origin/master``."""
     klon, _heim = _welt(tmp_path)
     marke = tmp_path / "boese-gelaufen"
-    (klon / "scripts" / "hooks" / "install_git_hooks.sh").write_text(
-        f"touch {marke}\nexit 0\n", encoding="utf-8"
-    )
+    (klon / "scripts" / "hooks" / "install_git_hooks.sh").write_text(f"touch {marke}\nexit 0\n", encoding="utf-8")
     assert nest.git_hooks_einrichten(klon) is True
     assert not marke.exists(), "Installer aus dem Arbeitsordner ausgeführt"
     hook = Path(_git(klon, "rev-parse", "--path-format=absolute", "--git-common-dir").strip()) / "hooks" / "pre-push"
@@ -229,6 +228,29 @@ def test_testdaten_gleich_projekt_origin(name: str) -> None:
     )
     if original.returncode != 0:
         pytest.skip(f"origin/master im Projekt-Klon hat scripts/hooks/{name} nicht")
-    assert (HILFEN / name).read_bytes() == original.stdout, (
-        f"tests/hilfen/push_sperre_1442/{name} weicht vom Projekt ab — neu kopieren"
-    )
+    kopie = (HILFEN / name).read_bytes()
+    if kopie == original.stdout:
+        return
+    if not NAMEN:
+        pytest.skip(f"Kopie weicht ab, Rollenwort-Prüfung braucht die private Namensliste: {NAMEN_DATEI}")
+    # #325: Kommentarzeilen mit festem Personennamen stehen in der Kopie mit Rollenwort
+    # (öffentliches Repo). Nur genau diese Zeilen dürfen abweichen — und müssen dann namensfrei sein.
+    soll = original.stdout.decode("utf-8").splitlines(keepends=True)
+    ist = kopie.decode("utf-8").splitlines(keepends=True)
+    assert len(ist) == len(soll), f"tests/hilfen/push_sperre_1442/{name} weicht vom Projekt ab — neu kopieren"
+    for nr, (s, i) in enumerate(zip(soll, ist, strict=True), 1):
+        if s == i:
+            continue
+        # Eng: Text vor und nach dem Namen der Vorlagenzeile muss in der Kopie stehen; nur der Name wird ersetzt.
+        treffer = NAME.search(s)
+        anonym = bool(
+            treffer
+            and s.lstrip().startswith("#")
+            and not NAME.search(i)
+            and i.startswith(s[: treffer.start()])
+            and i.endswith(s[treffer.end() :])
+        )
+        assert anonym, (
+            f"tests/hilfen/push_sperre_1442/{name}:{nr} weicht vom Projekt ab — neu kopieren "
+            "(nur Kommentarzeilen mit Personennamen dürfen per Rollenwort abweichen)"
+        )

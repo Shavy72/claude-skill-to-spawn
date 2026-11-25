@@ -29,14 +29,17 @@ from __future__ import annotations
 import glob
 import logging
 import os
+import re
 import socket
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta, tzinfo
 from fnmatch import fnmatch
 from pathlib import Path, PurePosixPath
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from . import config
+from . import config, konsole, prozessbaum, skill_stand
 
 log = logging.getLogger("to_spawn.uebergabe_sichern")
 
@@ -52,8 +55,13 @@ GESCHUETZTE_PRAEFIXE: tuple[str, ...] = ("ticket/",)
 GIT_MAX_S = 60.0
 #: Test- und Notfall-Türen (Vorrang vor der Maschinen-Liste).
 UMGEBUNG_ZIEL = "TO_SPAWN_SICHERUNG_ZIEL"
-#: Leerzeichen-getrennte Repo-Ordner für den Zweig-Upload; leer = keiner.
+#: Leerzeichen- oder ``os.pathsep``-getrennte Repo-Ordner für den Zweig-Upload; leer = keiner.
 UMGEBUNG_ZWEIG_REPOS = "TO_SPAWN_SICHERUNG_ZWEIG_REPOS"
+#: Zeitzone der Stand-Einträge in ``docs/WIEDEREINSTIEG.md`` (L5, #145).
+STAND_ZEITZONE = "Europe/Berlin"
+#: Frist zwischen jüngstem ``main``-Stand und jüngstem Stand-Eintrag in ``docs/WIEDEREINSTIEG.md``.
+STAND_FRIST = timedelta(hours=24)
+STAND_ZEILE = re.compile(r"^- \*\*(\d{4}-\d{2}-\d{2} \d{2}:\d{2})", re.MULTILINE)
 
 
 @dataclass
@@ -94,7 +102,7 @@ def _gruppe() -> dict[str, object]:
 
 
 def _skill_wurzel() -> Path:
-    return Path(__file__).resolve().parent.parent
+    return skill_stand.SKILL.resolve()
 
 
 def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -105,6 +113,8 @@ def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
         env=env,
         capture_output=True,
         text=True,
+        **konsole.UNTERPROZESS_TEXT,  # git schreibt Pfade in UTF-8, auch unter Windows
+        **prozessbaum.fensterlos(),
         timeout=GIT_MAX_S,
         check=False,
     )
@@ -135,7 +145,7 @@ def ziel_ordner() -> Path:
     if roh:
         basis = Path(roh).expanduser()
     else:
-        tresor = Path(os.environ.get("OBSIDIAN_VAULT") or "~/obsidian").expanduser()
+        tresor = config.notiz_tresor()
         if tresor.is_dir():
             basis = tresor / TRESOR_UNTERORDNER
         else:
@@ -144,16 +154,16 @@ def ziel_ordner() -> Path:
 
 
 def _quellen(extra: list[Path]) -> list[Path]:
-    muster = [
-        str(Path(e["pfad"]).expanduser() / m)
-        for e in config.maschine()["repos"]
-        if e["pfad"]
-        for m in MUSTER_JE_REPO
-    ]
+    skill = _skill_wurzel()
+    repos = config.maschine()["repos"]
+    repo_pfade = [pfad for e in repos if (pfad := config.repo_klon_pfad(e, skill=skill)) is not None]
+    if not any(config.ist_skill_slug(e["slug"]) for e in repos):
+        stempel_klon = skill_stand.klon_ordner(skill)
+        if stempel_klon is not None:
+            repo_pfade.append(stempel_klon)
+    muster = [str(pfad / m) for pfad in dict.fromkeys(repo_pfade) for m in MUSTER_JE_REPO]
     roh = _gruppe().get("dateien")
-    muster += (
-        [str(m) for m in roh if isinstance(m, str)] if isinstance(roh, list) else []
-    )
+    muster += [str(m) for m in roh if isinstance(m, str)] if isinstance(roh, list) else []
     gefunden = [Path(t) for m in muster for t in glob.glob(os.path.expanduser(m))]
     eindeutig: dict[Path, Path] = {}
     for pfad in [*extra, *gefunden]:
@@ -189,18 +199,35 @@ def _kopieren(quelle: Path, ziel: Path, *, trocken: bool) -> bool:
 def _zweig_repos() -> list[Path]:
     roh = os.environ.get(UMGEBUNG_ZWEIG_REPOS)
     if roh is not None:
-        return [Path(p).expanduser() for p in roh.split()]
+        text = roh.strip()
+        if not text:
+            return []
+        if os.pathsep in text:
+            teile = [t.strip() for t in text.split(os.pathsep) if t.strip()]
+        elif config.expand_heim(text).exists():
+            teile = [text]
+        else:
+            teile = text.split()
+        return [config.expand_heim(p) for p in teile]
     slugs = _gruppe().get("zweige_slugs")
-    erlaubt = {
-        s.lower()
-        for s in (slugs if isinstance(slugs, list) else OEFFENTLICHE_SLUGS)
-        if isinstance(s, str)
-    }
-    return [
-        Path(e["pfad"]).expanduser()
-        for e in config.maschine()["repos"]
-        if e["pfad"] and e["slug"].lower() in erlaubt
-    ]
+    erlaubt = {s.lower() for s in (slugs if isinstance(slugs, list) else OEFFENTLICHE_SLUGS) if isinstance(s, str)}
+    skill = _skill_wurzel()
+    gefunden: list[Path] = []
+    skill_abgedeckt = False
+    for eintrag in config.maschine()["repos"]:
+        slug = eintrag["slug"].lower()
+        if slug not in erlaubt:
+            continue
+        if config.ist_skill_slug(slug):
+            skill_abgedeckt = True
+        pfad = config.repo_klon_pfad(eintrag, skill=skill)
+        if pfad is not None:
+            gefunden.append(pfad)
+    if not skill_abgedeckt and any(config.ist_skill_slug(s) for s in erlaubt):
+        aus_stempel = skill_stand.klon_ordner(skill)
+        if aus_stempel is not None:
+            gefunden.append(aus_stempel)
+    return list(dict.fromkeys(gefunden))
 
 
 def _worktree_zweige(repo: Path) -> list[tuple[Path, str]]:
@@ -218,9 +245,7 @@ def _worktree_zweige(repo: Path) -> list[tuple[Path, str]]:
 
 
 def darf_hochladen(zweig: str) -> bool:
-    return zweig not in GESCHUETZTE_ZWEIGE and not zweig.startswith(
-        GESCHUETZTE_PRAEFIXE
-    )
+    return zweig not in GESCHUETZTE_ZWEIGE and not zweig.startswith(GESCHUETZTE_PRAEFIXE)
 
 
 def nie_oeffentlich(pfad: str) -> bool:
@@ -232,6 +257,17 @@ def nie_oeffentlich(pfad: str) -> bool:
     return any(fnmatch(name, muster.lower()) for muster in MUSTER_JE_REPO)
 
 
+def pfade_aus_nul(ausgabe: str) -> list[str]:
+    """Zerlegt NUL-getrennte ``git log -z --name-only --format=``-Ausgabe unverändert (#215).
+
+    Kein ``strip("\\r\\n")``: ein echter Zeilenumbruch am Ende eines Dateinamens bleibt
+    erhalten, und Pfade mit Leerzeichen oder Nicht-ASCII-Zeichen werden nicht zerlegt.
+    Einzige Zerlegungsstelle für :func:`gesperrte_pfade` und die Geheimnis-Prüfung im
+    Hausmeister.
+    """
+    return [p for p in ausgabe.split("\0") if p]
+
+
 def gesperrte_pfade(ordner: Path, *bereich: str) -> list[str]:
     """Pfade nach :func:`nie_oeffentlich` in allen Commits von ``bereich`` (rev-list-Argumente).
 
@@ -239,13 +275,10 @@ def gesperrte_pfade(ordner: Path, *bereich: str) -> list[str]:
     wieder gelöschte Übergabe würde mitgepusht. ``-z`` hält Nicht-ASCII-Pfade ungequotet,
     ``--diff-merges=separate`` zeigt Dateien, die erst in einer Merge-Auflösung entstehen.
     """
-    aus = _git(
-        ordner, "log", "-z", "--name-only", "--diff-merges=separate", "--format=", *bereich
-    )
+    aus = _git(ordner, "log", "-z", "--name-only", "--diff-merges=separate", "--format=", *bereich)
     if aus.returncode != 0:
         raise OSError(aus.stderr.strip() or f"git log {' '.join(bereich)} gescheitert")
-    pfade = (p.strip("\n") for p in aus.stdout.split("\0"))
-    return sorted({p for p in pfade if p and nie_oeffentlich(p)})
+    return sorted({p for p in pfade_aus_nul(aus.stdout) if nie_oeffentlich(p)})
 
 
 def _gesperrte_pfade(ordner: Path, zweig: str) -> list[str]:
@@ -263,9 +296,7 @@ def _hochladen(repo: Path, erg: Sicherung) -> None:
             continue  # nichts Neues
         gesperrt = _gesperrte_pfade(ordner, zweig)
         if gesperrt:
-            erg.fehler.append(
-                f"Push {repo.name}:{zweig} verweigert — enthält {', '.join(gesperrt)}"
-            )
+            erg.fehler.append(f"Push {repo.name}:{zweig} verweigert — enthält {', '.join(gesperrt)}")
             log.error(
                 "Sicherung: Push %s:%s verweigert, Übergabe/Entscheidungs-Log im Zweig: %s",
                 repo.name,
@@ -295,12 +326,8 @@ def sichern(dateien: list[Path] | None = None, *, trocken: bool = False) -> Sich
     try:
         ziel = ziel_ordner()
         if ist_oeffentlich(ziel):
-            erg.fehler.append(
-                f"{ziel} liegt in einem öffentlichen Repo — nichts kopiert"
-            )
-            log.error(
-                "Sicherung: %s liegt in einem öffentlichen Repo — nichts kopiert", ziel
-            )
+            erg.fehler.append(f"{ziel} liegt in einem öffentlichen Repo — nichts kopiert")
+            log.error("Sicherung: %s liegt in einem öffentlichen Repo — nichts kopiert", ziel)
         else:
             if not trocken:
                 ziel.mkdir(parents=True, exist_ok=True)
@@ -316,6 +343,12 @@ def sichern(dateien: list[Path] | None = None, *, trocken: bool = False) -> Sich
         erg.fehler.append(f"Dateien: {type(fehler).__name__}: {fehler}")
     try:
         for repo in _zweig_repos():
+            if not repo.is_dir():
+                log.info(
+                    "Sicherung: Klon-Ordner %s fehlt — Zweig-Upload übersprungen",
+                    repo,
+                )
+                continue
             try:
                 _hochladen(repo, erg)
             except (OSError, subprocess.SubprocessError) as fehler:
@@ -325,6 +358,69 @@ def sichern(dateien: list[Path] | None = None, *, trocken: bool = False) -> Sich
         erg.fehler.append(f"Zweige: {type(fehler).__name__}: {fehler}")
     (log.warning if erg.fehler else log.info)("%s", erg.zeile())
     return erg
+
+
+def _stand_zone() -> tzinfo:
+    """``Europe/Berlin``, bei fehlender Zeitzonen-Datenbank Rückfall auf die Rechner-Ortszeit."""
+    try:
+        return ZoneInfo(STAND_ZEITZONE)
+    except ZoneInfoNotFoundError:
+        log.warning(
+            "Zeitzone %s nicht verfügbar — Rückfall auf Rechner-Ortszeit",
+            STAND_ZEITZONE,
+        )
+        return datetime.now().astimezone().tzinfo or UTC
+
+
+def stand_zeitpunkt(text: str) -> datetime | None:
+    """Jüngster Zeitstempel im Abschnitt ``## 3. Stand`` von ``docs/WIEDEREINSTIEG.md``."""
+    if "## 3. Stand" not in text:
+        return None
+    abschnitt = text.split("## 3. Stand", 1)[1].split("\n## ", 1)[0]
+    zone = _stand_zone()
+    zeiten = [datetime.strptime(t, "%Y-%m-%d %H:%M").replace(tzinfo=zone) for t in STAND_ZEILE.findall(abschnitt)]
+    return max(zeiten) if zeiten else None
+
+
+def stand_veraltet(text: str, referenz: datetime, frist: timedelta = STAND_FRIST) -> bool:
+    """``True``, wenn der jüngste Stand-Eintrag fehlt oder älter ist als ``referenz`` minus ``frist``."""
+    juengster = stand_zeitpunkt(text)
+    if juengster is None:
+        return True
+    if referenz.tzinfo is None:
+        referenz = referenz.replace(tzinfo=juengster.tzinfo)
+    return juengster + frist < referenz
+
+
+def juengster_main_stand(repo: Path) -> datetime | None:
+    """Zeitpunkt des jüngsten Commits auf ``origin/main`` (inkl. Squash-Merges); ``None`` bei flachem Klon.
+
+    Prüft ``origin/main`` (erste Elternlinie), damit Squash-Merges genauso zählen wie
+    Merge-Commits und ungemergte Commits auf Arbeitszweigen keinen Fehlalarm auslösen.
+    Ohne ``origin/main`` fällt die Prüfung bei vollständigem Verlauf auf ``main`` bzw. ``HEAD``
+    zurück; bei flachem Klon ohne ``origin/main`` liefert sie ``None``.
+    """
+    try:
+        flach = _git(repo, "rev-parse", "--is-shallow-repository")
+        if flach.returncode != 0:
+            return None
+        ist_flach = flach.stdout.strip().lower() == "true"
+        ziel_ref: str | None = None
+        for kandidat in ("origin/main", "main", "HEAD"):
+            if ist_flach and kandidat != "origin/main":
+                break
+            if _git(repo, "rev-parse", "--verify", "--quiet", kandidat).returncode == 0:
+                ziel_ref = kandidat
+                break
+        if ziel_ref is None:
+            return None
+        aus = _git(repo, "log", "-1", "--first-parent", "--format=%ct", ziel_ref)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    roh = aus.stdout.strip()
+    if aus.returncode != 0 or not roh.isdigit():
+        return None
+    return datetime.fromtimestamp(int(roh), tz=UTC).astimezone(_stand_zone())
 
 
 def richte_parser_ein(unter: object) -> None:

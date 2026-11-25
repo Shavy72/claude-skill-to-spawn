@@ -23,7 +23,7 @@ SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL))
 
 from conftest import altbestand_wie_eingerichtet
-from to_spawn import aufpasser, hausmeister
+from to_spawn import aufpasser, hausmeister, prozessbaum
 
 ORIGIN = "https://github.com/Shavy72/duoplus-management"
 STUNDE = 3600.0
@@ -101,11 +101,7 @@ class Welt:
     def zeilen(self) -> list[dict]:
         if not self.log.is_file():
             return []
-        return [
-            json.loads(z)
-            for z in self.log.read_text(encoding="utf-8").splitlines()
-            if z.strip()
-        ]
+        return [json.loads(z) for z in self.log.read_text(encoding="utf-8").splitlines() if z.strip()]
 
     def im_bare(self, *args: str) -> str:
         return git(self.bare, *args)
@@ -119,9 +115,7 @@ def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Welt:
     heim = tmp_path / "heim"
     (heim / "wt").mkdir(parents=True)
     bare = tmp_path / "remote.git"
-    subprocess.run(
-        ["git", "init", "-q", "--bare", "-b", "master", str(bare)], check=True
-    )
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "master", str(bare)], check=True)
     gitconfig = tmp_path / "gitconfig"
     gitconfig.write_text(
         f"[user]\n\tname = Test\n\temail = t@example.org\n[init]\n\tdefaultBranch = master\n"
@@ -327,10 +321,7 @@ def test_loeschen_nur_im_hausmeister() -> None:
         if rel not in ausnahmen and any(m in text for m in muster):
             treffer.append(rel)
     assert not treffer, f"Löschen außerhalb des Hausmeisters: {treffer}"
-    assert any(
-        m in (SKILL / "to_spawn" / "hausmeister.py").read_text(encoding="utf-8")
-        for m in muster
-    )
+    assert any(m in (SKILL / "to_spawn" / "hausmeister.py").read_text(encoding="utf-8") for m in muster)
 
 
 def test_zweig_loeschen_nur_im_hausmeister() -> None:
@@ -546,9 +537,12 @@ def test_s6_offene_datei_im_ordner_bleibt(welt: Welt) -> None:
     welt.ticket(42, "CLOSED", 48)
     with (wt / "arbeit.txt").open("rb") as f:
         proc = subprocess.Popen(["sleep", "60"], stdin=f, cwd=welt.tmp)
+    # Linux nennt den Prozess (/proc/<pid>/fd); Windows kennt offene Griffe nur über die
+    # Umbenennungs-Probe, die keine PID liefert.
+    beleg = "Windows verweigert das Umbenennen" if sys.platform == "win32" else str(proc.pid)
     try:
         r = welt.aufraeumen(wt, loeschen=True)
-        assert r.art == "bleibt" and str(proc.pid) in r.grund
+        assert r.art == "bleibt" and beleg in r.grund, r.grund
         assert wt.is_dir()
     finally:
         proc.kill()
@@ -567,6 +561,15 @@ def test_s6_cwd_unlesbar_bleibt(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> 
         return echt(pfad)
 
     monkeypatch.setattr(hausmeister.os, "readlink", readlink)
+    if sys.platform == "win32":  # Windows liest die cwd aus dem PEB: Lesefehler dort
+        echt_peb = prozessbaum._arbeitsordner_windows
+
+        def peb(pid: int) -> str | None:
+            if pid == proc.pid:
+                raise OSError(299, "ReadProcessMemory gescheitert")
+            return echt_peb(pid)
+
+        monkeypatch.setattr(prozessbaum, "_arbeitsordner_windows", peb)
     try:
         r = welt.aufraeumen(wt, loeschen=True)
         assert r.art == "bleibt" and str(proc.pid) in r.grund
@@ -577,9 +580,7 @@ def test_s6_cwd_unlesbar_bleibt(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> 
 
 
 # S7
-def test_s7_sichern_liefert_none_bleibt(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_s7_sichern_liefert_none_bleibt(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     wt = welt.worktree(44, schmutzig=True)
     welt.ticket(44, "CLOSED", 48)
     monkeypatch.setattr(aufpasser, "sichern", lambda *a, **kw: None)
@@ -588,9 +589,7 @@ def test_s7_sichern_liefert_none_bleibt(
     assert (wt / "geaendert.txt").is_file()
 
 
-def test_s7_neue_datei_nach_sicherung_bleibt(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_s7_neue_datei_nach_sicherung_bleibt(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     wt = welt.worktree(45, schmutzig=True)
     welt.ticket(45, "CLOSED", 48)
     echt = aufpasser.sichern
@@ -672,15 +671,15 @@ def test_s8_cli_exit_nur_bei_fehler_ungleich_null(welt: Welt) -> None:
 
 
 # S9
-def test_s9_log_nicht_schreibbar_bleibt(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_s9_log_nicht_schreibbar_bleibt(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     wt = welt.worktree(54)
     welt.ticket(54, "CLOSED", 48)
     (welt.tmp / "keinordner").write_text("", encoding="utf-8")
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_LOG", str(welt.tmp / "keinordner" / "x"))
     r = welt.aufraeumen(wt, loeschen=True)
-    assert r.art == "bleibt" and r.fehler and "Log" in r.grund
+    # Windows: die Altbestand-Liste liegt neben dem Log und fällt am selben Ordner zuerst.
+    beleg = "Altbestand-Liste" if sys.platform == "win32" else "Log"
+    assert r.art == "bleibt" and r.fehler and beleg in r.grund, r.grund
     assert wt.is_dir()
 
 
@@ -706,9 +705,7 @@ def test_c4_sauberer_baum_ungepushter_head_wird_gesichert(welt: Welt) -> None:
 
 
 @pytest.mark.parametrize("datei", ["mein_zugang.txt", "zugang/a.txt", "x.pem", "x.key"])
-def test_c4_geheimnis_muster_bleibt_und_nie_in_sicherung(
-    welt: Welt, datei: str
-) -> None:
+def test_c4_geheimnis_muster_bleibt_und_nie_in_sicherung(welt: Welt, datei: str) -> None:
     wt = welt.worktree(56)
     (wt / datei).parent.mkdir(exist_ok=True)
     (wt / datei).write_text("geheim\n", encoding="utf-8")

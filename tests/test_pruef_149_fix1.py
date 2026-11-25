@@ -92,10 +92,8 @@ def test_unlesbarer_namens_beleg_bleibt_rot(tmp_path: Path, conftest: str) -> No
 
 
 def test_beleg_mit_aehnlichem_namen_belegt_nicht(tmp_path: Path) -> None:
-    """Echter pytest-Lauf schreibt das JUnit-XML; nur der genaue Name zählt als bestanden."""
-    import subprocess
-    import sys
-
+    """Echter Adapter-Lauf schreibt den Bericht; nur der genaue Knoten-Name steht in ``bestanden_namen``."""
+    from to_spawn.pruef import ausfuehren
     from to_spawn.pruef.adapter_py import ADAPTER
 
     (tmp_path / "tests").mkdir()
@@ -105,33 +103,65 @@ def test_beleg_mit_aehnlichem_namen_belegt_nicht(tmp_path: Path) -> None:
         "def test_p(n):\n    assert n == 1\n\ndef test_r():\n    assert False\n",
         encoding="utf-8",
     )
-    beleg = tmp_path / "voll.xml"
-    befehl = ADAPTER.mit_beleg([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"], beleg)
-    subprocess.run(befehl, cwd=tmp_path, capture_output=True, check=False)
-    assert ADAPTER.alle_bestanden(beleg, {"tests/test_a.py::test_r", "tests/test_b.py::test_p[1]"})
-    assert not ADAPTER.alle_bestanden(beleg, {"tests/test_b.py::test_r"})
-    assert not ADAPTER.alle_bestanden(beleg, {"tests/test_b.py::test_p[2]"})
-    assert not ADAPTER.alle_bestanden(beleg, {"tests/test_c.py::test_r"})
+    plan = ADAPTER.voll(tmp_path)
+    assert not plan.fehler, plan.fehler
+    lauf = ausfuehren.lauf(plan.befehl, tmp_path)
+    bericht = ADAPTER.bericht(plan.befehl, lauf.ausgabe)
+    assert bericht is not None and bericht.bestanden_namen is not None
+    assert {"tests/test_a.py::test_r", "tests/test_b.py::test_p[1]"} <= bericht.bestanden_namen
+    assert "tests/test_b.py::test_r" not in bericht.bestanden_namen
+    assert "tests/test_b.py::test_p[2]" not in bericht.bestanden_namen
+    assert "tests/test_c.py::test_r" not in bericht.bestanden_namen
 
 
-# --- Rückfall ohne Namens-Beleg (z. B. Adapter ohne ``Namentlich``): Rechenlogik ----------------
+# --- Rückfall ohne Berichtbar (nur ``Zaehlbar``): Rechenlogik ------------------------------------
 
 
-def test_rueckfall_ohne_namens_beleg_zaehlt() -> None:
-    from to_spawn.pruef import wackler
-    from to_spawn.pruef.adapter_py import ADAPTER
+def test_rueckfall_ohne_berichtbar_zaehlt(tmp_path: Path) -> None:
+    import sys
 
-    erst = ".sF  [3/3]\n1 failed, 1 passed, 1 skipped in 0.1s"
-    ohne_schluss = ".sF  [3/3]\n"
-    # Erster Lauf mit Schlusszeile: gelaufen gleich, bestanden == vorher + rot.
-    assert wackler._voll_belegt(ADAPTER, erst, 1, "..s  [3/3]\n2 passed, 1 skipped in 0.1s")
-    assert not wackler._voll_belegt(ADAPTER, erst, 1, ".ss  [3/3]\n1 passed, 2 skipped in 0.1s")
-    assert not wackler._voll_belegt(ADAPTER, erst, 1, "..  [2/2]\n2 passed in 0.1s")
-    # Ohne Schlusszeile im ersten Lauf: nur ein Lauf, in dem jeder gelaufene Test bestand.
-    assert wackler._voll_belegt(ADAPTER, ohne_schluss, 1, "...  [3/3]\n3 passed in 0.1s")
-    assert not wackler._voll_belegt(ADAPTER, ohne_schluss, 1, "..s  [3/3]\n2 passed, 1 skipped in 0.1s")
-    # Voller Lauf ohne Zählung ist nie belegt.
-    assert not wackler._voll_belegt(ADAPTER, erst, 1, "...\n")
+    from to_spawn.pruef import ausfuehren, wackler
+
+    class _NurZaehlbar:
+        def __init__(self, zweit_text: str, voll_text: str) -> None:
+            self._zweit = [sys.executable, "-c", f"print({zweit_text!r})"]
+            self._voll = [sys.executable, "-c", f"print({voll_text!r})"]
+
+        def nochmal_befehl(self, befehl: list[str], code: int) -> list[str] | None:
+            return self._zweit
+
+        def voll_nochmal_befehl(self, befehl: list[str]) -> list[str]:
+            return self._voll
+
+        def rote(self, ausgabe: str) -> set[str]:
+            from to_spawn.pruef.adapter_py import ADAPTER
+
+            return ADAPTER.rote(ausgabe)
+
+        def gelaufen(self, ausgabe: str) -> int | None:
+            from to_spawn.pruef.adapter_py import ADAPTER
+
+            return ADAPTER.gelaufen(ausgabe)
+
+        def bestanden(self, ausgabe: str) -> int | None:
+            from to_spawn.pruef.adapter_py import ADAPTER
+
+            return ADAPTER.bestanden(ausgabe)
+
+    erst = ausfuehren.Lauf(1, ".sF  [3/3]\nFAILED t.py::test_r\n1 failed, 1 passed, 1 skipped in 0.1s", 0.1)
+    zweit_ok = ".  [1/1]\n1 passed in 0.1s"
+    # Voller Lauf: gelaufen gleich, bestanden == vorher + rot → grün.
+    ok = wackler.nochmal(_NurZaehlbar(zweit_ok, "..s  [3/3]\n2 passed, 1 skipped in 0.1s"), tmp_path, ["x"], erst)
+    assert ok is not None and ok.gruen
+    # Ein Test mehr übersprungen → rot.
+    skip = wackler.nochmal(_NurZaehlbar(zweit_ok, ".ss  [3/3]\n1 passed, 2 skipped in 0.1s"), tmp_path, ["x"], erst)
+    assert skip is not None and not skip.gruen
+    # Ein Test abgewählt → rot.
+    abwahl = wackler.nochmal(_NurZaehlbar(zweit_ok, "..  [2/2]\n2 passed in 0.1s"), tmp_path, ["x"], erst)
+    assert abwahl is not None and not abwahl.gruen
+    # Voller Lauf ohne Zählung → rot.
+    leer = wackler.nochmal(_NurZaehlbar(zweit_ok, "...\n"), tmp_path, ["x"], erst)
+    assert leer is not None and not leer.gruen
 
 
 # --- Gegenproben: echte Wackler bleiben Wackler, Grün bleibt Grün --------------------------------

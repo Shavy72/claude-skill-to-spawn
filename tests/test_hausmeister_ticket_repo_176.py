@@ -56,12 +56,6 @@ sys.exit(1)
 """
 
 
-@pytest.fixture(autouse=True)
-def eigenes_tmux(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("TMUX", raising=False)
-    monkeypatch.setenv("TMUX_TMPDIR", str(tmp_path))
-
-
 class Repos:
     """Zweites und drittes echtes Repo neben dem App-Repo der Welt, Tickets je Repo."""
 

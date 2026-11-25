@@ -122,9 +122,7 @@ def test_wache_startet_trotz_kaputtem_umgebungswert(welt: dict[str, Path]) -> No
 # --- F4/F5: Bau-Log-Spuren ---------------------------------------------------
 
 
-def test_log_zeile_weicht_auf_die_laufdatei_aus(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_log_zeile_weicht_auf_die_laufdatei_aus(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Zeigt ``TO_SPAWN_LOG_REPO`` ins Leere, darf die Zeile nicht verschwinden."""
     repo = tmp_path / "repo"
     (repo / ".to-spawn").mkdir(parents=True)
@@ -157,7 +155,17 @@ with datei.open("a", encoding="utf-8") as fh:
     fh.flush()
     time.sleep(0.3)
     fh.write(json.dumps(zeile, ensure_ascii=False) + "\n")
-time.sleep(float(os.environ.get("FAKE_SCHLAF", "30")))
+# Optional (#353): statt fest FAKE_SCHLAF zu schlafen, enden, sobald im Postfach eine
+# Mail der Art FAKE_ENDE_BEI_MAIL liegt (Obergrenze bleibt FAKE_SCHLAF).
+art = os.environ.get("FAKE_ENDE_BEI_MAIL")
+ende = time.monotonic() + float(os.environ.get("FAKE_SCHLAF", "30"))
+while time.monotonic() < ende:
+    if art:
+        postfach = Path(os.environ["FAKE_POSTFACH"])
+        zeilen = postfach.read_text(encoding="utf-8").splitlines() if postfach.is_file() else []
+        if any(json.loads(z).get("art") == art for z in zeilen if z.strip()):
+            break
+    time.sleep(0.1)
 """
 
 
@@ -169,6 +177,9 @@ def test_wache_steht_nach_mehreren_pausen_still(welt: dict[str, Path]) -> None:
         "FAKE_LIMIT": ECHT.read_text(encoding="utf-8").strip(),
         "FAKE_RESET_IN": "1",
         "FAKE_SCHLAF": "20",
+        # #353: letzte Session endet, sobald session_tot gemeldet ist, statt 20 s zu schlafen.
+        "FAKE_ENDE_BEI_MAIL": "session_tot",
+        "FAKE_POSTFACH": str(welt["mails"]),
         "TO_SPAWN_RESET_PUFFER_S": "0",
     }
     beginn = time.monotonic()
@@ -177,11 +188,7 @@ def test_wache_steht_nach_mehreren_pausen_still(welt: dict[str, Path]) -> None:
     assert time.monotonic() - beginn < 50, "Wächter hängt in der Pausen-Schleife"
 
     aufrufe = [
-        json.loads(z)
-        for z in (welt["tmp"] / "claude_aufrufe.jsonl")
-        .read_text(encoding="utf-8")
-        .splitlines()
-        if z
+        json.loads(z) for z in (welt["tmp"] / "claude_aufrufe.jsonl").read_text(encoding="utf-8").splitlines() if z
     ]
     assert len(aufrufe) == waechter_lauf.MAX_PAUSEN + 1, aufrufe
 
@@ -200,9 +207,7 @@ def test_wache_ohne_uhrzeit_schreibt_blockiert_ins_bau_log(
 ) -> None:
     zeile: dict[str, Any] = json.loads(ECHT.read_bytes())
     zeile.pop("quotaLimits", None)
-    zeile["message"]["content"] = [
-        {"type": "text", "text": "You've hit your session limit"}
-    ]
+    zeile["message"]["content"] = [{"type": "text", "text": "You've hit your session limit"}]
     env = {
         **_wache_welt(welt),
         "FAKE_LIMIT": json.dumps(zeile, ensure_ascii=False),

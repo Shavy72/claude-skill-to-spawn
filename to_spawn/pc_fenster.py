@@ -22,7 +22,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple, Protocol, TypeVar
 
-from to_spawn import config, prozessbaum, sessions_datei, starter
+from to_spawn import config, konsole, prozessbaum, sessions_datei, starter
 
 if TYPE_CHECKING:
     from to_spawn.respawn import Auftrag, Ergebnis
@@ -77,7 +77,7 @@ def baum_beenden(pid: int) -> bool:
     erg = subprocess.run(
         ["taskkill", "/PID", str(pid), "/T", "/F"],
         capture_output=True,
-        text=True,
+        **konsole.UNTERPROZESS_TEXT,
         check=False,
         **prozessbaum.ohne_fenster(),
     )
@@ -105,7 +105,13 @@ def tab_starten(repo: Path, ticket: int, auftrag: str) -> None:
     befehl = tab_befehl(repo, ticket, auftrag)
     log.info("Neuer Tab: %s", befehl)
     erg = starter.starte(
-        befehl, cwd=repo, capture_output=True, text=True, check=False, warten=True, **prozessbaum.ohne_fenster()
+        befehl,
+        cwd=repo,
+        capture_output=True,
+        **konsole.UNTERPROZESS_TEXT,
+        check=False,
+        warten=True,
+        **prozessbaum.ohne_fenster(),
     )
     if erg.returncode != 0:
         raise OSError(f"wt Exit {erg.returncode}: {(erg.stderr or '').strip() or 'ohne Meldung'}")

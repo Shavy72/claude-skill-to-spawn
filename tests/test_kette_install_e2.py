@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from test_kette_to_tickets_e2 import pruefe_repo_zuordnung_und_projekt_vorrang
 
 SKILL = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SKILL))
@@ -28,6 +29,8 @@ PFLICHT_TO_SPEC = (
     "Offene Fragen",
     "Gegenprüfung",
     "Quelle: docs/GRILL_",
+    "Projekt-Vorrang",
+    "Repo-Zuordnung",
 )
 REGELN = ("beschluss-protokoll", "strategisches-design")
 PWSH = shutil.which("pwsh") or shutil.which("powershell")
@@ -72,27 +75,17 @@ def _pruefe_installiert(heim: Path) -> None:
     for baustein in PFLICHT_TO_SPEC:
         assert baustein in to_spec, f"to-spec: Pflicht-Baustein {baustein!r} fehlt"
     assert to_spec.index(MARKER) < to_spec.index("## Process")
-    assert ".to-spawn/kette.md" in to_spec, (
-        "to-spec: Verweis auf .to-spawn/kette.md fehlt"
-    )
-    assert "statt des restlichen Texts" not in to_spec, (
-        "to-spec: alter Projekt-Vorrang (ersetzt) noch drin"
-    )
-    grill = (heim / "skills" / "grill-with-docs" / "SKILL.md").read_text(
-        encoding="utf-8"
-    )
+    assert ".to-spawn/kette.md" in to_spec, "to-spec: Verweis auf .to-spawn/kette.md fehlt"
+    assert "statt des restlichen Texts" not in to_spec, "to-spec: alter Projekt-Vorrang (ersetzt) noch drin"
+    pruefe_repo_zuordnung_und_projekt_vorrang(to_spec, "to-spec")
+    to_tickets = (heim / "skills" / "to-tickets" / "SKILL.md").read_text(encoding="utf-8")
+    pruefe_repo_zuordnung_und_projekt_vorrang(to_tickets, "to-tickets")
+    grill = (heim / "skills" / "grill-with-docs" / "SKILL.md").read_text(encoding="utf-8")
     assert "LOKALER ZUSATZ" in grill and "Architektur-Runde" in grill
     claude_md = (heim / "CLAUDE.md").read_text(encoding="utf-8")
     for name in REGELN:
-        inhalt = (
-            (SKILL / "kette" / "global" / f"{name}.md")
-            .read_text(encoding="utf-8")
-            .strip()
-        )
-        assert (
-            f"<!-- global:{name}:start" in claude_md
-            and f"<!-- global:{name}:ende -->" in claude_md
-        )
+        inhalt = (SKILL / "kette" / "global" / f"{name}.md").read_text(encoding="utf-8").strip()
+        assert f"<!-- global:{name}:start" in claude_md and f"<!-- global:{name}:ende -->" in claude_md
         assert inhalt in claude_md
     assert globale_regeln.pruefe(heim / "CLAUDE.md")
 
@@ -160,18 +153,14 @@ def test_pruefe_erkennt_veralteten_block_und_schreibe_ersetzt_an_ort_und_stelle(
         str(ziel),
         "--pruefen",
     ]
-    assert (
-        subprocess.run(cli, cwd=SKILL, capture_output=True, check=False).returncode == 1
-    )
+    assert subprocess.run(cli, cwd=SKILL, capture_output=True, check=False).returncode == 1
     globale_regeln.schreibe(ziel)
     neu = ziel.read_text(encoding="utf-8")
     assert globale_regeln.pruefe(ziel)
     assert neu.startswith("Kopf\n\n") and neu.endswith("\nFuß\n")
     assert neu.count("<!-- global:strategisches-design:start") == 1
     assert "Flache Module" not in neu
-    assert (
-        subprocess.run(cli, cwd=SKILL, capture_output=True, check=False).returncode == 0
-    )
+    assert subprocess.run(cli, cwd=SKILL, capture_output=True, check=False).returncode == 0
 
 
 # --- Fix-Runde 1 (Review PR #110) ---------------------------------------------
@@ -210,21 +199,15 @@ INSTALLER = [
     "sh",
     pytest.param(
         "ps1",
-        marks=pytest.mark.skipif(
-            not PWSH, reason="pwsh fehlt — install.ps1 am PC prüfen"
-        ),
+        marks=pytest.mark.skipif(not PWSH, reason="pwsh fehlt — install.ps1 am PC prüfen"),
     ),
 ]
 
 
 def test_to_spec_liest_projekt_skill_im_uebergang() -> None:
     """Befund 1: bis E2-12 verdeckt der persönliche Skill den Projekt-Skill — Übergangszeile."""
-    text = (SKILL / "kette" / "skills" / "to-spec" / "SKILL.md").read_text(
-        encoding="utf-8"
-    )
-    zeile = next(
-        (z for z in text.splitlines() if ".claude/skills/to-spec/SKILL.md" in z), ""
-    )
+    text = (SKILL / "kette" / "skills" / "to-spec" / "SKILL.md").read_text(encoding="utf-8")
+    zeile = next((z for z in text.splitlines() if ".claude/skills/to-spec/SKILL.md" in z), "")
     assert zeile, "to-spec: Übergangszeile für .claude/skills/to-spec/SKILL.md fehlt"
     assert "Vorrang" in zeile and ".to-spawn/kette.md" in zeile
     assert text.index(zeile) < text.index("## Process")
@@ -284,9 +267,7 @@ def test_doppelter_block_wird_abgelehnt(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("art", INSTALLER)
-def test_installer_zweiter_lauf_byte_gleich_fremdes_bleibt(
-    art: str, tmp_path: Path
-) -> None:
+def test_installer_zweiter_lauf_byte_gleich_fremdes_bleibt(art: str, tmp_path: Path) -> None:
     """Befund 6: beide Installer — fremder Inhalt bleibt, zweiter Lauf byte-gleich."""
     # Bytes statt write_text: das übersetzt unter Windows \n in \r\n, geprüft wird mit LF.
     (tmp_path / "CLAUDE.md").write_bytes(b"# Eigene Regeln\n\nbleibt stehen\n")
@@ -301,9 +282,7 @@ def test_installer_zweiter_lauf_byte_gleich_fremdes_bleibt(
 
 
 @pytest.mark.parametrize("art", INSTALLER)
-def test_installer_sichert_abweichenden_alten_skill_und_behaelt_agents(
-    art: str, tmp_path: Path
-) -> None:
+def test_installer_sichert_abweichenden_alten_skill_und_behaelt_agents(art: str, tmp_path: Path) -> None:
     """Befunde 7/8: alter Skill landet unverändert in _alt/, agents/ geht nicht verloren,
     Dateien nur im alten Stand werden gemeldet."""
     alt = tmp_path / "skills" / "to-spec"
@@ -315,10 +294,20 @@ def test_installer_sichert_abweichenden_alten_skill_und_behaelt_agents(
     assert lauf.returncode == 0, lauf.stdout + lauf.stderr
     gesichert = list((tmp_path / "skills" / "_alt").glob("to-spec-*"))
     assert len(gesichert) == 1
-    assert (gesichert[0] / "SKILL.md").read_text(
-        encoding="utf-8"
-    ) == "alter eigener Stand\n"
+    assert (gesichert[0] / "SKILL.md").read_text(encoding="utf-8") == "alter eigener Stand\n"
     assert (gesichert[0] / "eigene_notiz.md").exists()
     for name in ("to-spec", "grill-with-docs"):
         assert (tmp_path / "skills" / name / "agents" / "openai.yaml").is_file(), name
     assert "eigene_notiz.md" in lauf.stdout, "Datei nur im alten Stand nicht gemeldet"
+
+
+def test_install_sh_enthaelt_repo_zuordnung_und_projekt_vorrang_579(
+    tmp_path: Path,
+) -> None:
+    """#579 (E15, E29): Nach install.sh enthalten to-spec und to-tickets beide Pflicht-Blöcke."""
+    lauf = _install_sh(tmp_path)
+    assert lauf.returncode == 0, lauf.stdout + lauf.stderr
+    for skill in ("to-spec", "to-tickets"):
+        datei = tmp_path / "skills" / skill / "SKILL.md"
+        assert datei.is_file(), f"installierter Skill {skill} fehlt"
+        pruefe_repo_zuordnung_und_projekt_vorrang(datei.read_text(encoding="utf-8"), f"install/{skill}")

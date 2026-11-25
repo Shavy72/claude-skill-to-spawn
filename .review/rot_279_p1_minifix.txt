@@ -1,0 +1,10 @@
+155886f test(aufpasser): Beleg breiter Lauf Fix-Runde (#279)
+AttributeError: 'list' object has no attribute 'get'
+AttributeError: 'NoneType' object has no attribute 'get'
+AttributeError: 'int' object has no attribute 'get'
+AttributeError: 'list' object has no attribute 'get'
+FAILED tests/test_ticket_zustand_279_fix.py::test_kaputte_liste_kein_start_kein_schliessen[[1, 2]]
+FAILED tests/test_ticket_zustand_279_fix.py::test_kaputte_liste_kein_start_kein_schliessen[null]
+FAILED tests/test_ticket_zustand_279_fix.py::test_kaputte_liste_kein_start_kein_schliessen[42]
+FAILED tests/test_ticket_zustand_279_fix.py::test_kaputte_liste_kein_start_kein_schliessen[{"number": 9003, "state": "OPEN", "labels": []}\n[1, 2]]
+4 failed, 9 passed in 13.70s

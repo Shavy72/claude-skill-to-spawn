@@ -114,15 +114,18 @@ def test_checkpoint_ohne_bekannten_login_nimmt_keinen_kommentar_vorschlag_an(
 
 def test_checkpoint_vorschlag_filtert_fremde_autoren() -> None:
     # Angepasst (Nachschau R1): kein session_login mehr — „fremd“ heißt jetzt: ohne Marke.
-    kommentare = [_kommentar("bau-bot", f"{MARKE} Vorschlag: eigener", 90), _kommentar("fremder", "Vorschlag: fremd", 30)]
+    kommentare = [
+        _kommentar("bau-bot", f"{MARKE} Vorschlag: eigener", 90),
+        _kommentar("fremder", "Vorschlag: fremd", 30),
+    ]
     vorschlag = capo.checkpoint_vorschlag([], kommentare)
     assert vorschlag is not None
     assert (vorschlag.wahl, vorschlag.autor) == ("eigener", "bau-bot")
 
 
-# --- Befund 8, Nachschau R1/R2: gleiches gh-Konto für Session und David ----------
-# Session und David kommentieren mit demselben Login (nest_push.sh kopiert Davids
-# gh-Token). Nur die Marke capo.SESSION_KOPF trennt Session-Kommentare von David.
+# --- Befund 8, Nachschau R1/R2: gleiches gh-Konto für Session und Menschen ----------
+# Session und Mensch kommentieren mit demselben Login (nest_push.sh kopiert das
+# gh-Token des Menschen). Nur die Marke capo.SESSION_KOPF trennt Session-Kommentare vom Menschen.
 
 KONTO = "Shavy72"
 MARKE = "Bau-Session:"
@@ -212,7 +215,7 @@ def test_mensch_noetig_mit_fix_runde_und_review_offen() -> None:
 
 # --- Fix-Runde 2, S1: nur Kommentare von Repo-Beteiligten zählen ----------------
 # Ein Dritter (öffentliches Repo) darf mit der Marke weder einen Vorschlag setzen
-# noch ``seit`` hinter Davids Antwort schieben. GitHub liefert ``author_association``
+# noch ``seit`` hinter die Antwort des Menschen schieben. GitHub liefert ``author_association``
 # an jedem Kommentar; hier läuft der echte ``issue_kommentare`` über gestelltes gh.
 
 
@@ -281,9 +284,7 @@ def test_s1_session_vorschlag_von_beteiligtem_wird_angenommen(
     assert any("würde Vorschlag annehmen: sofort aus." in z for z in zeilen), zeilen
 
 
-def test_s1_kommentar_ohne_author_association_zaehlt_nicht(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_s1_kommentar_ohne_author_association_zaehlt_nicht(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     zeilen = _checkpoint_ueber_gh(monkeypatch, tmp_path, [_kommentar(KONTO, SESSION_VORSCHLAG, 90)])
     assert not any("würde Vorschlag annehmen" in z for z in zeilen), zeilen
 

@@ -36,6 +36,7 @@ def _bash() -> str:
     assert pfad, "Keine Bash gefunden (unter Windows Git Bash nötig, WSL zählt nicht)"
     return pfad
 
+
 FAKE_CLAUDE = r"""#!/usr/bin/env python3
 import json, os, sys
 from pathlib import Path
@@ -62,9 +63,7 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         json.dumps(
             {
                 "spec": 900,
-                "tickets": {
-                    "901": {"title": "Wegwerf", "schaetzung_k": 120, "umfang": "Kern bauen."}
-                },
+                "tickets": {"901": {"title": "Wegwerf", "schaetzung_k": 120, "umfang": "Kern bauen."}},
             },
             ensure_ascii=False,
         ),
@@ -233,9 +232,7 @@ def test_bau_legt_konfig_beim_start_an(repo: Path) -> None:
 
 
 @pytest.mark.parametrize(("name", "nummer"), [("bau", "901"), ("wache", "900")])
-def test_kind_session_erbt_kein_to_spawn_repo(
-    name: str, nummer: str, repo: Path, tmp_path: Path
-) -> None:
+def test_kind_session_erbt_kein_to_spawn_repo(name: str, nummer: str, repo: Path, tmp_path: Path) -> None:
     binaer = tmp_path / "bin"
     binaer.mkdir()
     claude = binaer / "claude"
@@ -305,9 +302,7 @@ def test_repo_scripts_sind_nur_weiterleitungen() -> None:
 def test_install_sh_vorhanden_und_syntaktisch_sauber() -> None:
     skript = SKILL / "install.sh"
     assert skript.is_file()
-    ergebnis = subprocess.run(
-        [_bash(), "-n", str(skript)], capture_output=True, text=True, check=False
-    )
+    ergebnis = subprocess.run([_bash(), "-n", str(skript)], capture_output=True, text=True, check=False)
     assert ergebnis.returncode == 0, ergebnis.stderr
 
 

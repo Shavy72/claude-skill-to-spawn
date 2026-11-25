@@ -9,6 +9,10 @@ sie als ``C:\\c\\…`` missverstehen. Linux/macOS: ``bash`` aus dem ``PATH``, Um
 Tür für Aufrufer: ``lauf`` startet bash samt passender Umgebung — die Pfadsperre lässt sich so
 nicht vergessen. ``bash`` nur, wer allein den Pfad braucht (Test-Helfer); ``ist_wsl_stub`` ist
 die Regel, an der ein gefundener Pfad als WSL-Stub erkannt wird.
+
+Test-Naht (#646): ``TO_SPAWN_TEST_BASH_FEHLT=1`` wirkt nur unter Test
+(:func:`to_spawn.starter.unter_test`) und lässt :func:`bash` mit ``FileNotFoundError`` abbrechen —
+wirkt auch in Kind-Prozessen und unter Windows (wo Git-Bash sonst an festen Orten gefunden wird).
 """
 
 from __future__ import annotations
@@ -22,12 +26,18 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path, PureWindowsPath
 from typing import Any
 
+from to_spawn import prozessbaum, sitzungsjob, starter
+
 log = logging.getLogger("to_spawn.bash_wahl")
 
 #: Standard-Installationsort von Git für Windows.
 _GIT_BASH_STANDARD = "C:/Program Files/Git/bin/bash.exe"
+#: Nur unter Test wirksam: :func:`bash` meldet ``FileNotFoundError`` (auch in Kind-Prozessen, #646).
+TEST_FEHLT_ENV = "TO_SPAWN_TEST_BASH_FEHLT"
 #: Schalter, mit denen MSYS die Pfad-Umsetzung für Windows-Programme abschaltet.
 _PFAD_SPERREN = ("MSYS_NO_PATHCONV", "MSYS2_ARG_CONV_EXCL")
+#: Sekunden, die :func:`lauf` nach dem Gruppen-Abbruch noch auf die Pipes wartet (#455).
+NACHLAUF_S = 5.0
 #: Ordner, in denen unter Windows nur der WSL-Stub als ``bash.exe`` liegt.
 _STUB_ORDNER = frozenset({"system32", "windowsapps"})
 
@@ -44,6 +54,8 @@ def bash() -> str:
     ``git`` oder ``bash`` im ``PATH`` (nie der WSL-Stub). Sonst ``bash`` im ``PATH``.
     Fehlt sie → ``FileNotFoundError`` mit verständlicher Meldung, nie stiller Rückfall.
     """
+    if os.environ.get(TEST_FEHLT_ENV) == "1" and starter.unter_test():
+        raise FileNotFoundError(f"bash im Test ausgeblendet ({TEST_FEHLT_ENV}=1)")
     if sys.platform != "win32":
         pfad = shutil.which("bash")
         if pfad is None:
@@ -70,7 +82,11 @@ def bash() -> str:
 
 
 def lauf(
-    argumente: Sequence[str], *, env: Mapping[str, str] | None = None, **optionen: Any
+    argumente: Sequence[str],
+    *,
+    env: Mapping[str, str] | None = None,
+    zeitgrenze_s: float | None = None,
+    **optionen: Any,
 ) -> subprocess.CompletedProcess[Any]:
     """``bash <argumente>`` über ``subprocess.run`` starten, Umgebung für Git-Bash bereinigt.
 
@@ -78,11 +94,88 @@ def lauf(
     ``MSYS2_ARG_CONV_EXCL`` heraus, sonst geht die Umgebung unverändert durch. ``optionen``
     gehen an ``subprocess.run`` (``check`` Vorgabe ``False``). Fehlt bash →
     ``FileNotFoundError`` aus ``bash()``.
+
+    ``zeitgrenze_s`` (#455): bash läuft in eigener Prozessgruppe; nach Ablauf endet die ganze
+    Gruppe samt Unterprozessen (die sonst die Ausgabe offen halten) und es kommt
+    ``subprocess.TimeoutExpired`` mit der Ausgabe bis dahin. ``subprocess.run(timeout=…)``
+    beendete nur bash selbst und wartete dann auf die Enkel.
     """
     basis = os.environ if env is None else env
     if sys.platform == "win32":
         umgebung = {k: v for k, v in basis.items() if k.upper() not in _PFAD_SPERREN}
     else:
         umgebung = dict(basis)
+    optionen = {**prozessbaum.fensterlos(), **optionen}  # #658: vor dem Gruppen-Flag unten
     optionen.setdefault("check", False)
-    return subprocess.run([bash(), *argumente], env=umgebung, **optionen)  # noqa: S603
+    if zeitgrenze_s is None:
+        return subprocess.run(_befehlszeile(argumente), env=umgebung, **optionen)  # noqa: S603
+    pruefen, eingabe = optionen.pop("check"), optionen.pop("input", None)
+    if sys.platform == "win32":
+        optionen["creationflags"] = optionen.get("creationflags", 0) | subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        optionen["start_new_session"] = True
+    with (
+        subprocess.Popen(_befehlszeile(argumente), env=umgebung, **optionen) as prozess,
+        prozessbaum.gruppe_gebunden(prozess) as job,
+    ):
+        try:
+            aus, fehler = prozess.communicate(eingabe, timeout=zeitgrenze_s)
+        except subprocess.TimeoutExpired:
+            _gruppe_beenden(prozess, job=job)
+            try:
+                aus, fehler = prozess.communicate(timeout=NACHLAUF_S)
+            except subprocess.TimeoutExpired as rest:
+                # Enkel mit eigenem setsid hält die Pipe: Teilausgabe nehmen, Pipes zu, weiter.
+                log.warning(
+                    "bash PID %d: Pipe nach Zeitgrenze noch offen (Enkel außerhalb der Gruppe)",
+                    prozess.pid,
+                )
+                aus, fehler = _text(rest.output, optionen), _text(rest.stderr, optionen)
+                for rohr in (prozess.stdout, prozess.stderr):
+                    if rohr is not None:
+                        rohr.close()
+            raise subprocess.TimeoutExpired(prozess.args, zeitgrenze_s, output=aus, stderr=fehler) from None
+    if pruefen and prozess.returncode:
+        raise subprocess.CalledProcessError(prozess.returncode, prozess.args, aus, fehler)
+    return subprocess.CompletedProcess(prozess.args, prozess.returncode, aus, fehler)
+
+
+def _befehlszeile(argumente: Sequence[str]) -> list[str] | str:
+    r"""``[bash, *argumente]``; unter Windows als fertige Zeile in MSYS-Quotierung (#553).
+
+    Git-Bash zerlegt seine Befehlszeile selbst und nicht nach den Regeln von
+    ``subprocess.list2cmdline``: ``'…'`` verliert die Anführungszeichen, in ``"…"`` wird
+    ``\\`` zu ``\``, unquotierte Argumente werden geglobbt. Darum jedes Argument in ``"…"``,
+    darin ``\`` und ``"`` mit ``\`` geschützt — so kommt jedes Byte unverändert an.
+    """
+    if sys.platform != "win32":
+        return [bash(), *argumente]
+    teile = [f'"{bash()}"']
+    for arg in argumente:
+        teile.append('"' + arg.replace("\\", "\\\\").replace('"', '\\"') + '"')
+    return " ".join(teile)
+
+
+def _text(roh: Any, optionen: Mapping[str, Any]) -> Any:
+    """Teilausgabe aus ``TimeoutExpired`` (immer Bytes) im Modus des Aufrufers (``text=True`` → str)."""
+    if isinstance(roh, bytes) and (
+        optionen.get("text") or optionen.get("universal_newlines") or optionen.get("encoding")
+    ):
+        return roh.decode(optionen.get("encoding") or "utf-8", errors="replace")
+    return roh
+
+
+def _gruppe_beenden(
+    prozess: subprocess.Popen[Any],
+    *,
+    job: sitzungsjob.Job | None = None,
+) -> None:
+    """bash aus :func:`lauf` samt allen Unterprozessen hart beenden.
+
+    Delegiert an die eine Stelle :func:`to_spawn.prozessbaum.gruppe_beenden` (Linux/macOS:
+    ``SIGKILL`` an die eigene Prozessgruppe; Windows: Job-Objekt + Prozessbaum).
+    ponytail: ein Enkel unter Linux, der selbst ``setsid`` ruft, verlässt die Gruppe und lebt
+    weiter; :func:`lauf` wartet dann nur :data:`NACHLAUF_S` auf die Pipe. Upgrade-Pfad: Ausgabe
+    in Datei.
+    """
+    prozessbaum.gruppe_beenden(prozess, job=job)

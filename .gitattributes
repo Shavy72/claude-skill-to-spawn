@@ -1,0 +1,10 @@
+# Review-Hook (#214): immer LF, auch im Windows-Klon — sonst laufen PC und Server wieder auseinander.
+review-hook/**/*.py text eol=lf
+# HTML-Dateien (#226): immer LF, auch im Windows-Klon — sonst liefert core.autocrlf CRLF in leitstand/seite.html.
+*.html text eol=lf
+# Review-Werkzeug (#329): immer LF, auch im Windows-Klon — sonst laufen PC und Server wieder auseinander.
+review/**/*.py text eol=lf
+review/**/*.md text eol=lf
+review/**/*.json text eol=lf
+# Review-Dirigent (#396): immer LF, auch im Windows-Klon — gleicher Schutz wie review/.
+review-dirigent/**/*.md text eol=lf

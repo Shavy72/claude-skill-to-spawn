@@ -1,13 +1,14 @@
-# Installer für /to-spawn: Skill nach ~/.claude/skills/to-spawn (inkl. skripte/, to_spawn/, to_spawn.py),
+﻿# Installer für /to-spawn: Skill nach ~/.claude/skills/to-spawn (inkl. skripte/, to_spawn/, to_spawn.py),
 # Alias-Skills (aliase/* → ~/.claude/skills/<alias>), Profil-Funktionen bau/aufseher/wache/sessions/leitstand,
 # optional die Repo-Weiterleitungen (repo-scripts/ → <Repo>/scripts, nur fehlende) + .to-spawn/config.json.
 # Jeder vorhandene Skill-Ordner (to-spawn, Alias, Kette) wird nie gelöscht, sondern nach <Skills>\_alt\<name>-<zeit> verschoben.
 # Dazu die Kette: kette/skills/* → <Skills>/<name>, Regel-Blöcke kette/global/*.md → globale CLAUDE.md.
 # Linux/macOS: install.sh.
-# Aufruf: pwsh -File install.ps1 [-Repo <Pfad-zum-Repo>] [-Skills <Ordner>] [-ClaudeMd <Datei>]
+# Aufruf: pwsh -File install.ps1 [-Repo <Pfad-zum-Repo>] [-Skills <Ordner>] [-ClaudeMd <Datei>] [-Erzwingen]
 #   -Skills    Zielordner der Skills (Vorgabe %USERPROFILE%\.claude\skills)
 #   -ClaudeMd  globale CLAUDE.md für die Regel-Blöcke (Vorgabe %USERPROFILE%\.claude\CLAUDE.md)
-param([string]$Repo = "", [string]$Skills = "", [string]$ClaudeMd = "")
+#   -Erzwingen Installations-Sperre bewusst überstimmen (roter/unbekannter Stand)
+param([string]$Repo = "", [string]$Skills = "", [string]$ClaudeMd = "", [switch]$Erzwingen)
 $ErrorActionPreference = "Stop"
 # Ausgabe immer UTF-8 (Umlaute in Meldungen): sonst schreibt PowerShell umgeleitet in der OEM-Codepage.
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -23,44 +24,31 @@ if ((Test-Path $ziel) -and ((Resolve-Path $ziel).Path -eq (Resolve-Path $hier).P
 if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
     throw "Abbruch: python fehlt — erst Python installieren, dann install.ps1 erneut starten (nichts kopiert)."
 }
+# Installations-Sperre vor jedem Tausch prüfen (#415, #577): GitHub Actions, sonst lokale Suite;
+# rot/unbekannt → Abbruch ohne Änderung (+ Fehler-Log, bei Rot Ticket); -Erzwingen überstimmt bewusst.
+$env:PYTHONIOENCODING = "utf-8"
+$env:PYTHONPATH = $hier
+$pruefArgs = @("-m", "to_spawn.install_pruefung", "pruefen", "--klon", $hier, "--python", (Get-Command python).Source)
+if ($Erzwingen) { $pruefArgs += "--erzwingen" }
+python @pruefArgs
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
 $zeit = Get-Date -Format "yyyyMMdd-HHmmss"
-$caches = @("__pycache__", ".pytest_cache", ".ruff_cache")
-# Sichere-UndKopiere <name> <quellen>: alten Ordner <Skills>\<name> nach _alt\<name>-<zeit> verschieben
-# (nie löschen), dann jede vorhandene Quelle hinein kopieren. Dateien, die es nur im alten Stand gibt,
-# werden gemeldet (liegen weiter in der Sicherung); STAND.json nicht, den stempelt der Installer danach neu.
+# Sichere-UndKopiere <name> <quellen>: kopiert erst vollständig in einen Staging-Ordner in <Skills>,
+# bereinigt Caches, stempelt bei to-spawn STAND.json und tauscht danach atomar (#415).
+# Ein vorhandener Ordner wird nie gelöscht, sondern nach _alt\<name>-<zeit> verschoben.
 function Sichere-UndKopiere([string]$name, [string[]]$quellen) {
-    $zielOrdner = Join-Path $skills $name
-    $sicherung = ""
-    if (Test-Path $zielOrdner) {
-        $alt = Join-Path $skills "_alt"
-        New-Item -ItemType Directory -Force $alt | Out-Null
-        $sicherung = Join-Path $alt ($name + "-" + $zeit)
-        while (Test-Path $sicherung) { $sicherung = $sicherung + "-1" }
-        Move-Item $zielOrdner $sicherung
-        Write-Host "Alter Stand gesichert: $sicherung"
-    }
-    New-Item -ItemType Directory -Force $zielOrdner | Out-Null
-    foreach ($quelle in $quellen) {
-        if (Test-Path $quelle) { Copy-Item $quelle $zielOrdner -Recurse -Force }
-    }
-    Get-ChildItem $zielOrdner -Recurse -Directory -Force | Where-Object { $_.Name -in $caches } |
-        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-    if ($sicherung) {
-        $basis = (Resolve-Path $sicherung).Path
-        foreach ($datei in Get-ChildItem $sicherung -Recurse -File -Force) {
-            $rel = $datei.FullName.Substring($basis.Length).TrimStart('\', '/')
-            if ($rel -split '[\\/]' | Where-Object { $_ -in $caches }) { continue }
-            if ($rel -eq "STAND.json") { continue }
-            if (-not (Test-Path (Join-Path $zielOrdner $rel))) { Write-Host "Hinweis: nur im alten Stand (liegt in $sicherung): $rel" }
-        }
-    }
+    $env:PYTHONIOENCODING = "utf-8"
+    $env:PYTHONPATH = $hier
+    $tauschArgs = @("-m", "to_spawn.install_pruefung", "tauschen", "--skills", $skills, "--name", $name, "--zeit", $zeit)
+    if ($name -eq "to-spawn") { $tauschArgs += @("--klon", $hier) }
+    $tauschArgs += $quellen
+    python @tauschArgs
+    if ($LASTEXITCODE -ne 0) { throw "Atomarer Tausch fehlgeschlagen: $name" }
 }
 $quellen = foreach ($f in @("SKILL.md", "README.md", "LICENSE", "to_spawn.py", "install.sh", "install.ps1", "spawn_local.ps1", "spawn_srv.ps1",
-                           "to_spawn", "skripte", "repo-scripts", "aliase", "tests", "docs", "nest", "leitstand", "kette")) { Join-Path $hier $f }
+                           "to_spawn", "skripte", "repo-scripts", "aliase", "tests", "docs", "nest", "leitstand", "kette", "review-hook", "review", "review-dirigent", "probe")) { Join-Path $hier $f }
 Sichere-UndKopiere "to-spawn" $quellen
-$env:PYTHONIOENCODING = "utf-8"
-python (Join-Path (Join-Path $ziel "to_spawn") "skill_stand.py") --stempel $ziel --klon $hier
-if ($LASTEXITCODE -ne 0) { throw "Skill-Stand nicht gestempelt: $ziel" }
 Write-Host "Skill installiert: $ziel"
 foreach ($aliasOrdner in Get-ChildItem (Join-Path $hier "aliase") -Directory) {
     Sichere-UndKopiere $aliasOrdner.Name @(Get-ChildItem $aliasOrdner.FullName -Force | ForEach-Object { $_.FullName })
@@ -74,6 +62,29 @@ foreach ($ketteOrdner in Get-ChildItem (Join-Path (Join-Path $hier "kette") "ski
 $env:PYTHONIOENCODING = "utf-8"
 python (Join-Path (Join-Path $ziel "to_spawn") "globale_regeln.py") --ziel $ClaudeMd
 if ($LASTEXITCODE -ne 0) { throw "Regel-Blöcke nicht geschrieben: $ClaudeMd" }
+# Ja-Sperre (PreToolUse-Hook in settings.json neben der CLAUDE.md) + Befehl `ja` nach bin/ daneben (#531)
+$env:PYTHONPATH = $ziel
+python -m to_spawn.ja_einrichten --claude-dir (Split-Path -Parent $ClaudeMd) --python (Get-Command python).Source --cli (Join-Path $ziel "to_spawn.py")
+if ($LASTEXITCODE -ne 0) { throw "Ja-Sperre nicht eingetragen" }
+# Review-Hook (review-hook/ → ~/.claude/hooks/review, #214) + Review-Werkzeug (review/ → ~/.claude/review, #329); Überschreib-Regel in to_spawn/review_hook.py.
+python (Join-Path (Join-Path $ziel "to_spawn") "review_hook.py") --klon $hier  # Klon: nur versionierte Dateien
+if ($LASTEXITCODE -ne 0) { throw "Review-Hook nicht installiert" }
+# Review-Dirigent (review-dirigent/ → <Skills>/review-dirigent, #396); alter Ordner nach _alt/, nie gelöscht.
+$dirigentOrdner = Join-Path $hier "review-dirigent"
+if (Test-Path $dirigentOrdner) {
+    Sichere-UndKopiere "review-dirigent" @(Get-ChildItem $dirigentOrdner -Force | ForEach-Object { $_.FullName })
+    Write-Host "Review-Dirigent installiert: $(Join-Path $skills 'review-dirigent')"
+}
+# Grünen installierten SHA im Fehler-Log vermerken (#415)
+$env:PYTHONIOENCODING = "utf-8"
+$env:PYTHONPATH = $ziel
+python -m to_spawn.install_pruefung verbuchen --klon $hier --ziel $ziel
+if ($LASTEXITCODE -ne 0) { throw "Installations-Log nicht geschrieben: $ziel" }
+# Maschinen-Liste: veraltete ticket_repo-Vorgaben nachziehen (#261, wiederholbar)
+try {
+    $tr = python (Join-Path $ziel "to_spawn.py") ticket-repo --nachziehen 2>&1
+    if ($LASTEXITCODE -eq 0) { if ($tr) { Write-Host "$tr" } } else { Write-Warning "Maschinen-Liste nicht nachgezogen: $tr" }
+} catch { Write-Warning "Maschinen-Liste nicht nachgezogen: $_" }
 
 # PowerShell-Profil: bau / wache / sessions (nur ergänzen, nie überschreiben)
 $profilPfad = $PROFILE.CurrentUserAllHosts
@@ -165,8 +176,7 @@ if ($Repo) {
     $manOrdner = python -c $manPy $ziel (Resolve-Path $Repo).Path manifeste
     if ($LASTEXITCODE -eq 0 -and $manOrdner) { $man = "$manOrdner".Trim() }
     New-Item -ItemType Directory -Force $man | Out-Null
-    $def = Join-Path $man "_default.json"
-    if (-not (Test-Path $def)) { Copy-Item (Join-Path $hier "repo-scripts\_default.json") $def; Write-Host "kopiert: $def" }
+    # Keine Regel-Kopie _default.json: Start-Text kommt aus der Skill-Vorlage; Repo-Regeln über start_text.zusatz_datei (#274 P1).
     # Ohne doppelte Anführungszeichen im -c-Text: Windows PowerShell 5.1 würde sie beim Aufruf verschlucken.
     # Konfig anlegen (+ .gitignore-Block) und Checkpoint-Label im GitHub-Repo sicherstellen (#257).
     $py = 'import sys; sys.path.insert(0, sys.argv[1]); from pathlib import Path; from to_spawn import config, gh; r = Path(sys.argv[2]); print(config.sicherstellen(r)); l = str(config.lade(r).get("regularien", {}).get("checkpoint_label") or "checkpoint:human"); print("Label " + l + (": vorhanden" if gh.label_sicherstellen(r, l) else ": nicht angelegt - von Hand: gh label create " + l))'
@@ -180,8 +190,8 @@ if (Test-Path $cj) {
         $roh = Get-Content $cj -Raw
         if ($roh -notmatch '"preferredNotifChannel"\s*:\s*"terminal_bell"') {
             Copy-Item $cj "$cj.bak-to-spawn" -Force
-            $obj = $roh | ConvertFrom-Json -AsHashtable
-            $obj["preferredNotifChannel"] = "terminal_bell"
+            $obj = $roh | ConvertFrom-Json
+            $obj | Add-Member -NotePropertyName "preferredNotifChannel" -NotePropertyValue "terminal_bell" -Force
             ($obj | ConvertTo-Json -Depth 50) | Set-Content $cj -Encoding utf8
             Write-Host "Glocke gesetzt: preferredNotifChannel = terminal_bell (Sicherung $cj.bak-to-spawn). Gilt für neue Sessions."
         } else { Write-Host "Glocke schon gesetzt." }

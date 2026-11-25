@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
+from rundschau_beispiel import rundschau_args
 from test_waechter_213 import (
     SPEC,
     _beleg,
@@ -60,6 +61,7 @@ def _ablegen(kette: dict[str, Path], spec_fertig: datetime) -> None:
             *_LINKS,
             "--spec-fertig",
             spec_fertig.isoformat(timespec="seconds"),
+            *rundschau_args(kette["repo"], SPEC),  # #529: Abnahme verlangt ein gültiges Deck
         ],
         capture_output=True,
         text=True,
@@ -136,7 +138,10 @@ def test_d_ohne_ablage_legt_capo_selbst_ab_keine_kurzmail(
     datei = kette["repo"] / ".to-spawn" / f"abschluss_{SPEC}_paket.json"
     assert datei.is_file(), _text(ergebnis)
     paket = json.loads(datei.read_text(encoding="utf-8"))["paket"]
-    assert paket["stage"] == "fehlt" and paket["rundschau"].startswith("fehlt")
+    # Seit #529 trägt der Notweg (kein Rundschau-Deck) den Vermerk vorn; der Grund "fehlt" bleibt Pflicht.
+    assert paket["stage"] == "fehlt"
+    assert paket["rundschau"].startswith("nicht abnahmebereit")
+    assert "fehlt (" in paket["rundschau"]
     assert json.loads(datei.read_text(encoding="utf-8"))["spec_fertig"] == _zustand(kette)["spec_fertig_seit"]
     assert "Abschluss-Mail wartet" in ergebnis.stdout, _text(ergebnis)
     assert _mails(kette) == []

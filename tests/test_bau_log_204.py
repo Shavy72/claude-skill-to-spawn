@@ -150,12 +150,13 @@ def _umgebung(tmp_path: Path, wt_basis: Path) -> dict[str, str]:
         "PATH": f"{binaer}{os.pathsep}{os.environ['PATH']}",
         "TO_SPAWN_TEST_BIN": str(binaer),  # Start-Tür (#1406): nur diese Attrappe startet
         "HOME": str(heim),
+        "USERPROFILE": str(heim),  # Windows: Path.home() liest USERPROFILE, nicht HOME (#553)
         "TMPDIR": str(temp),
         "BAU_WT_DIR": str(wt_basis),
         "FAKE_CLAUDE_SZENARIO": "hooks",
         "FAKE_CLAUDE_AUSGABE": str(tmp_path / "lauf"),
     }
-    for name in ("LOCALAPPDATA", "TO_SPAWN_REPO", "TO_SPAWN_TICKET", "TO_SPAWN_LOG_REPO"):
+    for name in ("LOCALAPPDATA", "CLAUDE_CONFIG_DIR", "TO_SPAWN_REPO", "TO_SPAWN_TICKET", "TO_SPAWN_LOG_REPO"):
         umgebung.pop(name, None)
     return umgebung
 

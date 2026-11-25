@@ -10,6 +10,7 @@ der Test, dass der RICHTIGE Startbefehl mit den richtigen Argumenten rausging.
 from __future__ import annotations
 
 import json
+import shlex
 import sys
 from pathlib import Path
 
@@ -27,6 +28,8 @@ from test_waechter_213 import (  # noqa: F401  (welt = Fixture)
 )
 
 TMUX_STUB = Path(__file__).resolve().parent / "hilfen" / "tmux_stub_284.py"
+# bau.py des Skills, wie es im bash-Text steht (shlex-quotiert, unter Windows mit Laufwerk und Backslash).
+BAU_IM_FENSTER = shlex.quote(str(Path(__file__).resolve().parent.parent / "skripte" / "bau.py"))
 
 
 # --- Hilfen ------------------------------------------------------------------
@@ -49,11 +52,7 @@ def tmux(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> dict[str, Pa
 def _aufrufe(tmux: dict[str, Path]) -> list[list[str]]:
     if not tmux["protokoll"].is_file():
         return []
-    return [
-        json.loads(z)
-        for z in tmux["protokoll"].read_text(encoding="utf-8").splitlines()
-        if z.strip()
-    ]
+    return [json.loads(z) for z in tmux["protokoll"].read_text(encoding="utf-8").splitlines() if z.strip()]
 
 
 def _starts(tmux: dict[str, Path]) -> list[list[str]]:
@@ -84,9 +83,7 @@ def _wieder_oeffnen_lassen(welt: dict[str, Path], **zusatz: object) -> None:
 # --- a) wieder geöffnet + keine Session → Folge-Runde ------------------------
 
 
-def test_folge_runde_startet_mit_richtigem_befehl(
-    welt: dict[str, Path], tmux: dict[str, Path]
-) -> None:
+def test_folge_runde_startet_mit_richtigem_befehl(welt: dict[str, Path], tmux: dict[str, Path]) -> None:
     _wieder_oeffnen_lassen(welt)
     ergebnis = _capo(welt)
     assert ergebnis.returncode == 0, _text(ergebnis)
@@ -99,7 +96,7 @@ def test_folge_runde_startet_mit_richtigem_befehl(
     assert "-n" in argv and argv[argv.index("-n") + 1] == "bau 901"
     assert "-c" in argv and argv[argv.index("-c") + 1] == str(welt["repo"])
     assert argv[-3:-1] == ["bash", "-lc"]
-    assert argv[-1].endswith("bau 901 --sofort")
+    assert f"{BAU_IM_FENSTER} 901 --sofort; " in argv[-1]  # #277: bau.py direkt, nicht ~/.bashrc-bau
     assert "TO_SPAWN_HOME=" in argv[-1] and "REPO=" in argv[-1]
     assert _folgerunden(welt) == {"901": 1}
 
@@ -107,9 +104,7 @@ def test_folge_runde_startet_mit_richtigem_befehl(
 # --- b) Session läuft noch → kein Start --------------------------------------
 
 
-def test_laufende_session_startet_nichts(
-    welt: dict[str, Path], tmux: dict[str, Path]
-) -> None:
+def test_laufende_session_startet_nichts(welt: dict[str, Path], tmux: dict[str, Path]) -> None:
     _wieder_oeffnen_lassen(welt)
     tmux["fenster"].write_text(f"wache {SPEC}\nbau 901\n", encoding="utf-8")
     ergebnis = _capo(welt)
@@ -122,9 +117,7 @@ def test_laufende_session_startet_nichts(
 # --- c) Grenze erreicht → kein Start, Meldung --------------------------------
 
 
-def test_grenze_erreicht_meldet_statt_zu_starten(
-    welt: dict[str, Path], tmux: dict[str, Path]
-) -> None:
+def test_grenze_erreicht_meldet_statt_zu_starten(welt: dict[str, Path], tmux: dict[str, Path]) -> None:
     _wieder_oeffnen_lassen(welt, folgerunden_max=2)
     datei = _zustand_datei(welt)
     daten = json.loads(datei.read_text(encoding="utf-8"))

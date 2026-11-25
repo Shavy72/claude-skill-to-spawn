@@ -3,12 +3,13 @@
 Läuft per Cron alle 15 Minuten (0 Token, reines Skript) und sieht je tmux-Sitzung
 ``spec-<S>`` nach den Fenstern ``bau <N>`` und ``wache <S>``:
 
-0. **Deploy-Wache:** läuft ein Deploy (``--deploy-muster`` plus die Skripte aus
-   ``.to-spawn/config.json`` gegen ``pgrep -af``), wird in diesem Lauf nichts
-   angefasst — nur die Hashes werden fortgeschrieben. Prozesse älter als 6 h zählen
-   nicht (verwaiste Läufe), sie werden als „Waise ignoriert“ geloggt. Ein Gate
-   (``pytest``) sperrt nur das eigene Fenster — im Fensterbaum oder im
-   Ticket-Worktree —, nie den ganzen Server (#592).
+0. **Deploy-Wache (#262):** läuft ein Deploy (``--deploy-muster`` plus die Skripte aus
+   ``.to-spawn/config.json`` gegen ``prozessbaum.passende``), wird in diesem Lauf
+   nichts angefasst — weder der Hausmeister noch der externe Wecker noch tmux-Fenster
+   (nur die Hashes werden fortgeschrieben; bei gestörter Abfrage fail-closed). Prozesse
+   älter als 6 h zählen nicht (verwaiste Läufe), sie werden als „Waise ignoriert“
+   geloggt. Ein Gate (``pytest``) sperrt nur das eigene Fenster — im Fensterbaum oder
+   im Ticket-Worktree —, nie den ganzen Server (#592).
 1. **Fehlendes Fenster:** offenes Unter-Ticket ohne ``bau <N>`` (oder fehlendes
    ``wache <S>`` bei offenen Tickets) → Fenster anlegen. Liegt
    ``<repo>/.to-spawn/sessions/<N>.json`` (``wache-<S>.json``) und das Transkript
@@ -16,7 +17,7 @@ Läuft per Cron alle 15 Minuten (0 Token, reines Skript) und sieht je tmux-Sitzu
    erst, wenn Fenster und Prozess 5 s lang bleiben (R6). Nie bei Label
    ``ready-for-human``/``needs-info``/``wontfix``; verschwindet das Fenster nach
    dem Start gleich wieder, gibt es höchstens 2 Starts in 6 h, dann einmal
-   „braucht David“.
+   „braucht den Menschen“.
 2. **Ticket zu:** ``bau <N>`` mit geschlossenem Ticket, Pane-Text seit ≥ 15 min
    unverändert und keine laufende Arbeit → Worktree sichern (falls schmutzig),
    Session beenden. Ist die Grenze voll (Speicher/Session-Zahl) und meldet die
@@ -33,15 +34,15 @@ Läuft per Cron alle 15 Minuten (0 Token, reines Skript) und sieht je tmux-Sitzu
      ``--resume <id>`` neu starten (Fenster, Index und Sitzung bleiben — die Sitzung
      stirbt nie, auch als letztes Fenster). Danach bis 120 s nachweisen, dass die
      Session mit derselben ID wieder läuft. Scheitert Sicherung oder Nachweis,
-     bleibt alles stehen und David wird gerufen.
-   - Stufe 2 → nichts mehr ändern, einmal „braucht David“ melden (Stufe 3).
+     bleibt alles stehen und der Mensch wird gerufen.
+   - Stufe 2 → nichts mehr ändern, einmal „braucht den Menschen“ melden (Stufe 3).
    Die Stufe steigt nur bei einem Eingriff. Ändert sich der Pane-Text danach, hat
    der Eingriff gewirkt: Stufe 0, Uhr neu. Kill/Resume gibt es also nur, wenn nach
    dem Anstupsen ``hang_min`` lang GAR NICHTS passiert ist; Stufe 3 bleibt, bis der
    Text sich ändert — kein Zeit-Reset. Direkt vor jedem Eingriff wird der Pane-Text
    neu gelesen: anders als zu Laufbeginn, arbeitend oder Deploy/Gate inzwischen
    gestartet ⇒ Kette abbrechen (R4). Mehr als 3 Anstupser je Fenster in 24 h ⇒
-   Stufe 3, einmal „braucht David“ (R5). Das Aufseher-Fenster geht denselben Weg,
+   Stufe 3, einmal „braucht den Menschen“ (R5). Das Aufseher-Fenster geht denselben Weg,
    nur ohne Sicherung (kein Worktree): ``wache.py --resume <id>`` (R1).
    Lebt im Pane nur noch die Shell (Session beendet), wird nie angestupst — der
    Text liefe als Befehl —, sondern nach ``hang_min`` Stille gleich bei Stufe 1
@@ -90,20 +91,30 @@ import time
 from collections.abc import Callable, Iterable, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
 from to_spawn import (
     anleitung,
+    auswahl,
     bau_log,
+    briefkasten,
+    capo,
     config,
     eigener_handoff,
+    gh,
+    manifest,
     prozessbaum,
     sessions_datei,
+    spawn_exit,
     speicher,
     starter,
+    ticket_zustand,
+    tmux_aufruf,
+    uebergabe_sichern,
     vorfall,
+    werkzeug,
 )
 from to_spawn import sperre as _sperre
 from to_spawn.waechter_lauf import _LIMIT_TEXT as LIMIT_TEXT
@@ -117,6 +128,8 @@ HANG_MIN = 90
 HANG_MIN_UNTERGRENZE = 61
 #: Offene Ja/Nein-Rückfrage: nach so vielen Minuten einmal melden.
 RUECKFRAGE_MIN = 15
+#: Ja/Nein-Frage im Text am Prompt (nicht Dialog): nach so vielen Minuten anstupsen (#485).
+FRAGE_PROMPT_MIN = 5
 #: „Ticket zu“: Fenster erst schließen, wenn der Text so lange unverändert ist.
 KARENZ_MIN = 15
 #: Nach dem Fortsetzen so lange auf die Session mit derselben ID warten.
@@ -128,7 +141,7 @@ START_MAX = 2
 START_FENSTER_S = 6 * 3600
 #: Nach einem Fenster-Start so lange prüfen, dass Fenster und Prozess bleiben (R6).
 START_NACHWEIS_S = 5.0
-#: Mehr als so viele Anstupser je Fenster im Zeitfenster ⇒ „braucht David“ (R5).
+#: Mehr als so viele Anstupser je Fenster im Zeitfenster ⇒ „braucht den Menschen“ (R5).
 STUPSER_MAX = 3
 STUPSER_FENSTER_S = 24 * 3600
 #: Meldungen ohne Eingriff kommen je Fenster/Ereignis nur einmal am Tag ins Issue;
@@ -183,7 +196,7 @@ EREIGNIS_VORFALL: dict[str, tuple[str, str, str, str]] = {
     ),
     "braucht_david": (
         "mensch",
-        "Bau-Kette wartet auf Davids Entscheidung",
+        "Bau-Kette wartet auf die Entscheidung des Menschen",
         "Die Frage wurde nicht vor dem Spawn im Grill entschieden",
         "Entscheidung in den Grill vorziehen; sonst greift die 60-min-Annahme (#285)",
     ),
@@ -204,6 +217,12 @@ EREIGNIS_VORFALL: dict[str, tuple[str, str, str, str]] = {
         "Session steht still und muss angestupst werden",
         "Session wartet auf nichts, meldet aber nichts — Stufe 1 des Aufpassers",
         "Aufpasser stupst an; wiederholt es sich am selben Ticket, Auftrag schärfen",
+    ),
+    "blocker_falsch_gewartet": (
+        "skill",
+        "Bau-Session wartet auf Blocker, die schon erledigt sind",
+        "Blocker wurde während ihres Weckrufs (ScheduleWakeup) fertig; sie prüft erst beim nächsten Wecken",
+        "Aufpasser stößt die Session an (to_spawn.py blocker <N> neu prüfen); häuft es sich, Weckruf früher auslösen",
     ),
     "rueckfrage": (
         "mensch",
@@ -247,11 +266,7 @@ def deploy_skripte(konfig: dict[str, Any]) -> list[dict[str, Any]]:
     gueltig = []
     for s in roh:
         name = s.get("name") if isinstance(s, dict) else None
-        if (
-            not isinstance(name, str)
-            or not name.strip()
-            or s.get("art") not in ("live", "pruef")
-        ):
+        if not isinstance(name, str) or not name.strip() or s.get("art") not in ("live", "pruef"):
             log.warning("deploy.skripte: Eintrag ungültig, übersprungen: %r", s)
             continue
         schalter = s.get("pruef_schalter")
@@ -288,13 +303,19 @@ CRON_LOG = "cron.out"
 SKRIPT_STARTER = Path(__file__).resolve().parent.parent / "skripte" / "aufpasser.py"
 ARBEITS_MARKER = (
     "esc to interrupt",
-    "background agent",
     "usage limit",
     "limit reset",
 )
+#: Nur echte laufende Arbeit (ohne Limit-Hinweise) — genutzt vom externen Wecker (#287),
+#: damit eine alte Limit-Meldung nach dem Reset einen neuen Weckruf nicht dauerhaft sperrt.
+LAUFEND_MARKER = ("esc to interrupt",)
+#: Marker, die nur in der Statuszeile unter dem Eingabefeld Arbeit bedeuten (#434):
+#: im Verlauf oben bleibt „✻ Waiting for 1 background agent to finish“ oft stehen,
+#: obwohl das Eingabefeld längst still ist.
+STATUSZEILEN_ARBEITS_MARKER = ("background agent",)
 # Warte-Zeile von bau.py (Blocker offen). Nur diese Form zählt — „nächste Prüfung“
 # allein stand am 21.09. als Claude-Prosa im Scrollback eines idle Fensters.
-BLOCKER_WARTEN = re.compile(r"Ticket #\d+ wartet \(.*\) — nächste Prüfung in \d+ min")
+BLOCKER_WARTEN = re.compile(r"Ticket #\d+ wartet \(.*\) — nächste Prüfung in \d+ (?:min|s)\b")
 RUECKFRAGE_MARKER = (
     "Do you want to proceed?",
     "Do you want to",
@@ -303,10 +324,17 @@ RUECKFRAGE_MARKER = (
     "Trust",
     "Esc to cancel",
 )
+#: Letzte Zeile des Befehls ``to_spawn.py blocker <N>`` im Pane (#267, #269): ``WARTET: <Gründe>``
+#: oder ``FREI``, allein auf der Zeile — davor nur Rahmen der Claude-Ausgabe (``⎿``), sonst Prosa.
+BLOCKER_STATUS = re.compile(r"^[ \t⎿│]*(WARTET: .+?|FREI)[ \t]*$", re.MULTILINE)
+#: Anstoß, wenn die Session laut eigener Meldung auf Erledigtes wartet (#269).
+BLOCKER_FREI_TEXT = (
+    "Aufpasser: Deine Blocker ({blocker}) sind erledigt — jetzt "
+    "`python ~/.claude/skills/to-spawn/to_spawn.py blocker {ticket}` erneut prüfen und weiterbauen, "
+    "nicht auf den Weckruf warten."
+)
 #: Anstupser: derselbe Mindset-Stoß wie die Eingriffs-Leiter (#500, eine Quelle).
 ANSTUPS_TEXT = anleitung.anstupser("Aufpasser")
-VORLAGE_REPO = "cd {repo} && {py} scripts/bau.py {n}{resume}"
-VORLAGE_SKILL = "cd {repo} && TO_SPAWN_REPO={repo} {py} ~/.claude/skills/to-spawn/skripte/bau.py {n}{resume}"
 VORLAGE_WACHE_REPO = "cd {repo} && {py} scripts/wache.py {s}{resume}"
 VORLAGE_WACHE_SKILL = "cd {repo} && TO_SPAWN_REPO={repo} {py} ~/.claude/skills/to-spawn/skripte/wache.py {s}{resume}"
 #: Nie in eine Sicherung: Geheimnisse und Zugangsdateien — in JEDEM Unterordner.
@@ -336,7 +364,68 @@ GIT_IDENTITAET = {
 
 
 def zustand_standard() -> Path:
-    return Path.home() / ".local" / "state" / "to-spawn" / "aufpasser"
+    return config.heim_ordner() / ".local" / "state" / "to-spawn" / "aufpasser"
+
+
+def wache_log(repo: Path, spec: int | str) -> Path:
+    """Log eines tmux-Aufseher-Fensters: stderr von ``wache.py`` und Exit-Code bei Fehler (#271)."""
+    return Path(repo) / ".to-spawn" / f"fenster_wache_{spec}.log"
+
+
+def _fenster_log_pfad(repo: Path, spec: str, ticket: int | None) -> Path:
+    """Start-Log eines Fensters: :func:`capo.fenster_log` (Bau) oder :func:`wache_log` (Aufseher)."""
+    return capo.fenster_log(repo, ticket) if ticket is not None else wache_log(repo, spec)
+
+
+def _start_log_auszug(datei: Path, ab_byte: int = 0, *, max_zeilen: int = 3, max_zeichen: int = 240) -> str:
+    """Lesbarer Auszug der neuen Zeilen eines Fenster-Logs ab ``ab_byte`` (#288).
+
+    Wurde die Datei seit ``ab_byte`` gekürzt oder neu angelegt, wird ab 0 gelesen.
+    Leer, wenn die Datei fehlt oder keine neuen nicht-leeren Zeilen enthält.
+    """
+    try:
+        daten = datei.read_bytes()
+    except OSError:
+        return ""
+    ausschnitt = daten[ab_byte:] if ab_byte <= len(daten) else daten
+    zeilen = [z.strip() for z in ausschnitt.decode("utf-8", errors="replace").splitlines() if z.strip()]
+    if not zeilen:
+        return ""
+    text = " | ".join(zeilen[-max_zeilen:])
+    return text if len(text) <= max_zeichen else text[: max_zeichen - 1] + "…"
+
+
+def _hauptklon_aus_worktree(pfad: Path) -> Path | None:
+    """Löst bei einem Git-Worktree (``.git``-Datei mit ``gitdir: …/.git/worktrees/<name>``) den Hauptklon auf."""
+    git_pfad = pfad / ".git"
+    if not git_pfad.is_file():
+        return None
+    try:
+        erste = git_pfad.read_text(encoding="utf-8", errors="replace").splitlines()[0].strip()
+    except (OSError, IndexError):
+        return None
+    if not erste.lower().startswith("gitdir:"):
+        return None
+    ziel_roh = erste.split(":", 1)[1].strip()
+    ziel = Path(ziel_roh)
+    if not ziel.is_absolute():
+        ziel = (pfad / ziel).resolve()
+    else:
+        ziel = ziel.resolve()
+    if ziel.parent.name == "worktrees" and ziel.parent.parent.name == ".git":
+        klon = ziel.parent.parent.parent
+        if klon.is_dir():
+            return klon
+    return None
+
+
+def _origin_kennung(pfad: Path) -> str:
+    """Normalisierte ``origin``-URL eines Git-Repos (ohne ``.git``), leer bei Fehler."""
+    try:
+        url = _git(pfad, "remote", "get-url", "origin").strip()
+    except (RuntimeError, OSError):
+        return ""
+    return url.removesuffix(".git")
 
 
 # --- Bausteine ohne Seiteneffekte -------------------------------------------
@@ -364,6 +453,8 @@ class Einstellungen:
     karenz_platznot_s: float = KARENZ_PLATZNOT_S
     #: Wartezeit auf das Ende von Claude nach ``/exit`` (Tests setzen sie klein).
     exit_warten_s: float = EXIT_WARTEN_S
+    #: Optionaler Zustandsordner für den externen Wecker (#287); None ⇒ Standardordner.
+    wecker_zustand: Path | None = None
 
     def __post_init__(self) -> None:
         if self.hang_min < HANG_MIN_UNTERGRENZE:
@@ -405,6 +496,7 @@ class Fenster:
     pane_pid: int
     window_id: str = ""
     pane_id: str = ""
+    start_pfad: str = ""
 
     @property
     def ziel(self) -> str:
@@ -445,6 +537,21 @@ class SessionInfo:
     aus_json: bool = True
 
 
+def arbeits_marker_aktiv(text: str) -> bool:
+    """Zeigt der Pane-Text einen laufenden Arbeits- oder Limit-Marker (#434)?
+
+    :data:`ARBEITS_MARKER` und :data:`LIMIT_TEXT` gelten im ganzen Bild;
+    :data:`STATUSZEILEN_ARBEITS_MARKER` (``background agent``) nur in der
+    :func:`statuszeile` unter dem Eingabefeld, damit stehengebliebene Verlaufszeilen
+    wie ``✻ Waiting for 1 background agent to finish`` ein stilles Fenster nicht sperren.
+    """
+    return (
+        any(m in text for m in ARBEITS_MARKER)
+        or any(m in statuszeile(text) for m in STATUSZEILEN_ARBEITS_MARKER)
+        or bool(LIMIT_TEXT.search(text))
+    )
+
+
 def arbeitet(text: str, status: str | None = None) -> bool:
     """Fenster arbeitet oder wartet auf Antwort → nie anfassen.
 
@@ -453,15 +560,192 @@ def arbeitet(text: str, status: str | None = None) -> bool:
     """
     if status == "busy":
         return True
+    return arbeits_marker_aktiv(text) or rueckfrage(text) or bool(BLOCKER_WARTEN.search(text))
+
+
+def arbeitet_echt(text: str, status: str | None = None) -> bool:
+    """Wie :func:`arbeitet`, aber ohne Limit-Marker (#287).
+
+    Für den externen Wecker: nach einem Limit-Reset steht die alte Limit-Meldung oft noch
+    im Verlauf über ``❯``; sie darf den erneuten Weckruf nicht dauerhaft blockieren.
+    """
+    if status == "busy":
+        return True
     return (
-        any(m in text for m in ARBEITS_MARKER + RUECKFRAGE_MARKER)
+        any(m in text for m in LAUFEND_MARKER)
+        or any(m in statuszeile(text) for m in STATUSZEILEN_ARBEITS_MARKER)
+        or rueckfrage(text)
         or bool(BLOCKER_WARTEN.search(text))
-        or bool(LIMIT_TEXT.search(text))
     )
+
+
+def gemeldete_blocker(text: str) -> str | None:
+    """Gründe der letzten ``WARTET``-Zeile im Pane; ``None`` = keine Zeile oder zuletzt ``FREI`` (#269)."""
+    treffer = BLOCKER_STATUS.findall(text)
+    if not treffer or treffer[-1] == "FREI":
+        return None
+    return treffer[-1].removeprefix("WARTET: ").strip()
+
+
+def erledigt_gewartet(text: str, ticket: int, repo: Path, gh_repo: str) -> str | None:
+    """Die eine Regel „wartet auf Erledigtes“ (#269, #596): Blocker-Nummern (``#5, #6``) oder ``None``.
+
+    Die Session wartet laut letzter ``WARTET``-Zeile im Pane, ``gh.blocker_gruende`` sieht aber
+    alles erledigt. GitHub wird nur gefragt, wenn das Pane wirklich ``WARTET`` meldet (Rate-Limit);
+    scheitert die Abfrage, ``None`` (fail-closed). Fragen: Aufpasser (Takt) und Briefkasten-Wecker (60 s).
+    """
+    gemeldet = gemeldete_blocker(text)
+    if gemeldet is None or not gh_repo:
+        return None
+    deps = gh.blocked_by(gh_repo, str(ticket), cwd=repo)
+    if deps is None or gh.blocker_gruende(repo, deps) != []:
+        return None
+    return ", ".join(f"#{n}" for n in re.findall(r"#(\d+)", gemeldet)) or gemeldet
+
+
+def notiere_vorfall(repo: Path, ticket: str, ereignis: str, beispiel: str) -> None:
+    """Vorfall-Zeile ``ereignis`` (:data:`EREIGNIS_VORFALL`) ins Bau-Log von ``ticket`` (#286).
+
+    Ziel wie :meth:`Aufpasser.log_ordner`; dieselbe Zeile steht höchstens einmal drin
+    (:func:`vorfall.schreibe`). Ein Fehler beim Schreiben kippt den Aufrufer nie.
+    """
+    worte = EREIGNIS_VORFALL.get(ereignis)
+    if worte is None:
+        return
+    klasse, symptom, ursache, loesung = worte
+    try:
+        vorfall.schreibe(
+            Aufpasser.log_ordner(repo, ticket),
+            ticket,
+            klasse=klasse,
+            symptom=symptom,
+            ursache=ursache,
+            loesung=loesung,
+            beispiel=beispiel,
+            regel=ereignis,
+            quelle="aufpasser",
+        )
+    except (OSError, ValueError) as fehler:
+        log.warning("Vorfall zu %s nicht notiert: %s", ereignis, fehler)
+
+
+def notiere_blocker_falsch(repo: Path, ticket: int, blocker: str, datum: str) -> None:
+    """Vorfall ``blocker_falsch_gewartet`` — die eine Stelle für Aufpasser und Wecker (#596)."""
+    notiere_vorfall(repo, str(ticket), "blocker_falsch_gewartet", f"#{ticket} wartete auf {blocker} {datum}")
 
 
 def rueckfrage(text: str) -> bool:
     return any(m in text for m in RUECKFRAGE_MARKER)
+
+
+# Ein Fehl-Treffer ist harmlos: er löst nur Stufe 0 aus (ein Anstupser, begrenzt durch STUPSER_MAX).
+FRAGE_JA_NEIN = re.compile(
+    r"\bja\s*/\s*nein\b|\byes\s*/\s*no\b|\bja oder nein\b|\byes or no\b"
+    r"|[(\[]\s*(?:j/n|y/n)\s*[)\]]",
+    re.IGNORECASE,
+)
+#: Frage mit nachgestelltem „Vorschlag: …“ (ein- oder zweizeilig, #286 Anomalie 8).
+FRAGE_VORSCHLAG = re.compile(r"\?\s*Vorschlag:", re.IGNORECASE)
+
+
+def frage_am_prompt(text: str) -> bool:
+    """Steht in den letzten Zeilen über dem Eingabefeld eine Ja/Nein-Frage (#485, #286)?
+
+    Eine Bau-Session fragt nie (sie nimmt den Vorschlag); bleibt sie an so einer
+    Frage stehen, wartet sie sonst bis ``hang_min`` auf den ersten Anstupser.
+    """
+    zeilen = _zeilen_am_prompt(text)
+    if any(briefkasten.JA_BEFEHL in z for z in zeilen[-3:]):
+        return False  # Live-Ja-Aufforderung (#531): Session wartet zu Recht auf den Menschen
+    return (
+        any(FRAGE_JA_NEIN.search(z) for z in zeilen[-3:])
+        or (bool(zeilen) and zeilen[-1].rstrip().endswith("?"))
+        or bool(FRAGE_VORSCHLAG.search("\n".join(zeilen[-3:])))
+    )
+
+
+#: „Wartet auf Nachfolger“ (#381): Session hält das Ticket für übergeben, obwohl keiner kommt.
+NACHFOLGER_WARTEN = re.compile(
+    r"\bwarte\w*\b[^.\n]{0,60}?\bauf\b[^.\n]{0,40}?"
+    r"(?:\b(?:neue|nächste)\w*\s+Session|Folge-?\s?session|Nachfolger)",
+    re.IGNORECASE,
+)
+
+
+def wartet_auf_nachfolger(text: str) -> bool:
+    """Sagt die Session am Prompt, sie warte auf eine neue Session/einen Nachfolger (#381)?
+
+    Nur der Wortlaut; ob eine echte Ablösung aussteht, weiß allein
+    :func:`eigener_handoff.aktuell` (siehe :meth:`Aufpasser.wartet_umsonst`).
+    """
+    return any(NACHFOLGER_WARTEN.search(z) for z in _zeilen_am_prompt(text)[-3:])
+
+
+def wartet_umsonst(text: str, ticket: int | None, repo: Path) -> bool:
+    """Die eine Regel „wartet umsonst auf Nachfolger“ (#381, #613): Wortlaut ohne eigenen Handoff.
+
+    Liegt ein gültiger eigener Handoff (fällig oder nicht), ist die Ablösung echt und
+    :meth:`Aufpasser.folge_ab_handoff` startet den Nachfolger — dann kein Anstoß.
+    Fragen: Aufpasser (Takt, kurze Schwelle) und Briefkasten-Wecker (60 s).
+    """
+    if ticket is None or not wartet_auf_nachfolger(text):
+        return False
+    return eigener_handoff.aktuell(repo, ticket) is None
+
+
+def steht_umsonst(text: str, ticket: int | None, repo: Path) -> bool:
+    """Die eine Regel „steht umsonst am Prompt“ (#381, #485, #613): früher Anstoß statt ``hang_min``.
+
+    Umsonst steht, wer auf einen Nachfolger wartet, der nicht kommt (:func:`wartet_umsonst`),
+    oder wer mit einer Frage endet (:func:`frage_am_prompt`) — eine Bau-Session fragt nie.
+    Hat das Ticket eine offene Frage im Briefkasten, wartet die Session zu Recht auf die
+    Antwort (Briefkasten nicht lesbar ⇒ ebenso). Fragen: Aufpasser (Takt, kurze Schwelle) und
+    Briefkasten-Wecker (60 s).
+    """
+    if wartet_umsonst(text, ticket, repo):
+        return True
+    if not frage_am_prompt(text):
+        return gemergt_und_offen(text, ticket, repo)
+    if ticket is None:
+        return True
+    try:
+        return not briefkasten.offene([ticket], hauptbaum=repo)
+    except (OSError, ValueError, RuntimeError) as fehler:
+        log.warning("#%s: Briefkasten nicht lesbar (%s) — Frage am Prompt gilt als gewollt", ticket, fehler)
+        return False
+
+
+def gemergt_und_offen(text: str, ticket: int | None, repo: Path) -> bool:
+    """Still am Prompt, Commit ``(#N)`` liegt auf ``origin/<Hauptzweig>``, Ticket noch offen (#459).
+
+    Die Session hat ihre Arbeit abgegeben und schließt nicht ab — kein Mensch muss etwas tun.
+    Nie anstoßen bei Live-Ja-Aufforderung, Abnahme-Ticket (``checkpoint:human``), offener
+    Briefkasten-Frage; Ticket-Stand unlesbar ⇒ fail-closed. Billige Prüfungen (Bildschirm, Briefkasten-Datei) vor der
+    git-Suche, GitHub zuletzt.
+    """
+    if ticket is None or arbeitet(text):
+        return False
+    if any(briefkasten.JA_BEFEHL in z for z in _zeilen_am_prompt(text)[-3:]):
+        return False
+    try:
+        if briefkasten.offene([ticket], hauptbaum=repo):
+            return False
+    except (OSError, ValueError, RuntimeError) as fehler:
+        log.warning("#%s: Briefkasten nicht lesbar (%s) — kein Anstoß", ticket, fehler)
+        return False
+    betreffe = gh.commit_betreffe(repo, ticket, f"origin/{gh.hauptzweig(repo)}")
+    if not any(capo.betreff_hat_nummer(b, ticket) for b in betreffe or ()):
+        return False
+    daten = ticket_zustand.lesen(ticket, repo)  # GitHub zuletzt
+    if daten is None or ticket_zustand.stufe(daten) != "offen":
+        return False
+    return manifest.checkpoint_label(config.lade(repo)) not in ticket_zustand.label_namen(daten)
+
+
+def _zeilen_am_prompt(text: str) -> list[str]:
+    """Nicht-leere Text-Zeilen über dem Eingabefeld (ohne Rahmen, ``❯`` und Statuszeile)."""
+    zeilen = [z for z in ohne_statuszeile(text).splitlines() if z.strip()]
+    return [z for z in zeilen if not EINGABEFELD_LINIE.fullmatch(z) and not z.lstrip().startswith("❯")]
 
 
 #: Rahmenlinie des Claude-Code-Eingabefelds: Zeile nur aus ``─`` (mind. 20).
@@ -478,13 +762,128 @@ def ohne_statuszeile(text: str) -> str:
     (Shell, Dialog mit nur einer Linie, fremdes Programm) bleibt der Text ganz.
     """
     zeilen = text.splitlines()
+    feld = _eingabefeld(zeilen)
+    return text if feld is None else "\n".join(zeilen[: feld[1]])
+
+
+def statuszeile(text: str) -> str:
+    """Statuszeile unter dem Claude-Eingabefeld (#434); ohne Eingabefeld der ganze Text.
+
+    Gegenstück zu :func:`ohne_statuszeile`: ist das Claude-Eingabefeld zwischen zwei
+    Rahmenlinien sichtbar, gehört alles unter der unteren Rahmenlinie zur Statuszeile.
+    """
+    zeilen = text.splitlines()
+    feld = _eingabefeld([ohne_farben(z) for z in zeilen])
+    return text if feld is None else "\n".join(zeilen[feld[1] + 1 :])
+
+
+def _eingabefeld(zeilen: list[str]) -> tuple[int, int] | None:
+    """Zeilen-Index der oberen und unteren Rahmenlinie des Claude-Eingabefelds (``❯`` dazwischen)."""
     linien = [i for i, z in enumerate(zeilen) if EINGABEFELD_LINIE.fullmatch(z)]
     if len(linien) < 2:
-        return text
+        return None
     oben, unten = linien[-2], linien[-1]
     if not any(z.lstrip().startswith("❯") for z in zeilen[oben + 1 : unten]):
-        return text
-    return "\n".join(zeilen[:unten])
+        return None
+    return oben, unten
+
+
+#: Steuerfolgen im Bild aus ``capture-pane -e``: CSI-Folgen (SGR-Farben, Cursor) mit Parametern
+#: in Gruppe 1 und Endzeichen in Gruppe 2, dazu OSC-Folgen (z. B. OSC 8 Links), die mit BEL
+#: oder ``ESC \`` enden — bei OSC sind beide Gruppen ``None``.
+_STEUERFOLGE = re.compile(r"\x1b\[([0-9;:?]*)([@-~])|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+
+
+def ohne_farben(text: str) -> str:
+    """Bild aus ``capture-pane -e`` ohne Steuerfolgen — so, wie ``capture-pane`` ohne ``-e`` es liefert."""
+    return _STEUERFOLGE.sub("", text)
+
+
+def _ohne_gedimmtes(zeile: str) -> str:
+    """Zeile ohne gedimmten Text (SGR 2) und ohne Steuerfolgen.
+
+    Claude Code zeigt Platzhalter und Prompt-Vorschläge gedimmt; getippter Text ist es nie.
+    Ein einzelner inverser Cursor-Buchstabe (SGR 7 ohne SGR 2) direkt vor einem gedimmten
+    Platzhalter hinter ``❯`` gehört ebenfalls zum Platzhalter (#435).
+    ``38;2;r;g;b``/``48;5;n`` sind Farbwerte, ihre Zahlen zählen nicht als „gedimmt“ oder
+    „invers“. Parameter werden nur an ``;`` geteilt; Unterparameter hinter ``:`` (``4:2``,
+    ``38:2::r:g:b``) gehören zu ihrem Code und zählen nie als eigener Wert.
+    """
+    stuecke: list[tuple[str, bool, bool]] = []
+    gedimmt = False
+    invers = False
+    pos = 0
+
+    def _anhaengen(text: str) -> None:
+        if not text:
+            return
+        if stuecke and stuecke[-1][1] == gedimmt and stuecke[-1][2] == invers:
+            stuecke[-1] = (stuecke[-1][0] + text, gedimmt, invers)
+        else:
+            stuecke.append((text, gedimmt, invers))
+
+    for treffer in _STEUERFOLGE.finditer(zeile):
+        _anhaengen(zeile[pos : treffer.start()])
+        pos = treffer.end()
+        if treffer.group(2) != "m":
+            continue
+        werte = treffer.group(1).split(";")
+        i = 0
+        while i < len(werte):
+            wert, _, unterwerte = werte[i].partition(":")
+            if unterwerte:
+                pass  # Code mit eigenen Unterparametern (4:2, 38:2:…): nie Dim/Invers, nichts überspringen
+            elif wert in ("", "0"):
+                gedimmt = False
+                invers = False
+            elif wert == "22":
+                gedimmt = False
+            elif wert == "2":
+                gedimmt = True
+            elif wert == "7":
+                invers = True
+            elif wert == "27":
+                invers = False
+            elif wert in ("38", "48", "58") and i + 1 < len(werte):
+                i += 4 if werte[i + 1] == "2" else 2  # Farbmodus + Werte überspringen
+            i += 1
+    _anhaengen(zeile[pos:])
+
+    raus: list[str] = []
+    for i, (text, ist_gedimmt, ist_invers) in enumerate(stuecke):
+        if ist_gedimmt:
+            continue
+        # Inverser Cursor-Buchstabe (SGR 7 ohne SGR 2) direkt vor einem gedimmten Platzhalter (#435).
+        vor = "".join(raus).lstrip()
+        if (
+            ist_invers
+            and len(text) == 1
+            and i + 1 < len(stuecke)
+            and stuecke[i + 1][1]
+            and stuecke[i + 1][0].strip()
+            and not any(s[1] for s in stuecke[:i])
+            and vor.startswith("❯")
+            and not vor[1:].strip()
+        ):
+            continue
+        raus.append(text)
+    return "".join(raus)
+
+
+def eingabe_leer(text: str) -> bool:
+    """Das Bild zeigt das Claude-Eingabefeld, und hinter ``❯`` steht nichts (#414).
+
+    ``text`` darf Farbcodes tragen (``capture-pane -e``): gedimmter Text hinter ``❯`` ist ein
+    Platzhalter oder Prompt-Vorschlag von Claude Code und zählt als leer. Normal gezeigter Text
+    (halber Text eines Menschen, auch gemischt mit gedimmtem) zählt als belegt; ohne Farbcodes
+    ist jeder Text belegt. Kein Eingabefeld (Shell, Dialog, fremdes Programm) zählt nie als leer.
+    """
+    zeilen = text.splitlines()
+    feld = _eingabefeld([ohne_farben(z) for z in zeilen])
+    if feld is None:
+        return False
+    inhalt = "".join(_ohne_gedimmtes(z) for z in zeilen[feld[0] + 1 : feld[1]]).strip()
+    return inhalt.removeprefix("❯").strip() == ""
 
 
 def pane_hash(text: str) -> str:
@@ -492,25 +891,30 @@ def pane_hash(text: str) -> str:
     return hashlib.sha1(ohne_statuszeile(text).encode("utf-8", "replace")).hexdigest()
 
 
+#: Programmname aus ``argv[0]`` bzw. einem Befehlswort, plattformfest
+#: (:func:`prozessbaum.programm_name`: unter Windows ``ssh.exe``/``SSH.EXE`` mit Pfad = ``ssh``).
+#: Alle Namensvergleiche im Aufpasser gehen hierüber: ``session_id_aus_argv`` und
+#: ``session_finden`` (``claude``), ``deploy_art`` (``ssh`` der Live-Tür, ``pytest``),
+#: ``kette_folge`` und ``session_beendet`` (:data:`SHELLS`). Linux unverändert.
+_programm = prozessbaum.programm_name
+
+
 def session_id_aus_argv(argv: list[str]) -> str | None:
-    """``--session-id <id>`` oder ``--resume <id>`` aus einem ``claude``-Aufruf."""
-    if not any(Path(a).name == "claude" for a in argv):
+    """``--session-id <id>``, ``--resume <id>`` oder ``--conversation <id>`` aus ``claude``/``agy``."""
+    if not any(werkzeug.ist_session_programm(a) for a in argv):
         return None
     for i, a in enumerate(argv):
-        if a in ("--session-id", "--resume") and i + 1 < len(argv):
+        if a in ("--session-id", "--resume", "--conversation") and i + 1 < len(argv):
             return argv[i + 1]
-        for flag in ("--session-id=", "--resume="):
+        for flag in ("--session-id=", "--resume=", "--conversation="):
             if a.startswith(flag):
                 return a[len(flag) :]
     return None
 
 
 def _argv(pid: int) -> list[str]:
-    try:
-        roh = Path(f"/proc/{pid}/cmdline").read_bytes()
-    except OSError:
-        return []
-    return [t.decode("utf-8", "replace") for t in roh.split(b"\0") if t]
+    """Argumente eines Prozesses (Linux ``/proc``, Windows zerlegte Kommandozeile), unlesbar = ``[]``."""
+    return prozessbaum.argv(pid)
 
 
 def _prozess_cwd(pid: int) -> Path | None:
@@ -526,21 +930,6 @@ def prozess_argv_text(pid: int) -> str:
     return " ".join(_argv(pid))
 
 
-def _vorfahren(pid: int) -> set[int]:
-    """``pid`` und seine Eltern bis init — die eigene Aufrufkette ist nie ein Deploy."""
-    kette: set[int] = set()
-    while pid > 1 and pid not in kette:
-        kette.add(pid)
-        try:
-            stat = Path(f"/proc/{pid}/stat").read_text(
-                encoding="utf-8", errors="replace"
-            )
-            pid = int(stat[stat.rfind(")") + 2 :].split()[1])
-        except (OSError, ValueError, IndexError):
-            break
-    return kette
-
-
 # Prozessbaum und „lebt“ kommen aus dem gemeinsamen Modul (auch respawn nutzt es).
 prozess_baum = prozessbaum.baum
 _prozess_lebt = prozessbaum.lebt
@@ -549,9 +938,7 @@ _prozess_lebt = prozessbaum.lebt
 #: SIGHUP/SIGKILL gibt es unter Windows nicht — dort bleibt nur SIGTERM, sonst bricht
 #: schon der Import (Muster wie ``respawn._ABGEFANGENE_SIGNALE``).
 BEENDEN_STUFEN = tuple(
-    (getattr(signal, name), 5.0)
-    for name in ("SIGHUP", "SIGTERM", "SIGKILL")
-    if hasattr(signal, name)
+    (getattr(signal, name), 5.0) for name in ("SIGHUP", "SIGTERM", "SIGKILL") if hasattr(signal, name)
 )
 
 #: Ausgang von ``_fenster_schliessen``: Fenster zu, Claude per ``/exit`` beendet,
@@ -562,9 +949,7 @@ Schliessart = Literal["fenster", "exit", "zwang", "offen"]
 DeployArt = Literal["live", "pruef"]
 
 
-def deploy_art(
-    argv: list[str], skripte: Sequence[dict[str, Any]] | None = None
-) -> DeployArt | None:
+def deploy_art(argv: list[str], skripte: Sequence[dict[str, Any]] | None = None) -> DeployArt | None:
     """Einzige Stelle, die einen Prozess als Deploy einstuft (#598).
 
     Die Skripte kommen aus ``deploy.skripte`` (:func:`deploy_skripte`, None ⇒ Vorgabe);
@@ -582,7 +967,7 @@ def deploy_art(
     if not argv:
         return None
     liste = VORGABE_SKRIPTE if skripte is None else skripte
-    if Path(argv[0]).name == "ssh":
+    if _programm(argv[0]) == "ssh":
         for s in liste:
             if s["fern"] and s["name"] in argv[-1]:
                 return s["art"]
@@ -600,7 +985,9 @@ def deploy_art(
     # Programmname ist der letzte Teil nach ``/`` oder ``\`` (Windows-Pfad), ``-mpytest`` zählt mit.
     for teil in re.split(r"[\s;&|()'\"]+", kopf):
         name = re.split(r"[/\\]", teil.removeprefix("-m"))[-1]
-        if re.fullmatch(GATE_MUSTER, name.removesuffix(".exe")):
+        # ``_programm``: unter Windows auch ``PYTEST.EXE``/``pytest.cmd``; ``.exe`` ab bleibt
+        # für Windows-Namen in Linux-Befehlszeilen (so schon vor #251).
+        if re.fullmatch(GATE_MUSTER, _programm(name).removesuffix(".exe")):
             return "pruef"
     return None
 
@@ -615,9 +1002,7 @@ def _pids_beenden(pids: list[int], wer: str) -> bool:
         pids,
         BEENDEN_STUFEN,
         takt_s=0.1,
-        eskalation=lambda sig, lebende: log.warning(
-            "%s: %d Prozesse überlebt, Signal %d", wer, len(lebende), sig
-        ),
+        eskalation=lambda sig, lebende: log.warning("%s: %d Prozesse überlebt, Signal %d", wer, len(lebende), sig),
     )
 
 
@@ -670,7 +1055,7 @@ def kette_folge(pane_pid: int, ticket: int) -> list[int]:
     funde: list[int] = []
     for pid in _baum_lesen(pane_pid):
         argv = _argv(pid)
-        if argv and Path(argv[0]).name.lstrip("-") in SHELLS:
+        if argv and _programm(argv[0]).lstrip("-") in SHELLS:
             funde.extend(int(n) for n in _BAU_AUFRUF.findall(" ".join(argv)))
     funde = list(dict.fromkeys(funde))
     if ticket in funde:
@@ -695,7 +1080,7 @@ def session_beendet(pane_pid: int) -> bool:
         argv = _argv(pid)
         if not argv:
             continue
-        if Path(argv[0]).name.lstrip("-") not in SHELLS:
+        if _programm(argv[0]).lstrip("-") not in SHELLS:
             return False
     return True
 
@@ -725,29 +1110,19 @@ def session_laeuft_schon(sid: str, heim: Path | None = None) -> int | None:
     return None
 
 
-def _session_json_lesen(
-    pid: int, window_id: str, pane_id: str, heim: Path | None = None
-) -> SessionInfo | None:
+def _session_json_lesen(pid: int, window_id: str, pane_id: str, heim: Path | None = None) -> SessionInfo | None:
     """``<heim>/.claude/sessions/<pid>.json`` lesen — nur gültig, wenn der Prozess lebt
-    und das ``tmux``-Feld (``sitzung:@fenster.%pane``) zu diesem Pane passt oder fehlt."""
+    und das ``tmux``-Feld (``sitzung:@fenster.%pane``) zu diesem Pane passt oder fehlt.
+    PID- und ``procStart``-Abgleich: :func:`speicher.session_json_lesen` (eine Quelle, #460)."""
     datei = (heim or Path.home()) / ".claude" / "sessions" / f"{pid}.json"
-    try:
-        roh = json.loads(datei.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(roh, dict) or not _prozess_lebt(pid):
-        return None
-    if int(roh.get("pid") or pid) != pid:
+    roh = speicher.session_json_lesen(pid, datei.parent, Path("/proc"))  # echte Prozesse, nie die Test-Tür
+    if roh is None or not _prozess_lebt(pid):
         return None
     sid = roh.get("sessionId")
     if not isinstance(sid, str) or not sid:
         return None
     tmux_feld = roh.get("tmux")
-    if (
-        isinstance(tmux_feld, str)
-        and tmux_feld
-        and not tmux_feld.endswith(f"{window_id}.{pane_id}")
-    ):
+    if isinstance(tmux_feld, str) and tmux_feld and not tmux_feld.endswith(f"{window_id}.{pane_id}"):
         log.info(
             "Session-JSON %s gehört zu %s, nicht zu %s.%s — ignoriert",
             datei.name,
@@ -767,9 +1142,7 @@ def _session_json_lesen(
     )
 
 
-def session_finden(
-    pane_pid: int, window_id: str, pane_id: str, heim: Path | None = None
-) -> SessionInfo | None:
+def session_finden(pane_pid: int, window_id: str, pane_id: str, heim: Path | None = None) -> SessionInfo | None:
     """Gesprächs-ID und Zustand des Claude-Prozesses unter ``pane_pid``.
 
     Reihenfolge: ``--session-id``/``--resume`` aus argv (muss zur Session-JSON
@@ -777,7 +1150,7 @@ def session_finden(
     """
     for pid in prozess_baum(pane_pid):
         argv = _argv(pid)
-        if not any(Path(a).name == "claude" for a in argv):
+        if not any(werkzeug.ist_session_programm(a) for a in argv):
             continue
         argv_sid = session_id_aus_argv(argv)
         info = _session_json_lesen(pid, window_id, pane_id, heim)
@@ -812,6 +1185,7 @@ def _git(cwd: Path, *args: str, env: dict[str, str] | None = None) -> str:
             errors="replace",
             check=False,
             timeout=300,
+            **prozessbaum.fensterlos(),
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"git {' '.join(args[:3])}: Zeitgrenze 300 s") from None
@@ -878,7 +1252,7 @@ def sichern(
     Kein stash, kein Branch-Wechsel, kein Index-Zugriff: temporärer ``GIT_INDEX_FILE``
     ab ``HEAD`` → ``add -A`` ohne Geheimnisse (``SICHERUNG_AUSSCHLUSS``) →
     ``write-tree`` → ``commit-tree`` mit Eltern ``HEAD`` und (falls vorhanden) der
-    vorigen ``sicherung/<N>`` → ``update-ref`` → ``push`` (kein ``+``, die Kette ist
+    vorigen ``sicherung/<N>`` → ``push`` → ``update-ref`` (kein ``+``, die Kette ist
     fast-forward). Rückgabe = Commit-SHA; sauberer Baum → None. Fehler ⇒ RuntimeError.
 
     ``zusatz_koepfe`` (Refs/SHAs, z. B. lokale Zweige mit Commits auf keinem Remote):
@@ -900,9 +1274,7 @@ def sichern(
         if kopf is None:
             kopf = _git(worktree, "rev-parse", "HEAD").strip()
             _git(worktree, "read-tree", kopf, env=env)
-            ausschluss = [
-                f":(exclude,glob){m}" for m in (*SICHERUNG_AUSSCHLUSS, *NIE_HOCHLADEN)
-            ]
+            ausschluss = [f":(exclude,glob){m}" for m in (*SICHERUNG_AUSSCHLUSS, *NIE_HOCHLADEN)]
             _git(worktree, "add", "-A", "--", ".", *ausschluss, env=env)
             baum = _git(worktree, "write-tree", env=env).strip()
         else:
@@ -912,17 +1284,11 @@ def sichern(
         vorige = _ref_lesen(worktree, ref)
         gesehen = {kopf}
         for weiterer in [vorige or "", *zusatz_koepfe]:
-            sha = (
-                _git(worktree, "rev-parse", "--verify", f"{weiterer}^{{commit}}").strip()
-                if weiterer
-                else ""
-            )
+            sha = _git(worktree, "rev-parse", "--verify", f"{weiterer}^{{commit}}").strip() if weiterer else ""
             if sha and sha not in gesehen:
                 gesehen.add(sha)
                 eltern += ["-p", sha]
-        zeit = datetime.fromtimestamp(
-            jetzt or time.time(), tz=timezone.utc
-        ).astimezone()
+        zeit = datetime.fromtimestamp(jetzt or time.time(), tz=UTC).astimezone()
         commit = _git(
             worktree,
             "commit-tree",
@@ -934,14 +1300,32 @@ def sichern(
         ).strip()
     finally:
         Path(index).unlink(missing_ok=True)
+    # #215: dieselbe Sperre wie beim Zweig-Upload und beim Hausmeister — nie vor dem Push
+    # eine Übergabe oder ein Entscheidungs-Log (auch in anderer Großschreibung) hochladen.
+    ausschluss_refs = (
+        ("--remotes=origin", "--glob=refs/haupt/*", "--glob=refs/sicherung/*", "--glob=refs/zweige/*")
+        if kopf is not None
+        else ("--remotes=origin",)
+    )
+    try:
+        gesperrt = uebergabe_sichern.gesperrte_pfade(worktree, commit, "--not", *ausschluss_refs)
+    except OSError as fehler:
+        raise RuntimeError(f"Prüfung gesperrter Pfade gescheitert: {fehler}") from None
+    if gesperrt:
+        log.error(
+            "Sicherung #%s verweigert: %s nie öffentlich",
+            ticket,
+            ", ".join(gesperrt),
+        )
+        raise RuntimeError(f"Sicherung verweigert: {', '.join(gesperrt)} nie öffentlich")
+    # #242: erst pushen, dann lokalen Ref nachziehen — ein gescheiterter Push darf
+    # keinen ungepushten lokalen sicherung/<N>-Zweig hinterlassen.
+    _git(worktree, "push", "-q", "origin", f"{commit}:{ref}")
     _git(worktree, "update-ref", ref, commit)
-    _git(worktree, "push", "-q", "origin", f"{ref}:{ref}")
     return commit
 
 
-def _crontab(
-    *args: str, eingabe: str | None = None
-) -> subprocess.CompletedProcess[str]:
+def _crontab(*args: str, eingabe: str | None = None) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
             ["crontab", *args],
@@ -951,6 +1335,7 @@ def _crontab(
             encoding="utf-8",
             check=False,
             timeout=30,
+            **prozessbaum.fensterlos(),
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError("crontab antwortet nicht (30 s)") from None
@@ -976,9 +1361,7 @@ def cron_einrichten(
     zeile = f"{CRON_TAKT} {python} {skript} >> {zustand}/{CRON_LOG} 2>&1  {CRON_MARKE}"
 
     def ist_aufpasser(z: str) -> bool:
-        return CRON_MARKE in z or (
-            "aufpasser.py" in z and not z.lstrip().startswith("#")
-        )
+        return CRON_MARKE in z or ("aufpasser.py" in z and not z.lstrip().startswith("#"))
 
     neu = [z for z in zeilen if not ist_aufpasser(z)]
     stellen = [i for i, z in enumerate(zeilen) if ist_aufpasser(z)]
@@ -988,7 +1371,7 @@ def cron_einrichten(
     if trocken:
         return f"[trocken] Cron würde eingerichtet: {zeile}"
     zustand.mkdir(parents=True, exist_ok=True)
-    stempel = datetime.fromtimestamp(jetzt or time.time(), tz=timezone.utc).astimezone()
+    stempel = datetime.fromtimestamp(jetzt or time.time(), tz=UTC).astimezone()
     stempel = stempel.strftime("%Y%m%d-%H%M%S")
     (zustand / f"crontab.vorher.{stempel}").write_text(alt.stdout, encoding="utf-8")
     ergebnis = _crontab("-", eingabe="\n".join(neu) + "\n")
@@ -1016,22 +1399,18 @@ class Aufpasser:
         self.muster = e.deploy_muster or DEPLOY_MUSTER
         #: Deploy-Skripte dieses Laufs (``deploy.skripte`` der Repos) für ``deploy_art``.
         self.skripte: list[dict[str, Any]] = VORGABE_SKRIPTE
-        self.datum = (
-            datetime.fromtimestamp(self.jetzt, tz=timezone.utc)
-            .astimezone()
-            .strftime("%Y-%m-%d")
-        )
+        self.datum = datetime.fromtimestamp(self.jetzt, tz=UTC).astimezone().strftime("%Y-%m-%d")
         self.stand = self._stand_laden()
         #: Echte Fenster-Starts in diesem Tick (Speicher-Staffel, #257 Paket B):
         #: ab dem zweiten Start wartet der Tick ``staffel_s`` Sekunden, damit die
         #: Claude-Starts sich nicht stapeln. Am Tick-Anfang wieder 0.
         self._starts_in_tick = 0
+        #: Letzte Beobachtung, warum :meth:`_start_nachweisen` ``False`` lieferte (#288).
+        self._letzter_start_befund = ""
 
     # -- Werkzeuge ---------------------------------------------------------------
 
-    def sh(
-        self, *args: str, cwd: Path | None = None, timeout: float = 120, start: bool = False
-    ) -> str:
+    def sh(self, *args: str, cwd: Path | None = None, timeout: float = 120, start: bool = False) -> str:
         """Befehl ausführen, Ausgabe zurück; Exit ≠ 0 → ``RuntimeError``.
 
         ``start=True`` für Aufrufe, die etwas starten — die gehen durch die Start-Tür (#1406).
@@ -1049,11 +1428,9 @@ class Aufpasser:
             if start:
                 ergebnis = starter.starte(args, warten=True, **optionen)
             else:
-                ergebnis = subprocess.run(args, **optionen)
+                ergebnis = subprocess.run(args, **optionen, **prozessbaum.fensterlos())
         except subprocess.TimeoutExpired:
-            raise RuntimeError(
-                f"{' '.join(args[:4])}: Zeitgrenze {timeout:g} s überschritten"
-            ) from None
+            raise RuntimeError(f"{' '.join(args[:4])}: Zeitgrenze {timeout:g} s überschritten") from None
         except FileNotFoundError as fehler:
             # Fester Kennsatz: der Systemtext ist unter Windows übersetzt („WinError 2 …“).
             raise RuntimeError(f"{' '.join(args[:4])}: No such file — {fehler}") from None
@@ -1074,9 +1451,7 @@ class Aufpasser:
         return Stand(
             fenster=dict(roh.get("fenster") or {}),
             meldungen=dict(roh.get("meldungen") or {}),
-            starts={
-                k: [float(t) for t in v] for k, v in (roh.get("starts") or {}).items()
-            },
+            starts={k: [float(t) for t in v] for k, v in (roh.get("starts") or {}).items()},
         )
 
     def _stand_schreiben(self) -> None:
@@ -1084,10 +1459,7 @@ class Aufpasser:
             return
         grenze = self.jetzt - 2 * 86400
         meldungen = {k: t for k, t in self.stand.meldungen.items() if t >= grenze}
-        starts = {
-            k: [t for t in v if self.jetzt - t < START_FENSTER_S]
-            for k, v in self.stand.starts.items()
-        }
+        starts = {k: [t for t in v if self.jetzt - t < START_FENSTER_S] for k, v in self.stand.starts.items()}
         starts = {k: v for k, v in starts.items() if v}
         self.e.zustand.mkdir(parents=True, exist_ok=True)
         (self.e.zustand / "stand.json").write_text(
@@ -1137,6 +1509,8 @@ class Aufpasser:
         return "|".join(dict.fromkeys(teile)) or NIE_MUSTER
 
     def _prozess_alter_s(self, pid: int) -> float | None:
+        if sys.platform == "win32":
+            return prozessbaum.alter_s(pid)
         try:
             raus = self.sh("ps", "-o", "etimes=", "-p", str(pid), timeout=30).strip()
             return float(raus) if raus else None
@@ -1150,11 +1524,7 @@ class Aufpasser:
         sperren nur ihr Fenster (:meth:`gate_im_fenster`). Regeln der Trefferzählung
         in :meth:`_prozesse_treffer`.
         """
-        return [
-            kopf
-            for _, kopf, art in self._prozesse_treffer(muster_text or self.muster)
-            if art != "pruef"
-        ]
+        return [kopf for _, kopf, art in self._prozesse_treffer(muster_text or self.muster) if art != "pruef"]
 
     def gate_im_fenster(self, f: Fenster, worktree: Path | None) -> str | None:
         """Läuft ein Gate/Prüflauf (``deploy_art`` „pruef“) genau dieses Fensters?
@@ -1166,9 +1536,7 @@ class Aufpasser:
         ``wache``-Fenster) ⇒ nur der Fensterbaum zählt.
         """
         treffer = [
-            (pid, kopf)
-            for pid, kopf, art in self._prozesse_treffer(f"{GATE_MUSTER}|{self.muster}")
-            if art == "pruef"
+            (pid, kopf) for pid, kopf, art in self._prozesse_treffer(f"{GATE_MUSTER}|{self.muster}") if art == "pruef"
         ]
         if not treffer:
             return None
@@ -1183,12 +1551,11 @@ class Aufpasser:
                     return kopf
         return None
 
-    def _prozesse_treffer(
-        self, muster_text: str
-    ) -> list[tuple[int, str, DeployArt | None]]:
+    def _prozesse_treffer(self, muster_text: str) -> list[tuple[int, str, DeployArt | None]]:
         """(PID, Kopfzeile, ``deploy_art``) der Prozesse, die auf ``muster_text`` passen.
 
-        ``pgrep -af`` liefert die Kandidaten; gezählt wird nur ein Treffer im Programm,
+        :func:`prozessbaum.passende` liefert die Kandidaten (Linux ``pgrep -af``, Windows
+        Kernel-Prozessliste, eigene Aufrufkette nie dabei); gezählt wird nur ein Treffer im Programm,
         Skript oder ersten Argument (``argv[:3]``; Live-Tür per ssh: ``deploy_art``)
         — der Prompt einer Claude-Session
         nennt ``safe_deploy_vps.sh`` und ``pytest`` als Text, ist aber kein Deploy.
@@ -1196,21 +1563,15 @@ class Aufpasser:
         verwaist („Waise ignoriert“).
         """
         try:
-            raus = self.sh("pgrep", "-af", muster_text, timeout=30)
-        except RuntimeError as fehler:
-            # pgrep: Exit 1 = kein Treffer; alles andere ist eine echte Störung —
-            # dann lieber nichts anfassen (fail-closed) als ein Deploy übersehen.
-            if "Zeitgrenze" in str(fehler) or "No such file" in str(fehler):
-                raise RuntimeError(f"Deploy-Wache: pgrep nicht nutzbar ({fehler})")
-            return []
+            kandidaten = prozessbaum.passende(muster_text, zeitgrenze=30)
+        except prozessbaum.ProzesslisteFehler as fehler:
+            # Abfrage gestört: lieber nichts anfassen (fail-closed) als ein Deploy übersehen.
+            raise RuntimeError(f"Deploy-Wache: {fehler}") from None
         muster = re.compile(muster_text)
-        eigene = _vorfahren(os.getpid())
         treffer = []
-        for zeile in raus.splitlines():
-            pid, _, args = zeile.partition(" ")
-            if not pid.isdigit() or int(pid) in eigene:
-                continue
-            argv = _argv(int(pid))
+        for zahl, args in kandidaten:
+            pid = str(zahl)
+            argv = _argv(zahl)
             kopf = " ".join(argv[:3]) or args
             art = deploy_art(argv, self.skripte)
             if not muster.search(kopf) and art != "live":
@@ -1235,9 +1596,9 @@ class Aufpasser:
             return []
         gefunden = []
         for name in namen:
-            treffer = re.fullmatch(r"spec-(\d+)", name)
-            if treffer:
-                gefunden.append((name, treffer.group(1)))
+            spec = tmux_aufruf.spec_aus_sitzung(name)
+            if spec is not None:
+                gefunden.append((name, spec))
         return gefunden
 
     def fenster(self, sitzung: str, spec: str) -> list[Fenster]:
@@ -1247,21 +1608,27 @@ class Aufpasser:
             "-t",
             f"={sitzung}",
             "-F",
-            "#{window_index}\t#{window_name}\t#{pane_current_path}\t#{pane_pid}\t#{window_id}\t#{pane_id}",
+            "#{window_index}\t#{window_name}\t#{pane_current_path}\t#{pane_pid}\t#{window_id}\t#{pane_id}\t#{pane_start_path}",
         ).splitlines():
             teile = zeile.split("\t")
-            if len(teile) != 6:
+            if len(teile) not in (6, 7):
                 continue
+            start_pfad = teile[6] if len(teile) == 7 else ""
+            # Direkt nach ``tmux new-session -d`` kann ``pane_current_path`` unter Last noch
+            # leer sein (Kindprozess hat tcgetpgrp/chdir noch nicht abgeschlossen);
+            # ``pane_start_path`` kennt tmux sofort beim Anlegen des Panes.
+            pfad = teile[2] or start_pfad
             liste.append(
                 Fenster(
                     sitzung,
                     spec,
                     teile[0],
                     teile[1],
-                    teile[2],
+                    pfad,
                     int(teile[3] or 0),
                     teile[4],
                     teile[5],
+                    start_pfad,
                 )
             )
         return liste
@@ -1288,45 +1655,126 @@ class Aufpasser:
         return belegt
 
     def repo_ordner(self, fenster: list[Fenster]) -> Path | None:
-        for f in fenster:
-            pfad = Path(f.pfad)
-            if (pfad / config.KONFIG_PFAD).is_file():
-                return pfad
+        for attr in ("pfad", "start_pfad"):
+            for f in fenster:
+                roh_pfad = getattr(f, attr, "")
+                if not roh_pfad:
+                    continue
+                pfad = Path(roh_pfad)
+                if (pfad / config.KONFIG_PFAD).is_file():
+                    return pfad
         if self.e.repo:
             return self.e.repo
         roh = os.environ.get("TO_SPAWN_REPO")
         return Path(roh) if roh else None
 
-    def offene_tickets(self, spec: str, repo: Path) -> set[int]:
+    def spec_repo_ordner(self, spec: str, fenster: list[Fenster], basis: Path | None) -> Path | None:
+        """Ordner des Spec-Klons finden, in dem das Manifest liegt (#271 Nachtrag 4).
+
+        Startet der Aufpasser den Aufseher im Hauptrepo statt im Spec-Klon, fehlt dort oft
+        das Spec-Manifest (:func:`manifest.manifest_pfad`) und ``startklar.gate`` endet mit Exit 2.
+        """
+        kandidaten: list[Path] = []
+        gesehen: set[Path] = set()
+
+        def merk(pfad: Path | None) -> None:
+            if pfad is None:
+                return
+            try:
+                echt = pfad.resolve()
+            except OSError:
+                return
+            if echt not in gesehen and echt.is_dir():
+                gesehen.add(echt)
+                kandidaten.append(echt)
+
+        for f in fenster:
+            for attr in ("pfad", "start_pfad"):
+                f_pfad = getattr(f, attr, None)
+                if not f_pfad:
+                    continue
+                p = Path(f_pfad)
+                merk(p)
+                merk(_hauptklon_aus_worktree(p))
+        merk(basis)
+
+        def hat_manifest(ordner: Path) -> bool:
+            if not (ordner / config.KONFIG_PFAD).is_file():
+                return False
+            try:
+                return manifest.manifest_pfad(ordner, spec).is_file()
+            except (OSError, ValueError):
+                return False
+
+        for kand in kandidaten:
+            if hat_manifest(kand):
+                return kand
+
+        # Nachbar-Klone im selben Elternordner prüfen (z. B. ``projekt-1330`` neben ``projekt-haupt``).
+        basis_origin = _origin_kennung(basis) if basis is not None and basis.is_dir() else ""
+        eltern = {k.parent for k in kandidaten if k.parent.is_dir()}
+        treffer_origin: Path | None = None
+        treffer_name: Path | None = None
+        for ordner in sorted(eltern):
+            try:
+                kinder = sorted(ordner.iterdir())
+            except OSError:
+                continue
+            for kind in kinder:
+                try:
+                    kind_echt = kind.resolve()
+                except OSError:
+                    continue
+                if not kind.is_dir() or kind_echt in gesehen:
+                    continue
+                if not hat_manifest(kind):
+                    continue
+                if basis_origin and _origin_kennung(kind) == basis_origin:
+                    treffer_origin = kind
+                    break
+                if kind.name.endswith(f"-{spec}") and treffer_name is None:
+                    treffer_name = kind
+            if treffer_origin is not None:
+                return treffer_origin
+        if treffer_name is not None:
+            return treffer_name
+        return basis
+
+    def offene_tickets(self, spec: str, repo: Path) -> dict[int, dict]:
+        """Unter-Tickets, die nicht :func:`ticket_zustand.endgueltig_zu` sind, je Nummer
+        mit ``state``/``labels`` — aus EINEM Listen-Aufruf, kein ``issue view`` je Ticket
+        (#279: ein hängendes ``gh`` hielt sonst den ganzen Takt auf). Unlesbar ⇒
+        ``RuntimeError``."""
         raus = self.sh(
             "gh",
             "api",
             f"repos/{{owner}}/{{repo}}/issues/{spec}/sub_issues",
             "--paginate",
             "--jq",
-            '.[] | select(.state=="open") | .number',
+            ".[] | {number, state, state_reason, labels: [.labels[]?.name]} | tojson",
             cwd=repo,
         )
-        return {int(x) for x in raus.split()}
+        try:
+            tickets = [json.loads(z) for z in raus.splitlines() if z.strip()]
+            if not all(isinstance(t, dict) for t in tickets):
+                raise TypeError("Zeile ist kein JSON-Objekt")
+            return {int(t["number"]): t for t in tickets if not ticket_zustand.endgueltig_zu(t)}
+        except (json.JSONDecodeError, KeyError, TypeError) as fehler:
+            raise RuntimeError(f"sub_issues {spec}: unlesbar ({fehler})") from None
 
     def ticket_lesen(self, ticket: int, repo: Path) -> dict:
-        """``state`` und ``labels`` (Namen) eines Tickets."""
-        raus = self.sh(
-            "gh", "issue", "view", str(ticket), "--json", "state,labels", cwd=repo
-        )
-        try:
-            roh = json.loads(raus)
-            labels = {
-                str(x.get("name", ""))
-                for x in roh.get("labels") or []
-                if isinstance(x, dict)
-            }
-            return {"state": roh.get("state"), "labels": labels}
-        except (json.JSONDecodeError, AttributeError) as fehler:
-            raise RuntimeError(f"gh issue view {ticket}: unlesbar ({fehler})") from None
+        """Ticket über :func:`ticket_zustand.lesen` — alle Felder des Bausteins, ``labels``
+        als Menge der Namen (für ``& STOPP_LABELS``). ``RuntimeError``, wenn GitHub
+        nichts Lesbares liefert; der Aufrufer entscheidet dann vorsichtig."""
+        daten = ticket_zustand.lesen(ticket, repo)
+        if daten is None:
+            raise RuntimeError(f"#{ticket}: Ticket-Zustand nicht lesbar (gh)")
+        return {**daten, "labels": ticket_zustand.label_namen(daten)}
 
-    def ticket_zu(self, ticket: int, repo: Path) -> bool:
-        return self.ticket_lesen(ticket, repo).get("state") == "CLOSED"
+    def zu_bauen(self, offen: dict[int, dict]) -> set[int]:
+        """Die offenen Tickets, die noch nicht fertig gebaut sind — nur dort baut noch
+        jemand (#279, Fall 03:05). Urteil aus den Listen-Daten, kein weiterer Aufruf."""
+        return {n for n, t in offen.items() if not ticket_zustand.fertig_gebaut(t)}
 
     def pane_text(self, ziel: str) -> str:
         return self.tmux("capture-pane", "-p", "-t", ziel)
@@ -1338,9 +1786,7 @@ class Aufpasser:
 
     # -- Melden ------------------------------------------------------------------
 
-    def melden(
-        self, spec: str, repo: Path, fenster: str, ereignis: str, text: str
-    ) -> None:
+    def melden(self, spec: str, repo: Path, fenster: str, ereignis: str, text: str) -> None:
         """Logzeile + Kommentar im Spec-Issue. Jeder Eingriff bekommt seine Zeile;
         Meldungen ohne Eingriff (``MELDUNG_EINMAL_PRO_TAG``) je Fenster/Ereignis/Tag
         nur einmal — der Doppelschutz-Schlüssel wird erst nach erfolgreichem
@@ -1357,15 +1803,14 @@ class Aufpasser:
             log.info("spec %s: Meldung heute schon abgesetzt (%s)", spec, ereignis)
             return
         try:
-            self.sh(
-                "gh", "issue", "comment", spec, "--body", f"Aufpasser: {text}", cwd=repo
-            )
+            self.sh("gh", "issue", "comment", spec, "--body", f"Aufpasser: {text}", cwd=repo)
         except RuntimeError as fehler:
             log.error("spec %s: Kommentar fehlgeschlagen: %s", spec, fehler)
             return
         self.stand.meldungen[schluessel] = self.jetzt
 
-    def log_ordner(self, repo: Path, ticket: str) -> Path:
+    @staticmethod
+    def log_ordner(repo: Path, ticket: str) -> Path:
         """Wohin die Vorfall-Zeile gehört: Worktree des Tickets, sonst Hauptbaum.
 
         capo liest Laufdateien nur im Repo selbst und in ``wt-<Ticket>``. Ein
@@ -1379,7 +1824,7 @@ class Aufpasser:
         return repo
 
     def vorfall_notieren(
-        self, spec: str, repo: Path, fenster: str, ereignis: str, text: str
+        self, spec: str, repo: Path, fenster: str, ereignis: str, text: str, *, beispiel: str = ""
     ) -> None:
         """Stillstand als ``vorfall``-Zeile ins Bau-Log — die Lernschleife (#286).
 
@@ -1387,51 +1832,40 @@ class Aufpasser:
         --katalog`` hängt die Zeile später an den Fehlerkatalog. Ein Fehler beim
         Schreiben darf den Aufpasser-Lauf nie kippen.
         """
-        worte = EREIGNIS_VORFALL.get(ereignis)
-        if worte is None:
-            return
         treffer = _FENSTER_TICKET.search(fenster)
         ticket = treffer.group(1) if treffer else spec
         # Aufseher-Fenster arbeiten in einem Worktree; dessen ``.to-spawn`` liest
         # niemand für ein fremdes Ticket. Darum in den Hauptbaum schreiben, wenn
-        # das Fenster nicht der Worktree dieses Tickets ist (#286).
-        ziel = self.log_ordner(repo, ticket)
-        klasse, symptom, ursache, loesung = worte
-        try:
-            vorfall.schreibe(
-                ziel,
-                ticket,
-                klasse=klasse,
-                symptom=symptom,
-                ursache=ursache,
-                loesung=loesung,
-                beispiel=f"#{ticket} {self.datum}",
-                regel=ereignis,
-                quelle="aufpasser",
-            )
-        except (OSError, ValueError) as fehler:
-            log.warning("Vorfall zu %s nicht notiert: %s", ereignis, fehler)
+        # das Fenster nicht der Worktree dieses Tickets ist (#286, :meth:`log_ordner`).
+        notiere_vorfall(repo, ticket, ereignis, beispiel or f"#{ticket} {self.datum}")
 
     # -- Eingreifen --------------------------------------------------------------
 
     def bau_befehl(self, repo: Path, ticket: int, resume: str | None) -> str:
-        venv = repo / ".venv" / "bin" / "python"
-        py = str(venv) if venv.is_file() else "python3"
+        """Startbefehl eines Bau-Fensters über :func:`capo.bau_startzeile` (#419).
+
+        Nur ein gesetztes ``--bau-vorlage`` (Tests/Überschreibung) nutzt die eigene
+        Vorlage; sonst baut ``capo.bau_startzeile`` dieselbe Startzeile wie Folge-Runde
+        und Ablösung — samt ``.to-spawn/fenster_<N>.log``.
+        """
         if self.e.bau_vorlage:
-            vorlage = self.e.bau_vorlage
-        elif (repo / "scripts" / "bau.py").is_file():
-            vorlage = VORLAGE_REPO
-        else:
-            vorlage = VORLAGE_SKILL
-        return vorlage.format(
-            repo=shlex.quote(str(repo)),
-            py=shlex.quote(py),
-            n=ticket,
-            resume=f" --resume {resume}" if resume else "",
-        )
+            venv = repo / ".venv" / "bin" / "python"
+            py = str(venv) if venv.is_file() else "python3"
+            return self.e.bau_vorlage.format(
+                repo=shlex.quote(str(repo)),
+                py=shlex.quote(py),
+                n=ticket,
+                resume=f" --resume {resume}" if resume else "",
+            )
+        schalter = ("--resume", resume) if resume else ()
+        return capo.bau_startzeile(repo, ticket, "", *schalter)
 
     def wache_befehl(self, repo: Path, spec: str, resume: str | None) -> str:
-        """Startbefehl des Aufseher-Fensters (R1), analog ``bau_befehl``."""
+        """Startbefehl des Aufseher-Fensters (R1), analog ``bau_befehl``.
+
+        Schreibt stderr und Exit-Code (bei Fehler) zusätzlich nach :func:`wache_log`,
+        damit ein sofort verschwindendes Aufseher-Fenster seinen Grund belegt (#271).
+        """
         venv = repo / ".venv" / "bin" / "python"
         py = str(venv) if venv.is_file() else "python3"
         if self.e.wache_vorlage:
@@ -1440,12 +1874,23 @@ class Aufpasser:
             vorlage = VORLAGE_WACHE_REPO
         else:
             vorlage = VORLAGE_WACHE_SKILL
-        return vorlage.format(
+        kern = vorlage.format(
             repo=shlex.quote(str(repo)),
             py=shlex.quote(py),
             s=spec,
             resume=f" --resume {resume}" if resume else "",
         )
+        log_pfad = wache_log(repo, spec)
+        log_q = shlex.quote(str(log_pfad))
+        ordner_q = shlex.quote(str(log_pfad.parent))
+        warte_q = shlex.quote(str(spawn_exit.warte_datei(repo, spec)))
+        tee = f"exec 3>&2 2> >(tee -a {log_q} >&3); tee_pid=$!"
+        spur = (
+            f'rc=$?; exec 2>&3 3>&-; [ "$rc" -eq 0 ] || {{ '
+            f'timeout 3 tail -s 0.1 --pid="$tee_pid" -f /dev/null 2>/dev/null; '
+            f'echo "$(date -Is) wache.py #{spec} Exit $rc" >> {log_q}; }}; exit "$rc"'
+        )
+        return f"export {spawn_exit.WARTE_ENV}={warte_q}; mkdir -p {ordner_q}; {tee}; {{ {kern}; }}; {spur}"
 
     def resume_aus_datei(self, repo: Path, name: str) -> tuple[str, Path] | None:
         """Gesprächs-ID + cwd aus ``.to-spawn/sessions/<name>.json`` — nur wenn das
@@ -1498,10 +1943,18 @@ class Aufpasser:
 
     def _start_nachweisen(self, sitzung: str, name: str) -> bool:
         """Bis ``START_NACHWEIS_S`` prüfen, dass das Fenster bleibt und sein
-        Pane-Prozess lebt — erst dann gilt der Start (R6)."""
+        Pane-Prozess lebt — erst dann gilt der Start (R6).
+
+        Bei ``False`` hält :attr:`_letzter_start_befund` die konkrete tmux-/Prozess-Ursache (#288).
+        """
+        self._letzter_start_befund = ""
         frist = time.monotonic() + START_NACHWEIS_S
         while True:
             lebt = False
+            gefunden = False
+            pane_tot = False
+            pid_tot = 0
+            tmux_fehler = ""
             try:
                 for zeile in self.tmux(
                     "list-windows",
@@ -1512,10 +1965,26 @@ class Aufpasser:
                 ).splitlines():
                     teile = zeile.split("\t")
                     if len(teile) == 3 and teile[0] == name:
-                        lebt = teile[2] != "1" and _prozess_lebt(int(teile[1] or 0))
-            except (RuntimeError, ValueError):
+                        gefunden = True
+                        pid = int(teile[1] or 0)
+                        if teile[2] == "1":
+                            pane_tot = True
+                        elif _prozess_lebt(pid):
+                            lebt = True
+                        else:
+                            pid_tot = pid
+            except (RuntimeError, ValueError) as fehler:
+                tmux_fehler = str(fehler).strip()
                 lebt = False
             if not lebt:
+                if tmux_fehler:
+                    self._letzter_start_befund = f"tmux-Fehler: {tmux_fehler[:160]}"
+                elif pane_tot:
+                    self._letzter_start_befund = "Pane-Prozess sofort beendet (pane_dead=1)"
+                elif gefunden:
+                    self._letzter_start_befund = f"Pane-Prozess {pid_tot} lebt nicht mehr"
+                else:
+                    self._letzter_start_befund = "Fenster nach dem Start nicht mehr in tmux"
                 return False
             if time.monotonic() >= frist:
                 return True
@@ -1556,7 +2025,7 @@ class Aufpasser:
             print(f"[trocken] Fenster {ziel} schließen ({freigabe.grund})")
             return "fenster"
         baum = prozess_baum(pane_pid) if pane_pid else []
-        claude = [pid for pid in baum if prozessbaum.ist_claude(pid)]
+        claude = [pid for pid in baum if werkzeug.ist_session_pid(pid)]
         nach_exit = bool(claude) and not kette_beenden
         if nach_exit:
             ende = self._claude_exit(ziel, claude)
@@ -1586,7 +2055,7 @@ class Aufpasser:
         teilbaum = list(dict.fromkeys(p for c in claude for p in prozess_baum(c)))
         # Halber Text im Eingabefeld machte aus /exit eine Nachricht.
         self.tmux("send-keys", "-t", ziel, "C-u")
-        self._eingeben(ziel, "/exit")
+        self._eingeben(ziel, anleitung.EXIT)
         frist = time.monotonic() + self.e.exit_warten_s
         while any(_prozess_lebt(pid) for pid in claude) and time.monotonic() < frist:
             time.sleep(0.2)
@@ -1659,9 +2128,7 @@ class Aufpasser:
         finally:
             self.tmux("set-option", "-w", "-t", ziel, "-u", "remain-on-exit")
 
-    def _kette_fortsetzen(
-        self, f: Fenster, ticket: int, freigabe: Freigabe, cwd: Path, befehl: str
-    ) -> Fenster:
+    def _kette_fortsetzen(self, f: Fenster, ticket: int, freigabe: Freigabe, cwd: Path, befehl: str) -> Fenster:
         """Fenster-Kette (#598): Ticket ``ticket`` hängt im Fenster „bau N“.
 
         Nur sein bau.py samt Kindern endet — die Kette dahinter läuft weiter —, und
@@ -1681,9 +2148,7 @@ class Aufpasser:
             befehl,
         )
         if self.e.trocken:
-            print(
-                f"[trocken] Fenster {f.ziel}: bau.py {ticket} beenden, „{name}“ starten: {befehl}"
-            )
+            print(f"[trocken] Fenster {f.ziel}: bau.py {ticket} beenden, „{name}“ starten: {befehl}")
             return f
         lauf = bau_lauf_im_baum(f.pane_pid)
         if lauf is None or lauf[1] != ticket:
@@ -1707,12 +2172,7 @@ class Aufpasser:
         zuletzt_da = False
         while True:
             try:
-                pane_pid = int(
-                    self.tmux(
-                        "display-message", "-p", "-t", f.ziel, "#{pane_pid}"
-                    ).strip()
-                    or 0
-                )
+                pane_pid = int(self.tmux("display-message", "-p", "-t", f.ziel, "#{pane_pid}").strip() or 0)
             except (RuntimeError, ValueError):
                 pane_pid = 0
             da = False
@@ -1740,9 +2200,7 @@ class Aufpasser:
         self._eingeben(ziel, text)
         time.sleep(1)
 
-    def sichern_worktree(
-        self, repo: Path, ticket: int, cwd: Path | None = None
-    ) -> str | None:
+    def sichern_worktree(self, repo: Path, ticket: int, cwd: Path | None = None) -> str | None:
         """Sicherung des Ticket-Worktrees; gibt es keinen oder ist er sauber → None."""
         worktree = worktree_finden(repo, ticket, cwd)
         if worktree is None:
@@ -1775,20 +2233,14 @@ class Aufpasser:
                 worktree = worktree_finden(repo, ticket, info.cwd if info else None)
             except RuntimeError as fehler:
                 # Ohne Worktree-Wissen kein sicheres Gate-Urteil — lieber nichts anfassen.
-                log.error(
-                    "%s: Worktree nicht lesbar: %s — kein Eingriff", f.name, fehler
-                )
+                log.error("%s: Worktree nicht lesbar: %s — kein Eingriff", f.name, fehler)
                 return False
         gate = self.gate_im_fenster(f, worktree)
         if gate:
-            log.info(
-                "%s: Gate läuft in diesem Fenster (%s) — kein Eingriff", f.name, gate
-            )
+            log.info("%s: Gate läuft in diesem Fenster (%s) — kein Eingriff", f.name, gate)
             return False
         text = self.pane_text(f.ziel)
-        if pane_hash(text) != hash_start or arbeitet(
-            text, info.status if info else None
-        ):
+        if pane_hash(text) != hash_start or arbeitet(text, info.status if info else None):
             log.info("%s: inzwischen aktiv — kein Eingriff", f.name)
             e = self.stand.fenster.get(f"{f.sitzung}/{f.name}")
             if e is not None and pane_hash(text) != hash_start:
@@ -1841,17 +2293,11 @@ class Aufpasser:
 
     def _stupser_zaehlen(self, e: dict) -> list[float]:
         """Anstupser der letzten 24 h (R5) — ältere fallen heraus."""
-        stupser = [
-            float(t)
-            for t in e.get("stupser") or []
-            if self.jetzt - float(t) < STUPSER_FENSTER_S
-        ]
+        stupser = [float(t) for t in e.get("stupser") or [] if self.jetzt - float(t) < STUPSER_FENSTER_S]
         e["stupser"] = stupser
         return stupser
 
-    def folge_ab_handoff(
-        self, f: Fenster, ticket: int, repo: Path, schluessel: str, hash_start: str
-    ) -> bool:
+    def folge_ab_handoff(self, f: Fenster, ticket: int, repo: Path, schluessel: str, hash_start: str) -> bool:
         """Eigener committeter Handoff + Session arbeitet nicht → Folge-Session (#542).
 
         Die Zeit seit dem Handoff-Commit zählt als Stille (nicht ``hang_min``); Regel in
@@ -1871,10 +2317,8 @@ class Aufpasser:
             print(f"[trocken] #{ticket}: Neustart ab eigenem Handoff {treffer.datei}")
             return True
         try:
-            code = eigener_handoff.folge_starten(
-                repo, int(f.spec), ticket, treffer, sperren=True
-            )
-        except Exception:  # noqa: BLE001 - ein Fenster darf die übrigen nicht stoppen
+            code = eigener_handoff.folge_starten(repo, int(f.spec), ticket, treffer, sperren=True)
+        except Exception:
             log.exception("%s: Neustart ab Handoff %s abgestürzt", f.name, treffer.datei)
             code = -1
         if code == eigener_handoff.EXIT_NICHTS:
@@ -1910,6 +2354,117 @@ class Aufpasser:
         )
         return True
 
+    def _fertiges_fenster(
+        self,
+        f: Fenster,
+        repo: Path,
+        offen: set[int],
+        ticket: int | None,
+        text: str,
+        info: SessionInfo | None,
+        e: dict,
+        still_min: float,
+        schluessel: str,
+        arbeitend: bool,
+    ) -> bool:
+        """Die einzige Regel „wann darf ein fertiges Fenster zu“ (#416/#592).
+
+        Wahr ⇒ das Fenster ist erledigt (geschlossen oder von einer offenen Frage gehalten),
+        :meth:`fenster_pruefen` macht nichts weiter damit. Falsch ⇒ weiter in der Stufenkette.
+        """
+        hash_start = e["hash"]
+        if ticket is not None and ticket not in offen and not arbeitend:
+            # Volle Grenze + idle Session: nicht 15 min Karenz absitzen, sondern kurz
+            # warten und Text vergleichen — der Platz wird gebraucht (#592).
+            platznot = still_min < KARENZ_MIN and self._platznot(repo, info, f.sitzung)
+            if still_min >= KARENZ_MIN or platznot:
+                try:
+                    daten = self.ticket_lesen(ticket, repo)
+                except RuntimeError as fehler:
+                    log.error("%s: Ticket-Zustand nicht lesbar: %s", f.name, fehler)
+                    daten = {}  # gilt als offen: nichts schließen
+                if ticket_zustand.fertig_gebaut(daten):
+                    if not self._frage_haelt(f, ticket, repo, daten, e):
+                        self.ticket_zu_schliessen(
+                            f,
+                            ticket,
+                            repo,
+                            schluessel,
+                            hash_start,
+                            info,
+                            platznot,
+                            grund=ticket_zustand.wortlaut(daten),
+                        )
+                        return True
+                    # Frage hält nur das Schließen: lebt Claude, bleibt das Fenster
+                    # unberührt; beendete Session läuft in die Stufenkette (#416).
+                    return info is not None or not session_beendet(f.pane_pid)
+        e.pop("frage_gehalten", None)
+        return False
+
+    def _platz_fenster(self, f: Fenster, repo: Path, offen: set[int]) -> int:
+        text = self.pane_text(f.ziel)
+        info = self.session(f)
+        status = info.status if info else None
+        e = self.eintrag(f"{f.sitzung}/{f.name}", text)
+        self._fertiges_fenster(
+            f,
+            repo,
+            offen,
+            echtes_ticket(f),
+            text,
+            info,
+            e,
+            (self.jetzt - e["seit"]) / 60,
+            f"{f.sitzung}/{f.name}",
+            arbeitet(text, status),
+        )
+        return 1
+
+    def platz_schaffen(self) -> int:
+        """Nur die Schließ-Regel über alle Fenster, sofort statt im 15-min-Cron (#624).
+
+        Wartende Starts rufen das bei voller Gesamtgrenze. Kein Hausmeister, keine Stufenkette,
+        kein Nachstarten. Lauf-Sperre belegt (Cron läuft) ⇒ 0, der Starter wartet normal.
+        Gibt die Zahl der geprüften Fenster zurück.
+        """
+        sperre = self._sperren()
+        if sperre is None:
+            log.info("Platz schaffen: Aufpasser läuft schon (Sperre belegt)")
+            return 0
+        geprueft = 0
+        try:
+            gesehen: list[tuple[str, str, list[Fenster], Path]] = []
+            for sitzung, spec in self.sitzungen():
+                try:
+                    fenster = self.fenster(sitzung, spec)
+                except RuntimeError as fehler:
+                    log.error("%s: Fenster nicht lesbar: %s", sitzung, fehler)
+                    continue
+                repo = self.spec_repo_ordner(spec, fenster, self.repo_ordner(fenster))
+                if repo is not None:
+                    gesehen.append((sitzung, spec, fenster, repo))
+            deploy = self._deploy_wache({repo for _, _, _, repo in gesehen})
+            if deploy:
+                log.info("Platz schaffen: Deploy/Gate läuft (%s): nichts angefasst", "; ".join(deploy[:3]))
+                return 0
+            for sitzung, spec, fenster, repo in gesehen:
+                try:
+                    offen = self.zu_bauen(self.offene_tickets(spec, repo))
+                except (RuntimeError, ValueError) as fehler:
+                    log.error("%s: GitHub nicht lesbar: %s", sitzung, fehler)
+                    continue
+                for f in fenster:
+                    try:
+                        geprueft += self._platz_fenster(f, repo, offen)
+                    except RuntimeError as fehler:
+                        log.error("%s/%s: Fenster übersprungen: %s", sitzung, f.name, fehler)
+        finally:
+            self._stand_schreiben()
+            if hasattr(sperre, "close"):
+                sperre.close()
+        return geprueft
+
     def fenster_pruefen(self, f: Fenster, repo: Path, offen: set[int]) -> None:
         schluessel = f"{f.sitzung}/{f.name}"
         text = self.pane_text(f.ziel)
@@ -1923,21 +2478,8 @@ class Aufpasser:
             log.info("%s: bau.py arbeitet an Ticket %s", f.name, ticket)
         arbeitend = arbeitet(text, status)
 
-        if ticket is not None and ticket not in offen and not arbeitend:
-            # Volle Grenze + idle Session: nicht 15 min Karenz absitzen, sondern kurz
-            # warten und Text vergleichen — der Platz wird gebraucht (#592).
-            platznot = still_min < KARENZ_MIN and self._platznot(repo, info)
-            if still_min >= KARENZ_MIN or platznot:
-                try:
-                    zu = self.ticket_zu(ticket, repo)
-                except RuntimeError as fehler:
-                    log.error("%s: Ticket-Zustand nicht lesbar: %s", f.name, fehler)
-                    zu = False
-                if zu:
-                    self.ticket_zu_schliessen(
-                        f, ticket, repo, schluessel, hash_start, info, platznot
-                    )
-                    return
+        if self._fertiges_fenster(f, repo, offen, ticket, text, info, e, still_min, schluessel, arbeitend):
+            return
 
         if rueckfrage(text):
             if still_min >= RUECKFRAGE_MIN:
@@ -1946,8 +2488,15 @@ class Aufpasser:
                     repo,
                     schluessel,
                     "rueckfrage",
-                    f"„{f.name}“ wartet seit {int(still_min)} min auf eine Ja/Nein-Bestätigung — braucht David.",
+                    f"„{f.name}“ wartet seit {int(still_min)} min auf eine Ja/Nein-Bestätigung — braucht den Menschen.",
                 )
+            return
+        if (
+            ticket is not None
+            and ticket in offen
+            and not arbeitend
+            and self.blocker_falsch_gewartet(f, ticket, repo, schluessel, e, hash_start, text)
+        ):
             return
         if (
             ticket is not None
@@ -1956,7 +2505,10 @@ class Aufpasser:
             and self.folge_ab_handoff(f, ticket, repo, schluessel, hash_start)
         ):
             return
-        if arbeitend or still_min < self.e.hang_min:
+        # Kurze Schwelle nur fürs erste Anstupsen; Fortsetzen (Kill) bleibt bei hang_min ≥ 61.
+        kurz = int(e.get("stufe", 0)) == 0 and steht_umsonst(text, ticket, repo)
+        schwelle = FRAGE_PROMPT_MIN if kurz else self.e.hang_min
+        if arbeitend or still_min < schwelle:
             return
         if ticket is None and not f.ist_wache:
             return
@@ -1973,7 +2525,7 @@ class Aufpasser:
                     repo,
                     schluessel,
                     "session_beendet",
-                    f"„{f.name}“: Session beendet, keine Gesprächs-ID — braucht David.",
+                    f"„{f.name}“: Session beendet, keine Gesprächs-ID — braucht den Menschen.",
                 )
                 return
             sid, cwd = gemerkt
@@ -1995,7 +2547,7 @@ class Aufpasser:
                     repo,
                     schluessel,
                     "stupser_erschoepft",
-                    f"„{f.name}“ wurde {STUPSER_MAX}× angestupst und wird immer wieder still — braucht David.",
+                    f"„{f.name}“ wurde {STUPSER_MAX}× angestupst und wird immer wieder still — braucht den Menschen.",
                 )
                 return
             if not self.vor_eingriff(f, hash_start, repo):
@@ -2014,9 +2566,7 @@ class Aufpasser:
                 f"„{f.name}“ stand {int(still_min)} min still, angestupst.",
             )
         elif stufe == 1:
-            self.sichern_und_fortsetzen(
-                f, ticket, repo, schluessel, e, hash_start, info
-            )
+            self.sichern_und_fortsetzen(f, ticket, repo, schluessel, e, hash_start, info)
         elif stufe == 2:
             self._braucht_david(
                 e,
@@ -2024,11 +2574,75 @@ class Aufpasser:
                 repo,
                 schluessel,
                 "braucht_david",
-                f"„{f.name}“ reagiert nach Anstupsen und Fortsetzen nicht — braucht David.",
+                f"„{f.name}“ reagiert nach Anstupsen und Fortsetzen nicht — braucht den Menschen.",
             )
 
-    def _platznot(self, repo: Path, info: SessionInfo | None) -> bool:
-        """Grenze voll (Speicher/Session-Zahl) und die Session meldet selbst ``idle``."""
+    def blocker_falsch_gewartet(
+        self, f: Fenster, ticket: int, repo: Path, schluessel: str, e: dict, hash_start: str, text: str
+    ) -> bool:
+        """Session wartet laut eigener ``WARTET``-Zeile, ``gh.blocker_gruende`` sieht alles erledigt (#269).
+
+        Dann Vorfall ``blocker_falsch_gewartet`` mit Ticketnummern und sofort ein Anstoß ins
+        Fenster (zählt als Anstupser, Grenze R5). Wartet sie zu Recht oder ist die Lage
+        unbekannt (Abfrage scheitert), passiert nichts. True = Fenster fertig geprüft.
+        """
+        if gemeldete_blocker(text) is None:  # ohne WARTET-Zeile kein origin-Lesen
+            return False
+        blocker = erledigt_gewartet(text, ticket, repo, gh.repo_aus_origin(repo))
+        if blocker is None:
+            return False
+        log.info("%s: wartet auf %s, laut GitHub erledigt — Anstoß", f.name, blocker)
+        if self.e.trocken:
+            print(f"[trocken] {f.ziel}: Blocker {blocker} erledigt, anstoßen")
+            return True
+        notiere_blocker_falsch(repo, ticket, blocker, self.datum)
+        if len(self._stupser_zaehlen(e)) >= STUPSER_MAX or not self.vor_eingriff(f, hash_start, repo):
+            return False  # Kette unten entscheidet (braucht den Menschen / nächster Lauf)
+        self._eingeben(f.ziel, BLOCKER_FREI_TEXT.format(blocker=blocker, ticket=ticket))
+        e["stupser"].append(self.jetzt)
+        e.update(hash=pane_hash(self.pane_text(f.ziel)), seit=self.jetzt)
+        return True
+
+    def wartet_umsonst(self, text: str, ticket: int | None, repo: Path) -> bool:
+        """Siehe :func:`wartet_umsonst` (Modul-Funktion, auch vom Wecker gefragt)."""
+        return wartet_umsonst(text, ticket, repo)
+
+    def _frage_haelt(self, f: Fenster, ticket: int, repo: Path, daten: dict[str, Any], e: dict[str, Any]) -> bool:
+        """Offene Frage des Tickets im Briefkasten hält das Fenster, auch bei Platznot (#416).
+
+        Die Bau-Session wartet auf die Antwort und schließt danach selbst das Ticket — ohne
+        sie bliebe es ohne Schließer. Ist das Issue schon zu, braucht es keinen mehr: eine
+        alte, nie beantwortete Frage hält dann nicht. Briefkasten nicht lesbar ⇒ hält.
+        Die Log-Zeile wird über ``e["frage_gehalten"]`` entprellt: einmal beim Eintritt,
+        danach erst wieder bei Änderung (#440).
+        """
+        if ticket_zustand.endgueltig_zu(daten):
+            e.pop("frage_gehalten", None)
+            return False
+        try:
+            fragen = briefkasten.offene([ticket], hauptbaum=repo)
+        except (OSError, ValueError, RuntimeError) as fehler:
+            stand = f"fehler:{fehler}"
+            if e.get("frage_gehalten") != stand:
+                log.warning("%s: Briefkasten nicht lesbar (%s) — Fenster bleibt", f.name, fehler)
+                e["frage_gehalten"] = stand
+            return True
+        if fragen:
+            anzeige = ", ".join(q["id"] or q["frage"] for q in fragen)
+            stand = f"offen:{anzeige}"
+            if e.get("frage_gehalten") != stand:
+                log.info(
+                    "%s: offene Frage im Briefkasten (%s) — Fenster bleibt, Ticket braucht die Session",
+                    f.name,
+                    anzeige,
+                )
+                e["frage_gehalten"] = stand
+            return True
+        e.pop("frage_gehalten", None)
+        return False
+
+    def _platznot(self, repo: Path, info: SessionInfo | None, sitzung: str) -> bool:
+        """Grenze voll (Speicher/Session-Zahl der tmux-Sitzung) und die Session meldet selbst ``idle``."""
         if info is None or not info.aus_json or info.status != "idle":
             return False
         try:
@@ -2036,7 +2650,7 @@ class Aufpasser:
         except (OSError, ValueError) as fehler:
             log.warning("%s: Konfig nicht lesbar: %s", repo, fehler)
             return False
-        return not speicher.platz_frei(konfig)[0]
+        return not speicher.platz_frei(konfig, sitzung=sitzung, tmux_socket=self.e.tmux_socket)[0]
 
     def ticket_zu_schliessen(
         self,
@@ -2047,7 +2661,10 @@ class Aufpasser:
         hash_start: str,
         info: SessionInfo | None,
         platznot: bool = False,
+        *,
+        grund: str,
     ) -> None:
+        """``grund``: :func:`ticket_zustand.wortlaut` für die Meldung (#279)."""
         if platznot and not self.e.trocken:
             log.info(
                 "%s: Ticket zu, Grenze voll — %g s Gegenprobe statt Karenz",
@@ -2058,15 +2675,13 @@ class Aufpasser:
         try:
             sha = self.sichern_worktree(repo, ticket, info.cwd if info else None)
         except RuntimeError as fehler:
-            log.error(
-                "%s: Sicherung vor dem Schließen fehlgeschlagen: %s", f.name, fehler
-            )
+            log.error("%s: Sicherung vor dem Schließen fehlgeschlagen: %s", f.name, fehler)
             self.melden(
                 f.spec,
                 repo,
                 schluessel,
                 "sicherung_fehlgeschlagen",
-                f"„{f.name}“: Ticket zu, aber Sicherung fehlgeschlagen — braucht David.",
+                f"„{f.name}“: Ticket zu, aber Sicherung fehlgeschlagen — braucht den Menschen.",
             )
             return
         if not self.vor_eingriff(f, hash_start, repo):
@@ -2093,9 +2708,7 @@ class Aufpasser:
             return
         if not self.e.trocken:
             self.stand.fenster.pop(schluessel, None)
-        zusatz = (
-            f" Änderungen auf sicherung/{ticket} gesichert ({sha[:7]})." if sha else ""
-        )
+        zusatz = f" Änderungen auf sicherung/{ticket} gesichert ({sha[:7]})." if sha else ""
         if ende == "exit":
             zusatz += " Per /exit beendet, Kette läuft weiter."
         elif ende == "zwang":
@@ -2105,7 +2718,7 @@ class Aufpasser:
             repo,
             schluessel,
             "geschlossen",
-            f"„{f.name}“ geschlossen (Ticket zu).{zusatz}",
+            f"„{f.name}“ geschlossen ({grund}).{zusatz}",
         )
 
     def sichern_und_fortsetzen(
@@ -2127,7 +2740,7 @@ class Aufpasser:
                 repo,
                 schluessel,
                 "braucht_david",
-                f"„{f.name}“ weiter still, aber keine Gesprächs-ID gefunden — braucht David.",
+                f"„{f.name}“ weiter still, aber keine Gesprächs-ID gefunden — braucht den Menschen.",
             )
             return
         sid = info.session_id
@@ -2136,16 +2749,14 @@ class Aufpasser:
             try:
                 sha = self.sichern_worktree(repo, ticket, info.cwd)
             except RuntimeError as fehler:
-                log.error(
-                    "%s: Sicherung fehlgeschlagen, Fenster bleibt: %s", f.name, fehler
-                )
+                log.error("%s: Sicherung fehlgeschlagen, Fenster bleibt: %s", f.name, fehler)
                 self._braucht_david(
                     e,
                     f,
                     repo,
                     schluessel,
                     "sicherung_fehlgeschlagen",
-                    f"„{f.name}“ weiter still — Sicherung fehlgeschlagen — braucht David.",
+                    f"„{f.name}“ weiter still — Sicherung fehlgeschlagen — braucht den Menschen.",
                 )
                 return
         if not self.vor_eingriff(f, hash_start, repo):
@@ -2160,16 +2771,12 @@ class Aufpasser:
         neu = f
         try:
             if kette:
-                neu = self._kette_fortsetzen(
-                    f, ticket, freigabe_gesichert(sid, sha), cwd, befehl
-                )
+                neu = self._kette_fortsetzen(f, ticket, freigabe_gesichert(sid, sha), cwd, befehl)
             else:
-                self._fenster_fortsetzen(
-                    f.fest, freigabe_gesichert(sid, sha), cwd, befehl, f.pane_pid
-                )
+                self._fenster_fortsetzen(f.fest, freigabe_gesichert(sid, sha), cwd, befehl, f.pane_pid)
         except RuntimeError as fehler:
             # Prozess ist womöglich schon beendet, das Fenster aber leer: nicht
-            # noch einmal versuchen, sondern David rufen (Stufe 3).
+            # noch einmal versuchen, sondern den Menschen rufen (Stufe 3).
             log.error("Fenster %s fortsetzen fehlgeschlagen: %s", f.ziel, fehler)
             self._braucht_david(
                 e,
@@ -2177,7 +2784,7 @@ class Aufpasser:
                 repo,
                 schluessel,
                 "fortsetzen_fehlgeschlagen",
-                f"„{f.name}“: Fortsetzen fehlgeschlagen (tmux: {fehler}) — braucht David.",
+                f"„{f.name}“: Fortsetzen fehlgeschlagen (tmux: {fehler}) — braucht den Menschen.",
             )
             return
         if ticket is None:
@@ -2209,7 +2816,7 @@ class Aufpasser:
                 schluessel,
                 "fortsetzen_fehlgeschlagen",
                 f"„{neu.name}“: {gesichert}, aber Fortsetzen fehlgeschlagen "
-                f"(Session {sid[:8]} nicht wieder da) — braucht David.",
+                f"(Session {sid[:8]} nicht wieder da) — braucht den Menschen.",
             )
             return
         if not self.e.trocken:
@@ -2225,22 +2832,45 @@ class Aufpasser:
 
     # -- Ein Lauf ----------------------------------------------------------------
 
-    def start_erlaubt(self, spec: str, repo: Path, ticket: int | None) -> bool:
-        """Regel 1: kein Start bei Stopp-Label oder wenn das Fenster in 6 h schon
-        ``START_MAX``-mal gestartet wurde (es verschwindet offenbar wieder).
-        ``ticket`` None = Aufseher-Fenster (kein Label, Start-Gedächtnis ``wache-<S>``)."""
+    def start_erlaubt(self, spec: str, repo: Path, ticket: int | None, *, sitzung: str = "") -> bool:
+        """Regel 1: kein Start außerhalb der gespeicherten Teil-Start-Auswahl (#271), bei
+        Stopp-Label oder wenn das Fenster in 6 h schon ``START_MAX``-mal gestartet wurde.
+        ``ticket`` None = Aufseher-Fenster (prüft Auswahl/``--ohne-wache``/Rechner,
+        Start-Gedächtnis ``wache-<S>``)."""
         name = f"bau {ticket}" if ticket is not None else f"wache {spec}"
-        if ticket is not None:
+        auswahl_stand = auswahl.lesen(repo, spec)
+        if ticket is None:
+            if not auswahl.wache_erlaubt(repo, spec, auswahl=auswahl_stand, gelesen=True):
+                log.info(
+                    "spec %s: Aufseher laut Auswahl hier nicht erlaubt (%s) — kein Start",
+                    spec,
+                    auswahl.beschreibung(auswahl_stand),
+                )
+                return False
+        else:
+            if not auswahl.ticket_erlaubt(repo, spec, ticket, auswahl=auswahl_stand, gelesen=True):
+                log.info(
+                    "#%s: außerhalb der Auswahl für Spec #%s (%s) — kein Start",
+                    ticket,
+                    spec,
+                    auswahl.beschreibung(auswahl_stand),
+                )
+                return False
             try:
                 daten = self.ticket_lesen(ticket, repo)
             except RuntimeError as fehler:
                 log.error("#%s: Ticket nicht lesbar, kein Start: %s", ticket, fehler)
                 return False
+            if ticket_zustand.fertig_gebaut(daten):
+                log.info(
+                    "#%s: %s — kein Start",
+                    ticket,
+                    ticket_zustand.wortlaut(daten),
+                )
+                return False
             gesperrt = daten["labels"] & STOPP_LABELS
             if gesperrt:
-                log.info(
-                    "#%s: Label %s — kein Start", ticket, ", ".join(sorted(gesperrt))
-                )
+                log.info("#%s: Label %s — kein Start", ticket, ", ".join(sorted(gesperrt)))
                 return False
         starts = [
             t
@@ -2252,9 +2882,9 @@ class Aufpasser:
             self.melden(
                 spec,
                 repo,
-                f"spec-{spec}/{name}",
+                f"{sitzung or tmux_aufruf.sitzung_alt(spec)}/{name}",
                 "startet_nicht",
-                f"{wer} startet nicht (Fenster verschwindet wieder) — braucht David.",
+                f"{wer} startet nicht (Fenster verschwindet wieder) — braucht den Menschen.",
             )
             return False
         return True
@@ -2263,23 +2893,17 @@ class Aufpasser:
     def _start_schluessel(spec: str, ticket: int | None) -> str:
         return str(ticket) if ticket is not None else f"wache-{spec}"
 
-    def fehlendes_fenster(
-        self, sitzung: str, spec: str, repo: Path, ticket: int | None
-    ) -> None:
+    def fehlendes_fenster(self, sitzung: str, spec: str, repo: Path, ticket: int | None) -> None:
         """Regel 1 für ein Fenster: liegt ``.to-spawn/sessions/<name>.json`` samt
         Transkript, geht es mit ``--resume`` weiter (R2), sonst frisch. Erst nach
         dem Start-Nachweis (R6) gilt es als gestartet."""
         name = f"bau {ticket}" if ticket is not None else f"wache {spec}"
         datei_name = str(ticket) if ticket else f"wache-{spec}"
         gemerkt_roh = sessions_datei.lesen(repo, datei_name)
-        if gemerkt_roh and session_laeuft_schon(
-            str(gemerkt_roh.get("session_id") or ""), self.e.heim
-        ):
+        if gemerkt_roh and session_laeuft_schon(str(gemerkt_roh.get("session_id") or ""), self.e.heim):
             # Gespräch lebt woanders (andere tmux-Sitzung, von Hand fortgesetzt):
             # kein zweites Fenster, sonst zwei Sessions auf demselben Ticket.
-            log.info(
-                "%s: „%s“ läuft außerhalb dieser Sitzung — kein Start", sitzung, name
-            )
+            log.info("%s: „%s“ läuft außerhalb dieser Sitzung — kein Start", sitzung, name)
             return
         gemerkt = self.resume_aus_datei(repo, datei_name)
         sid, cwd = gemerkt if gemerkt else (None, repo)
@@ -2288,21 +2912,24 @@ class Aufpasser:
         else:
             befehl = self.wache_befehl(repo, spec, resume=sid)
         # Speicher-Schutz (#257 Paket B): kein Start, wenn RAM knapp oder die Obergrenze
-        # an Claude-Sessions erreicht ist — der nächste Tick prüft neu. Zwischen zwei
+        # an Claude-Sessions dieser tmux-Sitzung erreicht ist (#409) — der nächste Tick prüft neu. Zwischen zwei
         # echten Starts in einem Tick liegt die Staffel-Pause (nicht im Trockenlauf).
         konfig = config.lade(repo)
-        frei, grund = speicher.platz_frei(konfig)
+        frei, grund = speicher.platz_frei(konfig, sitzung=sitzung, tmux_socket=self.e.tmux_socket)
         if not frei:
             log.warning("%s: Fenster „%s“ nicht gestartet — %s", sitzung, name, grund)
             if self.e.trocken:
-                print(
-                    f"[trocken] {sitzung}: Fenster „{name}“ nicht gestartet — {grund}"
-                )
+                print(f"[trocken] {sitzung}: Fenster „{name}“ nicht gestartet — {grund}")
             return
         if self._starts_in_tick > 0 and not self.e.trocken:
             pause = speicher.staffel_s(konfig)
             log.info("%s: Staffel — %d s Pause vor Fenster „%s“", sitzung, pause, name)
             time.sleep(pause)
+        log_pfad = _fenster_log_pfad(repo, spec, ticket)
+        try:
+            log_offset = log_pfad.stat().st_size if log_pfad.is_file() else 0
+        except OSError:
+            log_offset = 0
         try:
             self.fenster_starten(sitzung, name, cwd, befehl)
         except RuntimeError as fehler:
@@ -2313,61 +2940,112 @@ class Aufpasser:
         wer = f"#{ticket}" if ticket is not None else "Aufseher-Fenster"
         was = "hatte keine Session" if ticket is not None else "fehlte"
         if not self.e.trocken:
-            self.stand.starts.setdefault(
-                self._start_schluessel(spec, ticket), []
-            ).append(self.jetzt)
+            self.stand.starts.setdefault(self._start_schluessel(spec, ticket), []).append(self.jetzt)
         if not self.e.trocken and not self._start_nachweisen(sitzung, name):
+            auszug = _start_log_auszug(log_pfad, log_offset)
+            if not auszug and log_pfad.is_file():
+                # Kurz warten, falls tee bei schnellem Ende die letzte Zeile noch flusht (#288).
+                time.sleep(0.2)
+                auszug = _start_log_auszug(log_pfad, log_offset)
+            if auszug:
+                grund_text = f" — Grund: {auszug} (Log: {log_pfad})"
+            elif self._letzter_start_befund:
+                hinweis = f" (Log: {log_pfad})" if log_pfad.is_file() else ""
+                grund_text = f" — Grund: {self._letzter_start_befund}{hinweis}"
+            else:
+                grund_text = ""
             self.melden(
                 spec,
                 repo,
                 f"{sitzung}/{name}",
                 "start_fehlgeschlagen",
-                f"{wer}: Start fehlgeschlagen (Fenster gleich wieder weg).",
+                f"{wer}: Start fehlgeschlagen (Fenster gleich wieder weg){grund_text}.",
             )
             return
         wie = f"mit Gespräch {sid[:8]}… fortgesetzt." if sid else "gestartet."
         self.melden(spec, repo, f"{sitzung}/{name}", "gestartet", f"{wer} {was}, {wie}")
 
-    def sitzung_pruefen(
-        self, sitzung: str, spec: str, fenster: list[Fenster], repo: Path
-    ) -> None:
+    def offene_blocker_von(self, ticket: int, repo: Path, gh_repo: str) -> list[int]:
+        """Noch nicht erledigte Blocker eines Tickets (#418, Regel: :func:`gh.offene_blocker`).
+
+        Kein GitHub-Slug oder Abfrage fehlgeschlagen ⇒ ``[]`` (fail-open; ``bau.py``
+        prüft seine Start-Schranke beim Anlauf selbst).
+        """
+        if not gh_repo:
+            return []
+        deps = gh.blocked_by(gh_repo, str(ticket), cwd=repo)
+        if deps is None:
+            log.warning("#%d: Blocker nicht lesbar — Start nicht gesperrt", ticket)
+            return []
+        return gh.offene_blocker(deps)
+
+    def sitzung_pruefen(self, sitzung: str, spec: str, fenster: list[Fenster], repo: Path) -> None:
         try:
             offen = self.offene_tickets(spec, repo)
         except (RuntimeError, ValueError) as fehler:
             log.error("%s: GitHub nicht lesbar: %s", sitzung, fehler)
             return
+        auswahl_stand = auswahl.lesen(repo, spec)
+        offen_hier = {
+            n: t for n, t in offen.items() if auswahl.ticket_erlaubt(repo, spec, n, auswahl=auswahl_stand, gelesen=True)
+        }
         vorhanden = {f.name for f in fenster}
         log.info(
-            "%s: %d Fenster (%s), offene Tickets %s",
+            "%s: %d Fenster (%s), offene Tickets %s%s",
             sitzung,
             len(fenster),
             ", ".join(sorted(vorhanden)),
-            sorted(offen) or "-",
+            sorted(offen_hier) or "-",
+            f" ({auswahl.beschreibung(auswahl_stand)})" if auswahl_stand is not None else "",
         )
-        fehlend = [t for t in sorted(offen) if f"bau {t}" not in vorhanden]
+        # Aufseher-Fenster fehlt (R2): zuerst nachstarten (#418), solange die Spec (hier)
+        # offene Tickets hat und die Auswahl einen Aufseher auf diesem Rechner erlaubt (#271).
+        # Gehört die Auswahl einem anderen Rechner oder gilt --ohne-wache, keinen zweiten
+        # Start versuchen und das in einer Zeile melden (#288).
+        if offen and f"wache {spec}" not in vorhanden:
+            if not auswahl.wache_erlaubt(repo, spec, auswahl=auswahl_stand, gelesen=True):
+                log.info(
+                    "spec %s: Aufseher läuft laut Auswahl nicht auf diesem Rechner (%s) — kein zweiter Start",
+                    spec,
+                    auswahl.beschreibung(auswahl_stand),
+                )
+            elif offen_hier and self.start_erlaubt(spec, repo, None, sitzung=sitzung):
+                self.fehlendes_fenster(sitzung, spec, repo, None)
+        # Bau-Fenster nur für „noch nicht fertig gebaut“ (#279) innerhalb der Auswahl (#271);
+        # der Aufseher oben bleibt, bis alle gewählten Tickets endgültig zu sind.
+        bauen = self.zu_bauen(offen_hier)
+        fehlend = [t for t in sorted(bauen) if f"bau {t}" not in vorhanden]
         # Läuft das Ticket schon in einer Fenster-Kette (oder folgt dort noch),
         # kein eigenes Fenster — sonst zwei Sessions auf einem Ticket (#598).
         belegt = self.belegte_tickets() if fehlend else set()
+        gh_repo = gh.repo_aus_origin(repo) if fehlend else ""
         for ticket in fehlend:
             if ticket in belegt:
+                log.info("%s: #%d läuft in einer Fenster-Kette — kein Start", sitzung, ticket)
+                continue
+            blocker = self.offene_blocker_von(ticket, repo, gh_repo)
+            if blocker:
                 log.info(
-                    "%s: #%d läuft in einer Fenster-Kette — kein Start", sitzung, ticket
+                    "%s: #%d hat offene Blocker (%s) — kein Start",
+                    sitzung,
+                    ticket,
+                    ", ".join(f"#{b}" for b in blocker),
                 )
                 continue
-            if not self.start_erlaubt(spec, repo, ticket):
+            if not self.start_erlaubt(spec, repo, ticket, sitzung=sitzung):
                 continue
             self.fehlendes_fenster(sitzung, spec, repo, ticket)
-        # Aufseher-Fenster fehlt (R2): nachstarten, solange die Spec offene Tickets
-        # hat — ist sie fertig, hat der Aufseher sich regulär beendet.
-        if (
-            offen
-            and f"wache {spec}" not in vorhanden
-            and self.start_erlaubt(spec, repo, None)
-        ):
-            self.fehlendes_fenster(sitzung, spec, repo, None)
         for f in fenster:
+            if f.ist_wache and not auswahl.wache_erlaubt(repo, spec, auswahl=auswahl_stand, gelesen=True):
+                log.info("%s: Aufseher-Fenster „%s“ außerhalb der Auswahl — übersprungen", sitzung, f.name)
+                continue
+            if f.ticket is not None and not auswahl.ticket_erlaubt(
+                repo, spec, f.ticket, auswahl=auswahl_stand, gelesen=True
+            ):
+                log.info("%s: Fenster „%s“ außerhalb der Auswahl — übersprungen", sitzung, f.name)
+                continue
             try:
-                self.fenster_pruefen(f, repo, offen)
+                self.fenster_pruefen(f, repo, bauen)
             except RuntimeError as fehler:
                 log.error("%s: Fenster „%s“ übersprungen: %s", sitzung, f.name, fehler)
 
@@ -2404,7 +3082,7 @@ class Aufpasser:
         try:
             self._lauf()
         except RuntimeError as fehler:
-            # Werkzeug-Störung (z. B. pgrep der Deploy-Wache): Lauf endet ohne
+            # Werkzeug-Störung (z. B. Prozessliste der Deploy-Wache): Lauf endet ohne
             # Eingriff — lieber einmal nichts tun als blind eingreifen.
             log.error("Lauf abgebrochen, nichts angefasst: %s", fehler)
             code = 1
@@ -2432,10 +3110,48 @@ class Aufpasser:
             fehler,
             " (trocken)" if self.e.trocken else "",
         )
+        # #261: Bleib-Gründe gezählt auch im Aufpasser-Log (eine Format-Stelle im Hausmeister).
+        for zeile in hausmeister.bleib_zeilen(ergebnisse):
+            log.info("%s", zeile)
+
+    def _wecker_lauf(self) -> None:
+        """Sicherheitsnetz für den externen Wecker (#287): stößt fällige Weckaufträge an.
+
+        Fehlt ``auftraege.json``, endet :func:`to_spawn.wecker.durchgang` sofort ohne
+        Unterprozesse. Fehler halten den übrigen Aufpasser-Lauf nie auf.
+        """
+        from to_spawn import wecker  # spät: wecker importiert aufpasser
+
+        try:
+            ergebnisse = wecker.durchgang(
+                self.e.wecker_zustand,
+                tmux_socket=self.e.tmux_socket,
+                trocken=self.e.trocken,
+                jetzt=self.jetzt,
+            )
+        except NotImplementedError:
+            return
+        except Exception:  # Wecker darf den Aufpasser-Lauf nie aufhalten
+            log.exception("Externer Wecker gescheitert")
+            return
+        if ergebnisse:
+            geweckt = sum(1 for e in ergebnisse if e.ereignis == "geweckt")
+            gescheitert = sum(1 for e in ergebnisse if e.ereignis == "gescheitert")
+            (log.warning if gescheitert else log.info)(
+                "Wecker: %d geweckt, %d gescheitert, %d gesamt%s",
+                geweckt,
+                gescheitert,
+                len(ergebnisse),
+                " (trocken)" if self.e.trocken else "",
+            )
+
+    def _deploy_wache(self, repos: Iterable[Path]) -> list[str]:
+        """Setzt das Deploy-Muster für diese Repos und liefert die laufenden Deploy-/Gate-Prozesse."""
+        self.muster = self.deploy_muster_fuer(repos)
+        return self.deploy_laeuft(self.muster)
 
     def _lauf(self) -> None:
         self._starts_in_tick = 0
-        self._hausmeister_lauf()
         gesehen: list[tuple[str, str, list[Fenster], Path]] = []
         for sitzung, spec in self.sitzungen():
             try:
@@ -2443,13 +3159,12 @@ class Aufpasser:
             except RuntimeError as fehler:
                 log.error("%s: Fenster nicht lesbar: %s", sitzung, fehler)
                 continue
-            repo = self.repo_ordner(fenster)
+            repo = self.spec_repo_ordner(spec, fenster, self.repo_ordner(fenster))
             if repo is None:
                 log.warning("%s: kein Repo-Ordner gefunden — übersprungen", sitzung)
                 continue
             gesehen.append((sitzung, spec, fenster, repo))
-        self.muster = self.deploy_muster_fuer({repo for _, _, _, repo in gesehen})
-        deploy = self.deploy_laeuft(self.muster)
+        deploy = self._deploy_wache({repo for _, _, _, repo in gesehen})
         if deploy:
             log.info("Deploy/Gate läuft (%s): nichts angefasst", "; ".join(deploy[:3]))
             if self.e.trocken:
@@ -2460,6 +3175,13 @@ class Aufpasser:
                 except RuntimeError as fehler:
                     log.error("%s: Fenster nicht lesbar: %s", sitzung, fehler)
             return
+        # Entscheidung #262: Die Deploy-Wache läuft immer VOR dem Hausmeister (und dem
+        # externen Wecker). Ein laufender Deploy/Prüflauf (oder eine gestörte Deploy-Wache,
+        # fail-closed) sperrt damit auch das Aufräumen von Ordnern, Zweigen und
+        # Docker-Resten; außerhalb des Aufpassers schützen den Hausmeister weiter seine
+        # eigenen Sperren je Ordner (laufender Prozess im Ordner, offenes Ticket, 24 h).
+        self._hausmeister_lauf()
+        self._wecker_lauf()
         for sitzung, spec, fenster, repo in gesehen:
             try:
                 self.sitzung_pruefen(sitzung, spec, fenster, repo)
@@ -2471,17 +3193,13 @@ class Aufpasser:
 
 
 def parser_fuellen(ap: argparse.ArgumentParser) -> argparse.ArgumentParser:
-    ap.add_argument(
-        "--trocken", action="store_true", help="nur zeigen, nichts ausführen"
-    )
-    ap.add_argument(
-        "--tmux-socket", help="tmux-Socket-Name (-L); Vorgabe: Standard-Server"
-    )
+    ap.add_argument("--trocken", action="store_true", help="nur zeigen, nichts ausführen")
+    ap.add_argument("--tmux-socket", help="tmux-Socket-Name (-L); Vorgabe: Standard-Server")
     ap.add_argument(
         "--zustand",
         type=Path,
         default=None,
-        help=f"Zustandsordner ({zustand_standard()})",
+        help="Zustandsordner (Vorgabe: ~/.local/state/to-spawn/aufpasser)",
     )
     ap.add_argument(
         "--hang-min",
@@ -2491,7 +3209,7 @@ def parser_fuellen(ap: argparse.ArgumentParser) -> argparse.ArgumentParser:
     )
     ap.add_argument(
         "--bau-vorlage",
-        help="Startbefehl mit {repo} {py} {n} {resume} (Vorgabe: scripts/bau.py bzw. Skill)",
+        help="Startbefehl mit {repo} {py} {n} {resume} (Vorgabe: capo.bau_startzeile)",
     )
     ap.add_argument(
         "--wache-vorlage",
@@ -2502,9 +3220,7 @@ def parser_fuellen(ap: argparse.ArgumentParser) -> argparse.ArgumentParser:
         default=None,
         help="Regex für pgrep -af (Vorgabe: aus deploy.skripte der Repo-Konfig)",
     )
-    ap.add_argument(
-        "--repo", type=Path, help="Repo-Ordner, falls kein Fenster ihn verrät"
-    )
+    ap.add_argument("--repo", type=Path, help="Repo-Ordner, falls kein Fenster ihn verrät")
     ap.add_argument(
         "--cron-einrichten",
         action="store_true",
@@ -2569,10 +3285,30 @@ def lauf_mit_args(args: argparse.Namespace) -> int:
     return lauf_mit_einstellungen(einstellungen)
 
 
+def platz_schaffen(tmux_socket: str | None = None) -> int:
+    """Die eine Tür für wartende Starts (#624): fertige, stille Fenster jetzt schließen.
+
+    Gleiche Regeln wie der Cron-Lauf (:meth:`Aufpasser._fertiges_fenster`), aber nur das
+    Schließen. Fehler gehen nie nach außen: ``-1`` ⇒ der Start wartet wie bisher.
+    """
+    zustand = zustand_standard()
+    try:
+        handler = _logging_einrichten(zustand, False)
+    except OSError:
+        log.warning("Platz schaffen: Log nicht schreibbar")
+        return -1
+    try:
+        return Aufpasser(Einstellungen(zustand=zustand, tmux_socket=tmux_socket)).platz_schaffen()
+    except Exception:  # Start darf daran nie scheitern
+        log.exception("Platz schaffen gescheitert — Start wartet normal weiter")
+        return -1
+    finally:
+        log.removeHandler(handler)
+        handler.close()
+
+
 def main(argv: list[str] | None = None) -> int:
-    ap = parser_fuellen(
-        argparse.ArgumentParser(description="Aufpasser für Bau-Sessions im tmux.")
-    )
+    ap = parser_fuellen(argparse.ArgumentParser(description="Aufpasser für Bau-Sessions im tmux."))
     args = ap.parse_args(argv)
     if args.hang_min < HANG_MIN_UNTERGRENZE:
         ap.error(

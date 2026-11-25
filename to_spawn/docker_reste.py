@@ -42,7 +42,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-from . import config
+from . import config, konsole
 from . import sperre as _sperre
 
 #: Nur noch Alt-Naht für ältere Tests (``skipif``/Gegen-Sperre); gesperrt wird hier allein
@@ -63,9 +63,7 @@ BEFEHLE: tuple[tuple[str, ...], ...] = (
     ("builder", "prune", "-a", "-f", "--filter", MINDEST_ALTER),
 )
 
-Ausgang = Literal[
-    "freigegeben", "fehler", "nicht_faellig", "staging_baut", "kein_server"
-]
+Ausgang = Literal["freigegeben", "fehler", "nicht_faellig", "staging_baut", "kein_server"]
 _FREI = re.compile(r"Total(?: reclaimed space)?:\s*(\S+)", re.IGNORECASE)
 
 
@@ -123,15 +121,11 @@ def _docker(befehl: tuple[str, ...]) -> tuple[bool, str]:
     """(ok, Ausgabe bzw. Fehlertext) eines Befehls aus :data:`BEFEHLE`."""
     programm = os.environ.get("TO_SPAWN_HAUSMEISTER_DOCKER") or "docker"
     try:
-        lauf = subprocess.run(
-            [programm, *befehl],
-            capture_output=True,
-            text=True,
-            timeout=ZEITLIMIT_S,
-            check=False,
-        )
+        lauf = konsole.lauf_daten([programm, *befehl], timeout=ZEITLIMIT_S, check=False)
     except (OSError, subprocess.TimeoutExpired) as fehler:
         return False, str(fehler)
+    if lauf is None:
+        return False, "Docker nicht lesbar (Ausgabe nicht UTF-8)"
     if lauf.returncode != 0:
         return (
             False,
@@ -177,9 +171,7 @@ def _letzter_lauf(stand: Path) -> float | None:
     except FileNotFoundError:
         return None
     except (OSError, UnicodeDecodeError) as fehler:
-        log.warning(
-            "Docker-Reste: %s unlesbar (%s) — gilt als nie gelaufen", stand, fehler
-        )
+        log.warning("Docker-Reste: %s unlesbar (%s) — gilt als nie gelaufen", stand, fehler)
         return None
     for roh in reversed(zeilen):
         try:

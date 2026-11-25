@@ -26,6 +26,12 @@ ERLAUBT = {
     ("to_spawn/aufpasser.py", "Aufpasser.melden"): "Aufpasser-Rolle, eigener Kopf",
     ("to_spawn/probesitz.py", "_aufraeumen"): "Probesitz-Wegwerf-Ticket, kein Aufseher",
     ("to_spawn/nest.py", ""): "Rechte-Liste ``Bash(gh issue comment:*)``, schreibt nichts",
+    ("to_spawn/hooks.py", ""): "Ja-Sperre: Tabelle der Text-Schalter (#591), schreibt nichts",
+    ("to_spawn/erlaubt.py", ""): "Erlaubt-Liste der Verlauf-Prüfung (#389), schreibt nichts",
+    (
+        "to_spawn/install_pruefung.py",
+        "ticket_melden",
+    ): "Installations-Schutz (#415): hängt roten Lauf ans eine offene install:rot-Ticket, kein Aufseher",
 }
 #: Ordner, die der Prüf-Test nicht liest (Tests stellen gh nach, der Rest ist kein Quelltext).
 AUSGENOMMEN = {"tests", ".git", ".venv", "venv", "__pycache__", ".pytest_cache"}
@@ -35,9 +41,7 @@ class FakeGh:
     def __init__(self) -> None:
         self.aufrufe: list[list[str]] = []
 
-    def lauf(
-        self, args: list[str], cwd: Path | None = None, timeout: float | None = None
-    ) -> tuple[int, str]:
+    def lauf(self, args: list[str], cwd: Path | None = None, timeout: float | None = None) -> tuple[int, str]:
         self.aufrufe.append(list(args))
         return 0, ""
 
@@ -140,12 +144,8 @@ def _schreibt_kommentar(wort: str) -> bool:
 
 def _api_kommentar_schreiben(aufruf: ast.Call) -> bool:
     """``gh api …/comments`` mit POST bzw. ``body=`` (Lesen der Kommentare ist erlaubt)."""
-    worte = [
-        k.value for k in ast.walk(aufruf) if isinstance(k, ast.Constant) and isinstance(k.value, str)
-    ]
-    return any("/comments" in w for w in worte) and any(
-        w == "POST" or w.startswith("body=") for w in worte
-    )
+    worte = [k.value for k in ast.walk(aufruf) if isinstance(k, ast.Constant) and isinstance(k.value, str)]
+    return any("/comments" in w for w in worte) and any(w == "POST" or w.startswith("body=") for w in worte)
 
 
 def _comment_stellen() -> list[tuple[str, str, int]]:
@@ -160,9 +160,7 @@ def _comment_stellen() -> list[tuple[str, str, int]]:
         funktionen = [(k, getattr(k, "name", "")) for k in baum.body]
         for klasse in baum.body:
             if isinstance(klasse, ast.ClassDef):
-                funktionen += [
-                    (k, f"{klasse.name}.{getattr(k, 'name', '')}") for k in klasse.body
-                ]
+                funktionen += [(k, f"{klasse.name}.{getattr(k, 'name', '')}") for k in klasse.body]
         for knoten, name in funktionen:
             if isinstance(knoten, ast.FunctionDef | ast.AsyncFunctionDef):
                 for kind in ast.walk(knoten):

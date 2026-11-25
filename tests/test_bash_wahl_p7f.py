@@ -8,11 +8,15 @@ Windows-Python als vorhandene Datei ankommen. Attrappen nur für die Rechenlogik
 from __future__ import annotations
 
 import ast
+import json
+import logging
 import os
 import shlex
 import shutil
+import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -70,6 +74,40 @@ def test_ohne_bash_klare_meldung_statt_wsl(tmp_path: Path, monkeypatch: pytest.M
         bash_wahl.bash()
     with pytest.raises(FileNotFoundError, match=erwartet):
         startklar._standard_laeufer("exit 0", tmp_path, None, 10, {})
+
+
+def test_test_naht_blendet_bash_auch_bei_festem_windows_pfad_aus(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#646: Test-Naht blendet bash auch dann aus, wenn Windows Git-Bash an festen Orten fände."""
+    fake_bash = tmp_path / "bash.exe"
+    fake_bash.write_text("", encoding="utf-8")
+    monkeypatch.setattr(bash_wahl.sys, "platform", "win32")
+    monkeypatch.setattr(bash_wahl.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(bash_wahl, "_GIT_BASH_STANDARD", str(fake_bash))
+    monkeypatch.setenv("CLAUDE_CODE_GIT_BASH_PATH", str(fake_bash))
+    monkeypatch.setenv("GIT_BASH", str(fake_bash))
+    assert bash_wahl.bash() == str(fake_bash)
+    monkeypatch.setenv(bash_wahl.TEST_FEHLT_ENV, "1")
+    with pytest.raises(FileNotFoundError, match=bash_wahl.TEST_FEHLT_ENV):
+        bash_wahl.bash()
+
+
+def test_test_naht_laesst_auch_lauf_scheitern(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#646: Mit ``TEST_FEHLT_ENV=1`` bricht auch ``bash_wahl.lauf`` mit ``FileNotFoundError`` ab."""
+    monkeypatch.setenv(bash_wahl.TEST_FEHLT_ENV, "1")
+    with pytest.raises(FileNotFoundError, match=bash_wahl.TEST_FEHLT_ENV):
+        bash_wahl.lauf(["-c", "exit 0"])
+
+
+def test_test_naht_wirkt_nicht_ausserhalb_test(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#646: Außerhalb von Tests (``starter.unter_test() == False``) greift die Test-Naht nicht."""
+    monkeypatch.setenv(bash_wahl.TEST_FEHLT_ENV, "1")
+    monkeypatch.setattr(bash_wahl.starter, "unter_test", lambda: False)
+    pfad = bash_wahl.bash()
+    assert Path(pfad).is_file(), pfad
+    if WINDOWS:
+        assert not bash_wahl.ist_wsl_stub(pfad), pfad
 
 
 def test_lauf_nimmt_pfadsperre_nur_unter_windows_heraus(tmp_path: Path) -> None:
@@ -166,3 +204,137 @@ def test_bash_pruefung_findet_direkten_start(tmp_path: Path) -> None:
         ("to_spawn/neu.py", "text"),
         ("to_spawn/neu.py", "gesucht"),
     }
+
+
+# --- #186: beide Plattformen (Linux & Windows) + Wissen nur in bash_wahl ----------------
+
+
+@pytest.mark.parametrize(
+    ("plattform", "erwartet"),
+    [("linux", "bash fehlt im PATH"), ("win32", "Git-Bash nicht gefunden")],
+)
+def test_ohne_bash_klare_meldung_beide_plattformen(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    plattform: str,
+    erwartet: str,
+) -> None:
+    """#186: fehlende bash meldet Klartext unter Linux UND Windows — über bash_wahl, startklar und stand."""
+    monkeypatch.setattr(bash_wahl.sys, "platform", plattform)
+    for name in ("CLAUDE_CODE_GIT_BASH_PATH", "GIT_BASH"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(bash_wahl, "_GIT_BASH_STANDARD", "Z:/fehlt/bash.exe")
+    # Unter Windows auch den WSL-Stub prüfen: er darf nie als bash zählen.
+    if plattform == "win32":
+        monkeypatch.setattr(
+            bash_wahl.shutil,
+            "which",
+            lambda name: r"C:\Windows\System32\bash.exe" if name == "bash" else None,
+        )
+    else:
+        monkeypatch.setattr(bash_wahl.shutil, "which", lambda _name: None)
+
+    with pytest.raises(FileNotFoundError, match=erwartet):
+        bash_wahl.bash()
+    with pytest.raises(FileNotFoundError, match=erwartet):
+        startklar._standard_laeufer("exit 0", tmp_path, None, 10, {})
+
+    werkzeug_datei = tmp_path / "werkzeug.py"
+    werkzeug_datei.write_text("pass\n", encoding="utf-8")
+    werkzeug = startklar.Werkzeug("probe", "echo ok", werkzeug_datei.as_posix())
+    settings = tmp_path / "settings.json"
+    settings.write_text(
+        json.dumps({"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "true"}]}]}}),
+        encoding="utf-8",
+    )
+
+    # Hook-Weg und Trockenlauf-Weg (ohne Hooks) melden beide die eigene Klartext-Meldung.
+    for dateien in ([settings], []):
+        befunde = startklar.werkzeug_probe(tmp_path, 186, settings_dateien=dateien, werkzeuge=(werkzeug,))
+        assert len(befunde) == 1 and not befunde[0].ok, befunde
+        assert erwartet in befunde[0].text, befunde[0]
+
+    with caplog.at_level(logging.ERROR, logger="to_spawn.stand"):
+        assert stand._lauf("bash -c true", tmp_path, 10) is None
+    assert erwartet in caplog.text
+
+
+@pytest.mark.parametrize(("plattform", "bleibt"), [("win32", False), ("linux", True)])
+def test_stand_und_lauf_bereinigen_pfadsperren_nur_unter_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, plattform: str, bleibt: bool
+) -> None:
+    """#186: ``stand._lauf`` und ``bash_wahl.lauf`` entfernen MSYS-Pfadsperren nur unter Windows."""
+    gesehen: list[dict[str, str]] = []
+
+    def fake_run(_cmd: Any, *, env: dict[str, str], **_optionen: Any) -> subprocess.CompletedProcess[str]:
+        gesehen.append(dict(env))
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(bash_wahl.sys, "platform", plattform)
+    monkeypatch.setattr(bash_wahl, "bash", lambda: "/fake/bash")
+    monkeypatch.setattr(bash_wahl.subprocess, "run", fake_run)
+    monkeypatch.setenv("MSYS_NO_PATHCONV", "1")
+    monkeypatch.setenv("MSYS2_ARG_CONV_EXCL", "*")
+
+    assert stand._lauf("bash -c true", tmp_path, 30) == 0
+    assert gesehen[-1]["TO_SPAWN_PY"] == sys.executable
+    assert ("MSYS_NO_PATHCONV" in gesehen[-1]) is bleibt
+    assert ("MSYS2_ARG_CONV_EXCL" in gesehen[-1]) is bleibt
+
+    bash_wahl.lauf(
+        ["-c", "true"],
+        env={"msys_no_pathconv": "1", "MSYS2_ARG_CONV_EXCL": "*", "BLEIBT": "ja"},
+    )
+    assert gesehen[-1]["BLEIBT"] == "ja"
+    assert ("msys_no_pathconv" in gesehen[-1]) is bleibt
+    assert ("MSYS2_ARG_CONV_EXCL" in gesehen[-1]) is bleibt
+
+
+def _code_strings(datei: Path) -> set[str]:
+    """Alle String-Literale im Code einer Python-Datei ohne Docstrings."""
+    baum = ast.parse(datei.read_text(encoding="utf-8"), filename=str(datei))
+    docstrings: set[int] = set()
+    for knoten in ast.walk(baum):
+        if isinstance(knoten, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and knoten.body:
+            erste = knoten.body[0]
+            if (
+                isinstance(erste, ast.Expr)
+                and isinstance(erste.value, ast.Constant)
+                and isinstance(erste.value.value, str)
+            ):
+                docstrings.add(id(erste.value))
+    return {
+        k.value
+        for k in ast.walk(baum)
+        if isinstance(k, ast.Constant) and isinstance(k.value, str) and id(k) not in docstrings
+    }
+
+
+def test_pfadsperre_nur_in_bash_wahl() -> None:
+    """#186: Kein eigener MSYS-Pfadsperren-Filter außerhalb von ``to_spawn/bash_wahl.py``."""
+    erlaubt = {_TUER, "tests/test_bash_wahl_p7f.py"}
+    treffer: list[str] = []
+    for ordner in ("to_spawn", "skripte", "tests"):
+        for datei in sorted((SKILL / ordner).rglob("*.py")):
+            rel = datei.relative_to(SKILL).as_posix()
+            if rel in erlaubt:
+                continue
+            if "MSYS2_ARG_CONV_EXCL" in _code_strings(datei):
+                treffer.append(rel)
+    assert not treffer, f"Eigener MSYS-Umgebungs-Filter außerhalb von bash_wahl.py: {treffer}"
+
+
+def test_keine_eigene_git_bash_suche_ausserhalb_bash_wahl() -> None:
+    """#186: Keine eigene Git-Bash-Dateisuche (``ProgramFiles`` + ``bash.exe``) außerhalb von ``bash_wahl.py``."""
+    erlaubt = {_TUER, "tests/test_bash_wahl_p7f.py"}
+    treffer: list[str] = []
+    for ordner in ("to_spawn", "skripte", "tests"):
+        for datei in sorted((SKILL / ordner).rglob("*.py")):
+            rel = datei.relative_to(SKILL).as_posix()
+            if rel in erlaubt:
+                continue
+            werte = _code_strings(datei)
+            if "bash.exe" in werte and ({"ProgramFiles", "ProgramW6432"} & werte):
+                treffer.append(rel)
+    assert not treffer, f"Eigene Git-Bash-Suche außerhalb von bash_wahl.py: {treffer}"

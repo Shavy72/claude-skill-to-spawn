@@ -64,9 +64,7 @@ class FakeWerkzeug:
         self.prozesse = (
             prozesse
             if prozesse is not None
-            else [
-                f"4242 python3 /home/bau/.claude/skills/to-spawn/skripte/bau.py {TICKET}"
-            ]
+            else [f"4242 python3 /home/bau/.claude/skills/to-spawn/skripte/bau.py {TICKET}"]
         )
         self.handoff_anlegen = handoff_anlegen
         self.prompt_anlegen = prompt_anlegen
@@ -145,17 +143,11 @@ class FakeWerkzeug:
                 self.schirme[NEU_ZIEL] += "\n✻ Lese Handoff… (esc to interrupt)"
 
     def _remote_an(self) -> None:
-        self.schirme[NEU_ZIEL] = (
-            "Claude Code\n  ⎿ Remote Control active\n❯ \n? for shortcuts"
-        )
+        self.schirme[NEU_ZIEL] = "Claude Code\n  ⎿ Remote Control active\n❯ \n? for shortcuts"
 
     def taste(self, ziel: str, taste: str) -> None:
         self.aufrufe.append(("taste", ziel, taste))
-        if (
-            ziel == NEU_ZIEL
-            and taste == "Enter"
-            and self.remote_reaktion == "nach_enter"
-        ):
+        if ziel == NEU_ZIEL and taste == "Enter" and self.remote_reaktion == "nach_enter":
             self._remote_an()
 
     def fenster_umbenennen(self, ziel: str, name: str) -> None:
@@ -174,9 +166,7 @@ class FakeWerkzeug:
 
     # --- Hilfen -----------------------------------------------------------
     def _dateien_anlegen(self) -> None:
-        tag = time.strftime(
-            "%Y-%m-%d", time.localtime(self.zeit + self.tag_versatz * 86400)
-        )
+        tag = time.strftime("%Y-%m-%d", time.localtime(self.zeit + self.tag_versatz * 86400))
         ordner = self.wt / "docs" / "handoffs"
         ordner.mkdir(parents=True, exist_ok=True)
         stempel = self.zeit + 5
@@ -204,11 +194,7 @@ class FakeWerkzeug:
         ]
 
     def getippt(self, ziel: str | None = None) -> list[str]:
-        return [
-            a[2]
-            for a in self.aufrufe
-            if a[0] == "tippen" and (ziel is None or a[1] == ziel)
-        ]
+        return [a[2] for a in self.aufrufe if a[0] == "tippen" and (ziel is None or a[1] == ziel)]
 
 
 @pytest.fixture()
@@ -247,11 +233,7 @@ def test_reihenfolge_a_bis_e(umgebung: tuple[Path, Path]) -> None:
         "fenster_umbenennen",
     ]
     getippt = [(a[1], a[2]) for a in fake.aufrufe if a[0] == "tippen"]
-    assert (
-        getippt[0][0] == ALT_ZIEL
-        and "HANDOFF_" in getippt[0][1]
-        and "START_" in getippt[0][1]
-    )
+    assert getippt[0][0] == ALT_ZIEL and "HANDOFF_" in getippt[0][1] and "START_" in getippt[0][1]
     assert getippt[1] == (NEU_ZIEL, "/remote-control")
     assert getippt[2] == (NEU_ZIEL, START_TEXT)
     assert ("alte_session_beenden", 1111) in fake.aufrufe
@@ -260,11 +242,7 @@ def test_reihenfolge_a_bis_e(umgebung: tuple[Path, Path]) -> None:
     assert ("fenster_schliessen", ALT_ZIEL) in fake.aufrufe
     assert ("fenster_umbenennen", NEU_ZIEL, f"bau {TICKET}") in fake.aufrufe
     start = next(a for a in fake.aufrufe if a[0] == "fenster_starten")
-    assert (
-        start[1] == "spec-399"
-        and start[2] == f"bau {TICKET} neu"
-        and start[3] == str(repo)
-    )
+    assert start[1] == "spec-399" and start[2] == f"bau {TICKET} neu" and start[3] == str(repo)
     assert erg.zeile.startswith(f"respawn #{TICKET}: ok")
     assert "\n" not in erg.zeile
 
@@ -281,7 +259,8 @@ def test_startbefehl_ohne_prompt_ueber_bau(
     befehl = next(a for a in fake.aufrufe if a[0] == "fenster_starten")[4]
     assert START_TEXT not in befehl
     assert befehl.startswith("bash -lc ")
-    assert befehl.endswith(f"bau {TICKET} --sofort --ohne-prompt'")
+    # #277: bau.py des Skills direkt, nicht die Shell-Funktion ``bau`` aus ~/.bashrc.
+    assert f"/skripte/bau.py {TICKET} --sofort --ohne-prompt; " in befehl
     assert f"REPO={repo}" in befehl
 
 
@@ -359,9 +338,7 @@ def _pruefe_exit3(fake: FakeWerkzeug, erg: respawn.Ergebnis) -> None:
 def test_duplikat_neu_fenster_schon_da(umgebung: tuple[Path, Path]) -> None:
     repo, wt = umgebung
     fake = FakeWerkzeug(wt)
-    fake.fenster.append(
-        FensterInfo("spec-399", f"bau {TICKET} neu", "=spec-399:@5", 5555)
-    )
+    fake.fenster.append(FensterInfo("spec-399", f"bau {TICKET} neu", "=spec-399:@5", 5555))
     _pruefe_exit3(fake, _lauf(repo, fake))
 
 
@@ -387,17 +364,13 @@ def test_duplikat_zwei_bau_prozesse(umgebung: tuple[Path, Path]) -> None:
 
 def test_alte_session_fehlt(umgebung: tuple[Path, Path]) -> None:
     repo, wt = umgebung
-    fake = FakeWerkzeug(
-        wt, fenster=[FensterInfo("spec-399", "wache 399", "=spec-399:@2", 2222)]
-    )
+    fake = FakeWerkzeug(wt, fenster=[FensterInfo("spec-399", "wache 399", "=spec-399:@2", 2222)])
     _pruefe_exit3(fake, _lauf(repo, fake))
 
 
 def test_anderes_ticket_stoert_nicht(umgebung: tuple[Path, Path]) -> None:
     repo, wt = umgebung
-    fake = FakeWerkzeug(
-        wt, prozesse=[f"1 python3 bau.py {TICKET}", "2 python3 bau.py 4310"]
-    )
+    fake = FakeWerkzeug(wt, prozesse=[f"1 python3 bau.py {TICKET}", "2 python3 bau.py 4310"])
     fake.fenster.append(FensterInfo("spec-399", "bau 4310", "=spec-399:@7", 7777))
     assert _lauf(repo, fake).exit == 0
 
@@ -447,9 +420,7 @@ def test_dry_run_tut_nichts(umgebung: tuple[Path, Path]) -> None:
 
 
 def _cli_modul() -> Any:
-    spec = importlib.util.spec_from_file_location(
-        "to_spawn_cli_431", SKILL / "to_spawn.py"
-    )
+    spec = importlib.util.spec_from_file_location("to_spawn_cli_431", SKILL / "to_spawn.py")
     assert spec and spec.loader
     modul = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(modul)
@@ -614,9 +585,7 @@ def test_beenden_sigkill_nach_frist(monkeypatch: pytest.MonkeyPatch) -> None:
     assert w.zeit >= respawn.BEENDEN_MAX_S
 
 
-def test_nachkommen_pgrep_fehler_wirft(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_nachkommen_pgrep_fehler_wirft(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Befund 5: Baum nicht ermittelbar ist ein Fehler, nicht „keine Kinder“.
 
     Seit #431 Runde 4 liest ``prozessbaum.baum`` ``/proc`` statt ``pgrep -P``, unter
@@ -693,9 +662,7 @@ def test_remote_control_erst_nach_ruhe(umgebung: tuple[Path, Path]) -> None:
 
 
 def test_remote_control_bestaetigt_erkennung() -> None:
-    assert not respawn._remote_bestaetigt(
-        "❯ /remote-control\n  /remote-control  Start Remote Control"
-    )
+    assert not respawn._remote_bestaetigt("❯ /remote-control\n  /remote-control  Start Remote Control")
     assert respawn._remote_bestaetigt("  ⎿ Remote Control active\n❯ \n? for shortcuts")
     assert not respawn._remote_bestaetigt("❯ \n? for shortcuts")
 
@@ -734,9 +701,7 @@ def test_abbruch_weiter_tippen_scheitert_ehrliche_zeile(
     fake = FakeWerkzeug(
         wt,
         handoff_anlegen=False,
-        fehler_bei={
-            f"tippen:{ALT_ZIEL}:{respawn.WEITER_AUFTRAG[:15]}": RuntimeError("weg")
-        },
+        fehler_bei={f"tippen:{ALT_ZIEL}:{respawn.WEITER_AUFTRAG[:15]}": RuntimeError("weg")},
     )
     erg = _lauf(repo, fake, warte_max=300)
     assert erg.exit == 2
@@ -805,9 +770,7 @@ class _TmuxFehler(respawn.TmuxWerkzeug):
 
 
 def test_fenster_liste_ohne_server_leer() -> None:
-    assert (
-        _TmuxFehler("no server running on /tmp/tmux-1000/default").fenster_liste() == []
-    )
+    assert _TmuxFehler("no server running on /tmp/tmux-1000/default").fenster_liste() == []
 
 
 def test_fenster_liste_anderer_fehler_wirft() -> None:
@@ -872,9 +835,7 @@ def test_start_prompt_erst_bei_stabiler_groesse(umgebung: tuple[Path, Path]) -> 
 
 def test_unerwartete_ausnahme_eine_zeile(umgebung: tuple[Path, Path]) -> None:
     repo, wt = umgebung
-    fake = FakeWerkzeug(
-        wt, fehler_bei={"alte_session_beenden": AttributeError("kaputt")}
-    )
+    fake = FakeWerkzeug(wt, fehler_bei={"alte_session_beenden": AttributeError("kaputt")})
     erg = _lauf(repo, fake)
     assert erg.exit == 1
     assert "\n" not in erg.zeile and "kaputt" in erg.zeile
@@ -888,9 +849,7 @@ def test_auftrag_ist_frozen_dataclass(umgebung: tuple[Path, Path]) -> None:
 
     repo, _ = umgebung
     auftrag = respawn.Auftrag(repo, SPEC, TICKET, 600.0, False)
-    assert (
-        auftrag.name_alt == f"bau {TICKET}" and auftrag.name_neu == f"bau {TICKET} neu"
-    )
+    assert auftrag.name_alt == f"bau {TICKET}" and auftrag.name_neu == f"bau {TICKET} neu"
     with pytest.raises(dataclasses.FrozenInstanceError):
         auftrag.ticket = 1  # type: ignore[misc]
 

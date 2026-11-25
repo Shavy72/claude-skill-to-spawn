@@ -41,6 +41,8 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal, overload
 
+from to_spawn import prozessbaum
+
 log = logging.getLogger("to_spawn.starter")
 
 #: Schalter „läuft unter Test“; setzt ``tests/conftest.py`` für jeden Test.
@@ -108,8 +110,10 @@ def _innen(pfad: Path, ordner: Path) -> bool:
 
 #: Skill-Skripte, die unter Test als Kind starten dürfen (Skript → Pflicht-Unterbefehl oder ``None``).
 #: Beide starten selbst nur durch diese Tür. Neue Einträge nur mit Grund.
-_SKILL_KINDER: dict[Path, str | None] = {
-    _SKILL / "to_spawn.py": "takt",  # waechter_takt.starte_abgeloest
+_SKILL_KINDER: dict[Path, tuple[str, ...] | None] = {
+    # takt: waechter_takt.starte_abgeloest; komplett: komplett_lauf._im_hintergrund (#455);
+    # warten: warten._starte_laeufer_prozess (#286)
+    _SKILL / "to_spawn.py": ("takt", "komplett", "warten"),
     _SKILL / "skripte" / "bau.py": None,  # capo._starte_folge_runde, probesitz (Bau-Lauf)
 }
 
@@ -130,7 +134,7 @@ def _skill_python(argv: list[str], ordner: Path | None, env: Mapping[str, str] |
         return True
     for kind, befehl in _SKILL_KINDER.items():
         if skript.is_absolute() and skript.resolve() == kind.resolve():
-            return befehl is None or (len(argv) > 2 and argv[2] == befehl)
+            return befehl is None or (len(argv) > 2 and argv[2] in befehl)
     return False
 
 
@@ -168,9 +172,7 @@ def _cmd_zeile(argv: list[str]) -> str:
     abgelehnt. Prompts mit solchen Zeichen gehören per Datei/stdin übergeben."""
     if any("\n" in arg or "\r" in arg for arg in argv):
         raise ValueError("Notnagel: Zeilenumbruch im Argument würde von cmd.exe abgeschnitten")
-    if _endung(argv[0]) not in {".exe", ".com"} and any(
-        '"' in arg for arg in argv[1:]
-    ):
+    if _endung(argv[0]) not in {".exe", ".com"} and any('"' in arg for arg in argv[1:]):
         raise ValueError("Notnagel: Anführungszeichen im Argument eines Batch-Ziels (BatBadBut)")
 
     def quote(arg: str) -> str:
@@ -189,11 +191,21 @@ def _cmd_zeile(argv: list[str]) -> str:
 
 @overload
 def starte(
-    cmd: Sequence[str], *, cwd: Path | str | None = ..., warten: Literal[False] = ..., notnagel: type[OSError] | None = ..., **popen_args: Any
+    cmd: Sequence[str],
+    *,
+    cwd: Path | str | None = ...,
+    warten: Literal[False] = ...,
+    notnagel: type[OSError] | None = ...,
+    **popen_args: Any,
 ) -> subprocess.Popen[Any]: ...
 @overload
 def starte(
-    cmd: Sequence[str], *, cwd: Path | str | None = ..., warten: Literal[True], notnagel: type[OSError] | None = ..., **popen_args: Any
+    cmd: Sequence[str],
+    *,
+    cwd: Path | str | None = ...,
+    warten: Literal[True],
+    notnagel: type[OSError] | None = ...,
+    **popen_args: Any,
 ) -> subprocess.CompletedProcess[Any]: ...
 def starte(
     cmd: Sequence[str],
@@ -210,6 +222,7 @@ def starte(
     if unter_test():
         argv = _nur_attrappe(argv, popen_args.get("env"))
     ordner = str(cwd) if cwd is not None else None
+    popen_args = {**prozessbaum.fensterlos(), **popen_args}  # #658: Aufrufer-Flags gehen vor
     log.info("Start: %s (cwd %s)", argv[0], ordner)
     lauf: Any = subprocess.run if warten else subprocess.Popen
     if os.name == "nt" and _endung(argv[0]) in _BATCH:

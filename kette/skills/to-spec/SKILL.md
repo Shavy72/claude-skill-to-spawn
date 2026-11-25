@@ -10,14 +10,14 @@ disable-model-invocation: true
 Dieser Abschnitt geht jedem anderen Text dieses Skills und jedem Projekt-Zusatz (`.to-spawn/kette.md`) vor. Herkunft der Regel: Abschnitt „Beschluss-Protokoll“ in `~/.claude/CLAUDE.md` (Format der Protokoll-Datei steht dort). Hier stehen die verbindlichen Schritte für die Spec — einmal, für alle Projekte.
 
 1. **Protokoll finden.** Pfad aus dem Aufruf (`/to-spec <pfad>`), sonst die jüngste passende `docs/GRILL_*.md`. Der Chat dient nur zum Verstehen, nie als Inhaltsquelle.
-2. **Kein Protokoll?** Erst eins aus dem Chat anlegen (`docs/GRILL_<JJJJ-MM-TT>_<thema>.md`), streng einordnen: ✅ nur mit Davids ausdrücklichem Ja, sonst 💭. David die E-Liste bestätigen lassen, erst dann weiter.
+2. **Kein Protokoll?** Erst eins aus dem Chat anlegen (`docs/GRILL_<JJJJ-MM-TT>_<thema>.md`), streng einordnen: ✅ nur mit ausdrücklichem Ja des Menschen, sonst 💭. Den Menschen die E-Liste bestätigen lassen, erst dann weiter.
 3. **Zuordnung.** User Stories und Implementation Decisions nur aus ✅-Beschlüssen, jede Zeile endet mit `(E<n>)`. Jeden ✅ vollständig abdecken, keine neuen Wünsche erfinden. Out of Scope = alle ❌ mit Grund. Further Notes = nur Herleitung/Befunde aus dem Protokoll.
 4. **Offene Fragen.** Eigener Abschnitt `## Offene Fragen` mit allen 💭 — werden nicht gebaut.
-5. **Neue Klärung während der Spec** (z. B. Test-Seams, Design): erst als neue E-Nummer ins Protokoll, wenn David sie bestätigt hat, dann in die Spec.
+5. **Neue Klärung während der Spec** (z. B. Test-Seams, Design): erst als neue E-Nummer ins Protokoll, wenn der Mensch sie bestätigt hat, dann in die Spec.
 6. **Gegenprüfung vor dem Veröffentlichen.** Frischer Subagent ohne Chat bekommt nur Protokoll + Spec-Entwurf und meldet (a) Spec-Punkte ohne ✅-Quelle, (b) fehlende ✅-Beschlüsse, (c) 💭/❌ als Auftrag. Erst bei 0/0/0 veröffentlichen. Pflicht-Abschnitte der Projekt-Vorlage (z. B. `## Werkzeuge`) sind kein Spec-Punkt und brauchen kein `(E<n>)`.
 7. **Quelle-Zeile.** Die Spec beginnt mit `Quelle: docs/GRILL_<…>.md (Stand <Datum>)`.
 
-> **Projekt-Zusatz (Pflicht, zuerst prüfen):** Liegt im Arbeitsordner `.to-spawn/kette.md`, dann diese Datei jetzt lesen. Sie gilt **zusätzlich** zu diesem Skill, nie statt: Projekt-Erweiterungen wie eine Werkzeug-Tabelle `## Werkzeuge` kommen dazu, der Text hier bleibt verbindlich. Der Abschnitt „Beschluss-Protokoll“ oben geht auch dem Projekt-Zusatz vor.
+> **Projekt-Vorrang (Pflicht, zuerst prüfen):** Liegt im Arbeitsordner `.to-spawn/kette.md`, dann diese Datei jetzt lesen (Projekt-Zusatz). Sie gilt **zusätzlich** zu diesem Skill, nie als Ersatz: Projekt-Erweiterungen wie eine Werkzeug-Tabelle `## Werkzeuge` haben für Projekt-Spezifisches Vorrang, der übrige Text hier bleibt verbindlich. Der Abschnitt „Beschluss-Protokoll“ oben geht auch dem Projekt-Zusatz vor.
 
 > **Übergang (bis das Projekt eine `.to-spawn/kette.md` hat):** Liegt im Arbeitsordner `.claude/skills/to-spec/SKILL.md`, dann diese Datei zusätzlich lesen; solange es keine `.to-spawn/kette.md` gibt, haben ihre Projekt-Regeln (z. B. `## Hauptschalter`, `## Werkzeuge`) Vorrang vor dem übrigen Text hier. Der Abschnitt „Beschluss-Protokoll“ oben geht auch ihr vor.
 
@@ -29,15 +29,21 @@ The issue tracker and triage label vocabulary should have been provided to you. 
 
 1. Explore the repo to understand the current state of the codebase, if you haven't already. Use the project's domain glossary vocabulary throughout the spec (Glossar `GLOSSARY.md`, bei mehreren Kontexten `GLOSSARY-MAP.md`; gibt es nur eine alte `CONTEXT.md`: per `git mv CONTEXT.md GLOSSARY.md` umziehen, nie eine zweite Glossar-Datei anlegen), and respect any ADRs in the area you're touching.
 
-2. Sketch out the seams at which you're going to test the feature. Existing seams should be preferred to new ones. Use the highest seam possible. If new seams are needed, propose them at the highest point you can. The fewer seams across the codebase, the better - the ideal number is one.
+2. **Repo-Zuordnung.** Das Skill-Repo (Bau-System) wird eigenständig gebaut und begleitet App-Repos nur. Ordne jeden Spec-Punkt eindeutig einem der drei Werte zu:
+   - **Skill-Repo:** Bau-Werkzeug oder Regel, die für jedes angeschlossene Repo gilt.
+   - **App-Repo:** projektspezifische Änderung in der App.
+   - **beide:** betrifft Bau-System und App — ergibt **je ein eigenes Ticket pro Repo** mit Querverweis (bei getrennten Specs gehört der fremde Topf unter `## Out of Scope` mit Verweis auf die Gegen-Spec).
+
+3. Sketch out the seams at which you're going to test the feature. Existing seams should be preferred to new ones. Use the highest seam possible. If new seams are needed, propose them at the highest point you can. The fewer seams across the codebase, the better - the ideal number is one.
 
 Check with the user that these seams match their expectations.
 
-3. Write the spec using the template below, then publish it to the project issue tracker. Apply the `ready-for-agent` triage label - no need for additional triage.
+4. Write the spec using the template below, then publish it to the project issue tracker. Apply the `ready-for-agent` triage label - no need for additional triage.
 
 <spec-template>
 
 Quelle: docs/GRILL_<…>.md (Stand <Datum>)
+Repo-Zuordnung: Skill-Repo | App-Repo | beide (bei „beide“: Gegen-Spec im anderen Repo verlinken)
 
 ## Problem Statement
 
@@ -97,7 +103,8 @@ Only derivations and findings from the protocol.
 
 </spec-template>
 
-<!-- LOKALER ZUSATZ (Davids Regel, 2026-09-28, nach oben gezogen 2026-10-05) — bei jedem Update/Neu-Import
-     dieses Skills ERHALTEN: Abschnitt „Beschluss-Protokoll“ ganz oben, Projekt-Zusatz nur zusätzlich,
-     Template-Zeilen (E<n>) / Quelle / Offene Fragen. Prüf-Skript: tests/test_kette_install_e2.py
-     (Skill-Repo). Quelle dieser Datei: kette/skills/to-spec/SKILL.md, verteilt per install.sh/install.ps1. -->
+<!-- LOKALER ZUSATZ (Regel des Menschen, 2026-09-28, nach oben gezogen 2026-10-05) — bei jedem Update/Neu-Import
+     dieses Skills ERHALTEN: Abschnitt „Beschluss-Protokoll“ ganz oben, Projekt-Vorrang / Projekt-Zusatz,
+     Repo-Zuordnung (Skill-Repo / App-Repo / beide), Template-Zeilen (E<n>) / Quelle / Offene Fragen.
+     Prüf-Skript: tests/test_kette_install_e2.py (Skill-Repo). Quelle dieser Datei:
+     kette/skills/to-spec/SKILL.md, verteilt per install.sh/install.ps1. -->

@@ -20,7 +20,7 @@ hier nicht — fehlende Logs sind eine Datenlage, kein Abbruch.)
 ``docs/agents/rueckblick_<S>.md``: Datenlage oben, darunter die Vorschläge nummeriert in der Reihenfolge
 der KI (teuerster zuerst) mit Maßnahmen-Weg, oder „Rückblick: keine Vorschläge“. Der Marker ist der
 Abschnitt, den die Abschluss-Mail unverändert übernimmt. Kein GitHub-Issue, keine Kästchen, keine
-andere Datei — David hakt per Chat ab. Exit-Codes: 0 = Marker geschrieben, 4 = schon erledigt oder
+andere Datei — der Mensch hakt per Chat ab. Exit-Codes: 0 = Marker geschrieben, 4 = schon erledigt oder
 ``planen`` läuft noch, 3 = ``ergebnis.json`` fehlt, 1 = Ergebnis kaputt oder ``planen`` nicht gelaufen.
 Bei 0, 1 und 3 ist die Sperre danach frei, damit ein neuer Versuch nicht 120 min wartet; bei „``planen``
 läuft noch“ bleibt sie stehen. ``planen`` löscht ein altes ``ergebnis.json`` vor dem neuen Auftrag.
@@ -66,7 +66,7 @@ if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
 from thermo_lauf import SPERRE_MIN, Fehler, repo_ordner, sperre_aktiv  # noqa: E402
 
-from to_spawn import config, manifest  # noqa: E402
+from to_spawn import config, manifest, prozessbaum  # noqa: E402
 from to_spawn.bau_log import LAUF_ORDNER, log_ordner, rohzeilen  # noqa: E402
 from to_spawn.spawn import fern_ordner  # noqa: E402
 from to_spawn.umzug import _ssh, server_repo  # noqa: E402
@@ -162,6 +162,7 @@ def _worktrees(repo: Path) -> tuple[list[Path], str | None]:
             errors="replace",
             timeout=GIT_TIMEOUT_S,
             check=False,
+            **prozessbaum.fensterlos(),
         )
     except subprocess.TimeoutExpired:
         return [repo], f"git worktree list: keine Antwort nach {GIT_TIMEOUT_S} s"
@@ -251,6 +252,7 @@ def _origin(repo: Path) -> str | None:
             errors="replace",
             timeout=GIT_TIMEOUT_S,
             check=False,
+            **prozessbaum.fensterlos(),
         )
     except (OSError, subprocess.TimeoutExpired) as fehler:
         log.warning("origin von %s nicht lesbar: %s", repo, fehler)
@@ -297,8 +299,7 @@ def _fern_antwort(name: str, stdout: str) -> tuple[dict[str, set[str]], list[Ort
         if not isinstance(tickets, dict) or not all(isinstance(z, list) for z in tickets.values()):
             raise TypeError("'tickets' ist kein dict aus Listen")
         if not isinstance(orte, list) or not all(
-            isinstance(o, dict) and isinstance(o.get("text"), str) and isinstance(o.get("rot"), bool)
-            for o in orte
+            isinstance(o, dict) and isinstance(o.get("text"), str) and isinstance(o.get("rot"), bool) for o in orte
         ):
             raise TypeError("'orte' ist keine Liste aus {text, rot}")
     except (ValueError, KeyError, TypeError) as fehler:
@@ -315,9 +316,7 @@ def _fern_antwort(name: str, stdout: str) -> tuple[dict[str, set[str]], list[Ort
     return logs, ergebnis
 
 
-def _bau_server(
-    repo: Path, spec: int, tickets: list[str], ohne: bool
-) -> tuple[dict[str, set[str]], list[Ort]]:
+def _bau_server(repo: Path, spec: int, tickets: list[str], ohne: bool) -> tuple[dict[str, set[str]], list[Ort]]:
     """Logs vom Bau-Server: lokal gelesen, per SSH geholt oder mit Grund ausgelassen — nie Absturz."""
     if ohne:
         return {}, [("Bau-Server: ausgelassen (--ohne-bau-server)", True)]
@@ -357,9 +356,7 @@ def zaehle_namen(logs: dict[str, list[dict[str, Any]]]) -> list[tuple[str, list[
             regel = z.get("regel")
             if z.get("typ") == "vorfall" and isinstance(regel, str) and regel.strip():
                 namen.setdefault(regel.strip(), set()).add(ticket)
-    return sorted(
-        ((n, sorted(t, key=_nr)) for n, t in namen.items()), key=lambda p: (-len(p[1]), p[0])
-    )
+    return sorted(((n, sorted(t, key=_nr)) for n, t in namen.items()), key=lambda p: (-len(p[1]), p[0]))
 
 
 def _nr(ticket: str) -> tuple[int, str]:
@@ -384,7 +381,10 @@ def datenlage(tickets: list[str], logs: dict[str, list[dict[str, Any]]], orte: l
 def auftrag_text(spec: int, tickets: list[str], logs: dict[str, list[dict[str, Any]]], kopf: list[str]) -> str:
     teile = [*kopf, "", f"# Rückblick Spec #{spec}", "", "## Zählung feste Namen", ""]
     if UNVOLLSTAENDIG in kopf:
-        teile += [f"{UNVOLLSTAENDIG}: nicht alle Ablageorte gelesen (siehe Kopf) — Zählung kann Vorfälle übersehen.", ""]
+        teile += [
+            f"{UNVOLLSTAENDIG}: nicht alle Ablageorte gelesen (siehe Kopf) — Zählung kann Vorfälle übersehen.",
+            "",
+        ]
     if not any(logs.get(t) for t in tickets):
         teile.append("Keine Auswertung möglich: kein einziges Bau-Log gefunden.")
     else:
@@ -516,7 +516,7 @@ def _text(kandidat: dict[str, Any], feld: str, nr: int, pflicht: bool = True) ->
 def _pruefe_kandidat(kandidat: object, nr: int) -> dict[str, Any]:
     """Ein Kandidat aus ``ergebnis.json`` → bereinigte Felder; jede Abweichung ist ein ``Fehler`` mit Grund.
 
-    Streng statt nachsichtig: ein still übersprungener Kandidat wäre ein Vorschlag, den David nie sieht.
+    Streng statt nachsichtig: ein still übersprungener Kandidat wäre ein Vorschlag, den der Mensch nie sieht.
     """
     if not isinstance(kandidat, dict):
         raise Fehler(f"Kandidat {nr}: kein Objekt, sondern {type(kandidat).__name__}")
@@ -525,9 +525,7 @@ def _pruefe_kandidat(kandidat: object, nr: int) -> dict[str, Any]:
         raise Fehler(f"Kandidat {nr}: 'weg' muss 1–4 sein, ist {weg!r}")
     tickets = kandidat.get("tickets")
     nummern = (
-        [str(t).lstrip("#") for t in tickets if type(t) in (int, str)]
-        if isinstance(tickets, list) and tickets
-        else []
+        [str(t).lstrip("#") for t in tickets if type(t) in (int, str)] if isinstance(tickets, list) and tickets else []
     )
     if not nummern or len(nummern) != len(tickets) or not all(n.isdigit() for n in nummern):
         raise Fehler(f"Kandidat {nr}: 'tickets' ist keine nicht leere Liste aus Ticketnummern, ist {tickets!r}")

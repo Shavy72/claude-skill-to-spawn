@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "modus": "hinweis",
+  "profil": "schlank",
+  "hinweis_bis": "2026-10-08",
+  "stufen": {
+    "klein":  {"max_zeilen": 50,  "max_dateien": 3},
+    "mittel": {"max_zeilen": 400, "max_dateien": 15}
+  },
+  "konfidenz": {"verwerfen_unter": 70, "rot_ab": 85},
+  "max_fix_runden": 2,
+  "modelle": {"pruefer": "sonnet", "richter": "opus"},
+  "code_review_stufe": {"klein": "low", "mittel": "high", "gross": "xhigh"},
+  "datei_groesse": {"grenze": 1000, "zuwachs": 150},
+  "projekt_woerter": {},
+  "ignorieren": ["*.md", "*.txt", "docs/**", ".review/**", "graphify-out/**", "archive/**", "*.lock"]
+}

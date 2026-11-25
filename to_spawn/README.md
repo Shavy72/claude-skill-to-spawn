@@ -13,7 +13,7 @@ Immer im Repo-Wurzelordner ausführen:
 |---|---|
 | `python to_spawn.py spawn <S> [--ziel local\|srv] [--tickets a,b] [--dry-run]` | prüft die Regularien, fragt „lokal (1) oder Server (2)?" und startet das Terminal-Skript |
 | `python to_spawn.py regularien <S> [--tickets a,b] [--ohne-github]` | nur die Regularien; Exit 0 = frei, **Exit 3 = Weigerung** (alter Name `pruefen <S>` leitet mit Warnung weiter) |
-| `python to_spawn.py pruefen <basis> <ziel> [--repo P]` | Prüf-Werkzeugkasten (#99): erkennt Python/Node, prüft `ziel` (muss ausgecheckt sein) voll, eine JSON-Zeile auf stdout und in `.to-spawn/pruef/protokoll.jsonl`; **Exit 0 = grün, 1 = rot, 2 = Gate-Fehler** (Werkzeug fehlt/kaputt, nicht der Code); Abkürzung „nur Doku“ (keine Tests) nur, wenn das Repo seine Doku-Pfade in `.to-spawn/config.json` erklärt (`"pruefen": {"doku_pfade": ["docs/**", "README.md"]}`, `fnmatch`-Muster mit `/`; Erlaubnisliste: nur Dateien mit Doku-Endung `.md`, `.txt`, `.rst`, `.adoc`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.pdf` oder namens `LICENSE`/`README`/`CHANGELOG` und ohne Shebang (`#!`) in Zeile 1 können Doku sein, Unlesbares zählt als Code; trifft ein Muster Code-Dateien wie `**`, `*`, `*.py` oder eine geänderte Datei ohne Doku-Endung (etwa `app.py`, `run.sh`, `Makefile`, `tests/**`), gilt die ganze Liste nicht) und jede geänderte Datei (auch alter Pfad bei Umbenennung, gelöschte) darunter fällt und eine Doku-Endung hat, ohne Symlink — sonst immer volle Prüfung |
+| `python to_spawn.py pruefen <basis> <ziel> [--repo P]` | Prüf-Werkzeugkasten (#99): erkennt Python/Node, prüft `ziel` (muss ausgecheckt sein) voll, eine JSON-Zeile auf stdout und in `.to-spawn/pruef/protokoll.jsonl`; **Exit 0 = grün, 1 = rot, 2 = Gate-Fehler** (Werkzeug fehlt/kaputt, nicht der Code); Abkürzung „nur Doku“ (keine Tests) nur, wenn das Repo seine Doku-Pfade in `.to-spawn/config.json` erklärt (`"pruefen": {"doku_pfade": ["docs/**", "README.md"]}`, `fnmatch`-Muster mit `/`; Erlaubnisliste: nur Dateien mit Doku-Endung oder -Namen (Konstanten `_DOKU_ENDUNGEN`/`_DOKU_NAMEN` in `to_spawn/pruef/sofort.py`) und ohne Shebang (`#!`) in Zeile 1 können Doku sein, Unlesbares zählt als Code; trifft ein Muster Code-Dateien wie `**`, `*`, `*.py` oder eine geänderte Datei ohne Doku-Endung (etwa `app.py`, `run.sh`, `Makefile`, `tests/**`), gilt die ganze Liste nicht) und jede geänderte Datei (auch alter Pfad bei Umbenennung, gelöschte) darunter fällt und eine Doku-Endung hat, ohne Symlink — sonst immer volle Prüfung |
 | `python to_spawn.py log <S>` | Gesamt-Tabelle aller Tickets der Spec (Schätzung, Ist, Sessions, Staffel, Subagenten, Dauer) |
 | `python to_spawn.py lernstoff [--letzte 30]` | Zeilen für `/to-tickets` (Schätzung → Ist, Sessions, Faktor je Ticket + Faustregeln für den Schnitt) |
 | `python to_spawn.py deploy-status [--datei P] [--ticket N] [--still-min 60]` | liest nur die Deploy-Statusdatei (Vorgabe `<Repo>/.deploy_status.jsonl`, sonst `DEPLOY_STATUS_DATEI`), schreibt jede neue Phase als `deploy_phase` ins Bau-Log des Repos, in dem die Datei liegt (ohne Doppel; Ticket aus `--ticket`, `BAU_TICKET` oder `wt-<N>`), Ausgabe ≤ 3 Zeilen; **Exit 0 = grün, 1 = rot (auch: Gate-Prozess laut PID tot ohne Ende-Zeile), 3 = läuft, 4 = still über der Grenze oder Zeitstempel unlesbar, 2 = keine Datei** |
@@ -22,9 +22,13 @@ Immer im Repo-Wurzelordner ausführen:
 | `python to_spawn.py inventur [--json] [--abwahl a,b] [--anwahl a,b] [--schreiben] [--ausgabe PFAD] [--letzte 200]` | Setup-Wizard Teil 2: Werkzeug-Inventur (Skills, Plugin-Skills, Agenten, MCP-Server) nach 12 Kategorien, Standard alles an; Setup-Zeilen für fehlende Unterbauten, tote Winkel; `--schreiben` legt `.to-spawn/werkzeuge.json` an, unbekannter Name = **Exit 2** |
 | `python to_spawn.py umzug <N> --handoff <pfad> [--dry-run]` | Bau-Session auf den Bau-Server umziehen (#212): Handoff prüfen (`Umzug: server`, auch `## Umzug: server`; kein `Staffel: weiter`; keine ungetrackten Dateien außer dem Handoff), committen + pushen, Referenz `<branch>@<sha>:<pfad>`, Server-Start per SSH, lokales Ende erst nach Beweis; **Exit 0 = umgezogen, 1 = Server nicht bewiesen / läuft dort schon (lokal läuft weiter), 3 = Weigerung**; Ergebnis zusätzlich in `<BAU_UMZUG_ANFRAGE>.laeuft`, falls vorhanden |
 | `python to_spawn.py umzug-alle <S> [--ohne-wache] [--warte-max s] [--dry-run]` | Aufseher-Variante (im Hintergrund starten): alle Sessions der Spec streng nacheinander umziehen, Zustand je Ticket frisch gelesen, `wartet` → erst Server starten + beweisen, dann lokal beenden; Stopp bei `VERWAIST`/Zeitüberschreitung/Fehlschlag der Session, Anfrage-Datei wird immer aufgeräumt; zum Schluss Aufseher auf dem Server |
-| `python to_spawn.py aufpasser [--trocken] [--tmux-socket NAME] [--zustand DIR] [--hang-min N] [--bau-vorlage "…"] [--wache-vorlage "…"] [--deploy-muster REGEX] [--repo P] [--cron-einrichten]` | Aufpasser/Hausmeister (#236, Cron alle 15 min, nur Linux/tmux; gleich wie `skripte/aufpasser.py`): je tmux-Sitzung `spec-<S>` fehlende `bau <N>`-Fenster starten, Sessions geschlossener Tickets beenden (schmutziger Worktree vorher auf `sicherung/<N>` gesichert + gepusht; Eingabefeld leeren, dann `/exit`, nach 30 s Claude samt Kindern beenden — eine bau.py-Kette im Fenster läuft weiter, ohne Kette geht das Fenster gleich zu; Ticket zählt aus dem laufenden bau.py, nicht aus dem Fensternamen; läuft das Folge-Ticket der Kette schon woanders, endet das ganze Fenster — kein Doppel-Start), stille Fenster in drei Stufen wecken (anstupsen → sichern + Fenster per tmux-Respawn mit `--resume <Gesprächs-ID>` fortsetzen, Nachweis binnen 120 s → „braucht David“; Text ändert sich nach einem Eingriff ⇒ Stufe 0; gilt auch für `wache <S>` via `wache.py --resume`, `--wache-vorlage`); fehlende Fenster (auch `wache <S>`) und Panes mit nur noch einer Shell werden über `.to-spawn/sessions/<N>.json`/`wache-<S>.json` mit `--resume` fortgesetzt, sofern das Transkript liegt; jeder Eingriff = eigene Issue-Zeile, Meldungen ohne Eingriff einmal am Tag; mehr als 3 Anstupser je Fenster in 24 h ⇒ „braucht David“; Deploy-Wache noch einmal direkt vor jedem Eingriff; Start gilt erst nach 5 s Fenster-Nachweis; Gesprächs-ID + Zustand `busy`/`idle` aus `~/.claude/sessions/<pid>.json` (kein Transkript-Raten), `--hang-min` nie unter 61 (Wakeups ≤ 60 min); Sicherung ohne `.env`/`*zugang*`/`*.pem`/`*.key`, Hauptrepo nie; läuft ein echter Deploy (`--deploy-muster`, Vorgabe `safe_deploy_vps\.sh|deploy_schlange|staging_deploy\.sh|server_tuer\.sh` plus Skripte aus `.to-spawn/config.json`, Prozesse > 6 h = Waise; live/Staging, `--rebuild-runner`, `--to`), wird serverweit nichts angefasst; Gate-/Prüfläufe (`pytest`, `safe_deploy_vps.sh --nur-gate`, `deploy_schlange.py`) sperren nur ihr eigenes Fenster (Fensterbaum oder Ticket-Worktree); Start-Regel: kein Start bei Label `ready-for-human`/`needs-info`/`wontfix`, höchstens 2 Starts je Ticket in 6 h; Zustand `~/.local/state/to-spawn/aufpasser/` (`stand.json`, `aufpasser.log`); jede Meldung als Kommentar im Spec-Issue, `--cron-einrichten` legt die Cron-Zeile an oder ersetzt sie; **Exit 0, 1 = unerwarteter Fehler (im Log)** |
-| `python to_spawn.py speicher [--staffel]` | Speicher-Schutz (#257, `to_spawn/speicher.py`, nur Linux): druckt den Stand („Speicher frei: … / Speicher knapp: … / schon N Claude-Sessions“), **Exit 0 = frei, 5 = voll**; `--staffel` gibt nur die Pause in Sekunden zwischen zwei Fenster-Starts aus |
+| `python to_spawn.py aufpasser [--trocken] [--tmux-socket NAME] [--zustand DIR] [--hang-min N] [--bau-vorlage "…"] [--wache-vorlage "…"] [--deploy-muster REGEX] [--repo P] [--cron-einrichten]` | Aufpasser/Hausmeister (#236, Cron alle 15 min, nur Linux/tmux; gleich wie `skripte/aufpasser.py`): prüft die Deploy-Wache immer VOR dem Hausmeister-Lauf und dem externen Wecker (#262), danach je tmux-Sitzung `spec-<S>` fehlende `bau <N>`-Fenster starten, Sessions geschlossener Tickets beenden (schmutziger Worktree vorher auf `sicherung/<N>` gesichert + gepusht; Eingabefeld leeren, dann `/exit`, nach 30 s Claude samt Kindern beenden — eine bau.py-Kette im Fenster läuft weiter, ohne Kette geht das Fenster gleich zu; Ticket zählt aus dem laufenden bau.py, nicht aus dem Fensternamen; läuft das Folge-Ticket der Kette schon woanders, endet das ganze Fenster — kein Doppel-Start), stille Fenster in drei Stufen wecken (anstupsen → sichern + Fenster per tmux-Respawn mit `--resume <Gesprächs-ID>` fortsetzen, Nachweis binnen 120 s → „braucht den Menschen“; Text ändert sich nach einem Eingriff ⇒ Stufe 0; gilt auch für `wache <S>` via `wache.py --resume`, `--wache-vorlage`); fehlende Fenster (auch `wache <S>`) und Panes mit nur noch einer Shell werden über `.to-spawn/sessions/<N>.json`/`wache-<S>.json` mit `--resume` fortgesetzt, sofern das Transkript liegt; jeder Eingriff = eigene Issue-Zeile, Meldungen ohne Eingriff einmal am Tag; mehr als 3 Anstupser je Fenster in 24 h ⇒ „braucht den Menschen“; Deploy-Wache noch einmal direkt vor jedem Eingriff; Start gilt erst nach 5 s Fenster-Nachweis; Gesprächs-ID + Zustand `busy`/`idle` aus `~/.claude/sessions/<pid>.json` (kein Transkript-Raten), `--hang-min` nie unter 61 (Wakeups ≤ 60 min); Sicherung ohne `.env`/`*zugang*`/`*.pem`/`*.key`, Hauptrepo nie; läuft ein echter Deploy (`--deploy-muster`, Vorgabe `safe_deploy_vps\.sh|deploy_schlange|staging_deploy\.sh|server_tuer\.sh` plus Skripte aus `.to-spawn/config.json`, Prozesse > 6 h = Waise; live/Staging, `--rebuild-runner`, `--to`), wird serverweit nichts angefasst (auch kein Hausmeister); Gate-/Prüfläufe (`pytest`, `safe_deploy_vps.sh --nur-gate`, `deploy_schlange.py`) sperren nur ihr eigenes Fenster (Fensterbaum oder Ticket-Worktree); Start-Regel: kein Start bei Label `ready-for-human`/`needs-info`/`wontfix`, höchstens 2 Starts je Ticket in 6 h; Zustand `~/.local/state/to-spawn/aufpasser/` (`stand.json`, `aufpasser.log`); jede Meldung als Kommentar im Spec-Issue, `--cron-einrichten` legt die Cron-Zeile an oder ersetzt sie; **Exit 0, 1 = unerwarteter Fehler (im Log)** |
+| `python to_spawn.py wecker <setzen\|loeschen\|liste\|lauf\|einrichten>` | Externer Wecker für Leit-/Aufsichts-Sessions außerhalb der Session (#287, Linux/tmux + Cron; Windows-Aufgabe noch offen): registriert Weckaufträge atomar unter `~/.local/state/to-spawn/wecker/` (`auftraege.json`, `wecker.jsonl`, `wecker.log`), erkennt gescheiterte Weckrufe am Wochen-/Sitzungs-Limit samt Reset-Zeitpunkt (mit Grund im Log), wartet das Limit ohne Spam ab und weckt die Session nach dem Reset ohne Eingriff weiter; `einrichten` legt die Cron-Zeile idempotent an (Vorgabe alle 5 min), zudem läuft der Wecker als Sicherheitsnetz im Aufpasser-Lauf nach der Deploy-Wache |
+| `python to_spawn.py speicher [--staffel] [--sitzung spec-<S>]` | Speicher-Schutz (#257, `to_spawn/speicher.py`, nur Linux): druckt den Stand („Speicher frei: … / Speicher knapp: … / schon N Claude-Sessions in spec-<S> / Rechner voll: …“), mit `--sitzung` zählen gegen `max_sessions` nur Claude-Sessions dieser tmux-Sitzung, dazu gilt die Rechner-Grenze (12 je 16 GB `MemTotal`, unabhängig von `max_sessions`, #284), Gesamtgrenze 24 je 16 GB, **Exit 0 = frei, 5 = voll**; `--staffel` gibt nur die Pause in Sekunden zwischen zwei Fenster-Starts aus |
+| `python to_spawn.py start-last [--repo P] [--spec S] [--ticket N] [--bau-transkript P] [--aufseher-transkript P] [--pruefen] [--json]` | Start-Last-Messung je Fenstertyp (#412, `to_spawn/start_last.py`, gleich wie `skripte/start_last.py`): misst den Kontext nach Start für `bau` und `aufseher` (Istwert aus Transkripten über `.to-spawn/sessions/` bzw. explizite Pfade plus Posten-Aufschlüsselung: Start-Prompt, aktive/abgeschaltete Skills, globale & Repo-Regeln, Kontext-Paket, aktive MCP-Server), prüft gegen die Ziel-Obergrenzen (Vorgabe Bau ≤ 50k, Aufseher ≤ 80k); **Exit 0 = ok, 1 = über Obergrenze (mit `--pruefen`), 2 = Eingabe unbrauchbar** |
 | `python to_spawn.py hook-umzug` | Stop-Hook: liegt `.to-spawn/umzug-anfrage-<N>`, bekommt die Session die Umzug-Anweisung (einmal) |
+| `python to_spawn.py abgleich <quelle> <ziel> [--angleichen] [--datei P] [--ausnahme M] [--ausnahmen-datei D] [--liste-ausnahmen] [--json]` | Abgleich von `~/.claude` zwischen zwei Verzeichnissen (#561): Standard nur lesen (**Exit 0 = gleich, 3 = Abweichung, 1 = Fehler**); feste Liste „gewollt verschieden“ an einer Stelle (`to_spawn/abgleich.py`); `--angleichen` sichert jede überschriebene Datei (`*.bak-*`) und schreibt `settings.json` atomar nach Gültigkeits-Prüfung; Werte unter `env` erscheinen nie in der Ausgabe |
+| `python to_spawn.py warten <N> [--hintergrund\|--pruefen\|--abbruch] [--max-versuche 3] [--pause 30] [--name K] [--grund TEXT] [--neu] [-- <Befehl>]` | Abbruchfester Warte-Schritt (#286, `to_spawn/warten.py`): Zustand atomar in `.to-spawn/warten/<N>.json`, entkoppelter fensterloser Läufer bei `--hintergrund`, Weckruf fragt mit `--pruefen` nach; bei Abbruch von außen (Signal/Speicherknappheit) Eintrag mit Zeit + freiem Speicher im lokalen Geräte-Logbuch (`~/.local/state/to-spawn/geraete-logbuch/<geraet>.jsonl`, Env `TO_SPAWN_GERAETE_LOGBUCH`), automatischer Neustart nach Pause bis `--max-versuche`, danach `blockiert` im Bau-Log für den Aufseher (0 Fragen an den Nutzer); **Exit 0 = fertig, 1 = regulär fehlgeschlagen, 2 = kein Zustand, 3 = läuft / neu gestartet, 4 = blockiert, 5 = Aufruf falsch** |
 
 `--ziel` überspringt die Frage; ohne Angabe gilt `ziel_default` aus der Konfig.
 
@@ -33,7 +37,9 @@ Immer im Repo-Wurzelordner ausführen:
 Gelesen wird `docs/agents/manifests/spec-<S>.json`. `regularien <S> [--tickets a,b] [--ohne-github]`
 läuft automatisch vor jedem Spawn (`spawn`, `scripts/spawn_srv.sh`,
 `spawn_local.ps1`); Exit 0 = frei, **Exit 3 = Weigerung**, nichts wird gestartet,
-jede Fehlerzeile nennt ihre Abhilfe.
+jede Fehlerzeile nennt ihre Abhilfe. Davor legt es bei fehlender Prüfung oder fehlendem
+Staging (außer `staging.ohne: true`) einmal das **Einrichtungs-Ticket** an, auf das alle
+Tickets der Spec warten (`to_spawn/einrichtungs_ticket.py`, #410).
 
 **Weigerung (Exit 3) bei:**
 - Pflichtfeld fehlt: `schaetzung_k` (Zahl, Tausend Token, > 0 und < `staffel.grenze_k`,
@@ -194,6 +200,12 @@ Fehlt die Datei, gelten die Vorgaben aus `to_spawn/config.py`:
 }
 ```
 
+`runner` wählt das Werkzeug für Bau-Sessions in `skripte/bau.py` (`"claude"` Vorgabe oder `"agy"`
+für Antigravity; Standardmodell bei `"agy"` ist `gemini-4-neon-high`, sofern `modelle.ticket` kein
+eigenes Nicht-Claude-Modell setzt oder `--model` übergeben wird — einzige Stelle: `to_spawn/werkzeug.py`, #660).
+`staffel.grenze_k` ist nur der Ticket-Schnitt (Planungs-Grenze je Ticket), keine Ablöse-Grenze:
+die Ablösung einer laufenden Session hängt allein an `~/.claude/smart-zone.json` (#417).
+
 ### Fremdes Repo: diese Schlüssel setzen (L1 Etappe 1)
 
 Die heutigen Werte des ersten App-Repos stehen nur in `to_spawn/vorgaben.py`; jedes andere
@@ -203,17 +215,21 @@ Modul liest sie über `config.lade` / `config.pfad` / `config.maschine`. Ein fre
 - Repo (`.to-spawn/config.json`): `pfade.{manifeste,bau_log,agenten}`,
   `deploy.skripte[]` (`name`, `art` live/pruef, `pruef_schalter`, `fern`),
   `staging.schalter`, `befehle.wirkungskreis`, `vps.staging_log`, `worktree_basis`, `hauptzweig`.
-- Maschine (`~/.config/to-spawn/maschine.json`, Env `TO_SPAWN_MASCHINE`): `repos[]`
+- Maschine (`~/.config/to-spawn/maschine.json`, Env `TO_SPAWN_MASCHINE`): `rolle`
+  (`"server"`/`"pc"`, optional; auf dem Bau-Server wird `--ziel srv` wie `--ziel local`
+  behandelt, #408), `repos[]`
   (`slug`, `pfad`, `ticket_repo`, `worktree_basis`), `staging_sperren[]`,
   `hausmeister.{wurzeln,ordner_praefixe}` und `hausmeister.geschuetzte_ordner` — Letzteres
   schützt nur zusätzlich, die eingebaute Liste bleibt immer gültig. Wurzeln mit verstecktem
   Ordner (`~/.ssh/*`) lehnt der Hausmeister ab.
   `ticket_repo` sagt, in welchem Repo die Nummer eines Helfer-Ordners mit diesem `origin` ein
   Ticket ist; die Vorgabe gibt jedem Repo seine eigenen Tickets (Skill-Ordner fragen das
-  Skill-Repo, #235). Der Einrichter füllt nur leere Felder — ein altes `ticket_repo` in einer
-  bestehenden Liste bleibt stehen, bis es von Hand angepasst wird. Die Nummer liest der
+  Skill-Repo, #235). Bekannte veraltete Vorgaben zieht der Einrichter (und der Installer per
+  `to_spawn.py ticket-repo --nachziehen`) selbst nach; einzelne Einträge lassen sich über
+  `to_spawn.py ticket-repo <eintrag> <ticket_repo>` ausdrücklich ändern (#261). Die Nummer liest der
   Hausmeister aus Ordnername und Zweig (`ticket/<N>-…`, `l<Etappe>/<N>[a-z]-…`, Formen nur in
-  `hausmeister._ZWEIG_FORMEN`); Ordner ohne Nummer räumt er erst, wenn 24 h nichts geändert
+  `hausmeister._ZWEIG_FORMEN`; Zweig + origin → Ticket-Repo + Nummer nur über
+  `hausmeister.zweig_zu_ticket`); Ordner ohne Nummer räumt er erst, wenn 24 h nichts geändert
   wurde und alles auf `origin` liegt.
 
 Der Prüf-Test `tests/test_feste_namen_l1.py` bricht den Build, sobald im Skill-Code ein
@@ -224,11 +240,16 @@ stehen nur dort; jede Ausnahme nennt Datei, Muster, Höchstzahl der Zeilen und G
 ## Speicher (#257 Paket B)
 
 Lehre aus dem OOM-Absturz 21.09. (16 GB, kein Swap, 12 Sessions): `to_spawn/speicher.py`
-liest `MemAvailable` aus `/proc/meminfo` und zählt Prozesse mit `argv[0]` = `claude`.
-Vor jedem Claude-Start fragen `bau.py`, `wache.py`, `spawn_srv.sh` und der Aufpasser
-`speicher.platz_frei(konfig)`; voll → kein Start, Exit 5 (Skripte) bzw. Fenster in diesem
-Tick ausgelassen (Aufpasser, nächster Tick prüft neu). Grenzen im Konfig-Feld `speicher`:
-`min_frei_mib` (2 GB Mindestmaß), `max_sessions` (Obergrenze 6 je 16 GB), `staffel_s`
+liest `MemAvailable`/`MemTotal` aus `/proc/meminfo` und zählt Prozesse mit `argv[0]` = `claude`.
+Vor jedem Claude-Start fragen `bau.py`/`wache.py` (`speicher.platz_frei_hier`, eigene
+tmux-Sitzung aus `TMUX`), `spawn_srv.sh` (`to_spawn.py speicher --sitzung spec-<S>`) und der
+Aufpasser (`speicher.platz_frei(konfig, sitzung=…)`); voll → kein Start, Exit 5 (Skripte) bzw.
+Fenster in diesem Tick ausgelassen (Aufpasser, nächster Tick prüft neu). Gegen `max_sessions`
+zählen nur Claude-Sessions der eigenen Spec-Sitzung (#409); zusätzlich gilt die Rechner-Grenze
+12 je 16 GB `MemTotal` über alle arbeitenden Claude-Sessions (kein Konfig-Wert, unabhängig
+von `max_sessions`, #284), insgesamt (still + arbeitend) 24 je 16 GB. Ohne Sitzung oder wenn tmux nicht antwortet, zählt der ganze Rechner gegen
+`max_sessions`. Grenzen im Konfig-Feld `speicher`:
+`min_frei_mib` (2 GB Mindestmaß, maschinenweit), `max_sessions` (Obergrenze 6 je Spec-Sitzung und 16 GB), `staffel_s`
 (20 s Pause zwischen zwei Fenster-Starts, `to_spawn.py speicher --staffel`). Kein Linux
 oder `/proc` unlesbar = kein Urteil = frei. Test-Tür: `TO_SPAWN_SPEICHER_MEMINFO` /
 `TO_SPAWN_SPEICHER_PROC` zeigen auf Attrappen (die Suite setzt sie in `conftest.py` auf
@@ -237,8 +258,10 @@ oder `/proc` unlesbar = kein Urteil = frei. Test-Tür: `TO_SPAWN_SPEICHER_MEMINF
 
 ## Test
 
-`cd ~/.claude/skills/to-spawn && python -m pytest tests -q` — Weg-Test gegen ein
-Wegwerf-Repo mit Bare-Remote. Gestellt sind nur zwei Programme:
+Volle Suite: `bash skripte/suite.sh` (einziger Standard-Aufruf: `-n 4 --dist worksteal`,
+Exit-Code von pytest; weitere Argumente wie `--durations=25` oder `-n 6` gehen an pytest). Nur im Klon: sie sammelt `tests/`, `review/` und
+`skripte/test_*.py`; im installierten Skill fehlt die Wurzel-`conftest.py`, dort bricht sie mit
+Exit 64 ab. Weg-Test gegen ein Wegwerf-Repo mit Bare-Remote. Gestellt sind nur zwei Programme:
 
 1. `claude` (`tests/hilfen/fake_claude.py`) — die Session selbst.
 2. `gh` (`tests/hilfen/gh_stub.py`, über `TO_SPAWN_GH_STUB`) — GitHub ist ein

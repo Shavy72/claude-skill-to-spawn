@@ -1,0 +1,9 @@
+Rot-Beweis #325 Teil 1 (vor dem Fix, Basis 599782c)
+Befehl: python -m pytest tests/test_rolle_statt_name_323.py -q
+Ergebnis: 1 failed, Exit 1 — 13 Funde (ticketstand 3, melder 2, SKILL.md 8)
+
+E       AssertionError: fester Personenname statt Rolle: ['to_spawn/ticketstand.py:3', 'to_spawn/ticketstand.py:17', 'to_spawn/ticketstand.py:100', 'to_spawn/melder.py:1', 'to_spawn/melder.py:40', 'SKILL.md:11', 'SKILL.md:16', 'SKILL.md:29', 'SKILL.md:30', 'SKILL.md:91', 'SKILL.md:105', 'SKILL.md:141', 'SKILL.md:150']
+tests/test_rolle_statt_name_323.py:37: AssertionError
+1 failed in 0.05s
+
+Nicht getroffen (Wortgrenze vorn): Bezeichner wie braucht_david in SKILL.md:155.

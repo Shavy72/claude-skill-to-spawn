@@ -142,9 +142,7 @@ def test_f1_respawn_merkt_zeit(ordner: Path, monkeypatch: pytest.MonkeyPatch) ->
 # --- F2: kein doppelter Handoff-Auftrag ----------------------------------------------------
 
 
-def test_f2_leiter_gibt_handoff_seit_weiter(
-    ordner: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f2_leiter_gibt_handoff_seit_weiter(ordner: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     spion = Spion()
     monkeypatch.setattr(respawn, "abloesen", spion)
     u = _stufe2(ordner)
@@ -154,15 +152,17 @@ def test_f2_leiter_gibt_handoff_seit_weiter(
     assert spion.aufrufe[0][3]["handoff_seit"] == seit
 
 
-def test_f2_abloesen_ueberspringt_a_bei_frischen_dateien(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f2_abloesen_ueberspringt_a_bei_frischen_dateien(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo, wt = _respawn_umgebung(tmp_path, monkeypatch)
     fake = respawn_test.FakeWerkzeug(wt)
     fake._dateien_anlegen()  # die Leiter hat den Auftrag schon getippt
     erg = respawn.abloesen(
-        repo, respawn_test.SPEC, respawn_test.TICKET, werkzeug=fake,
-        warte_max=600, handoff_seit=fake.zeit - 60,
+        repo,
+        respawn_test.SPEC,
+        respawn_test.TICKET,
+        werkzeug=fake,
+        warte_max=600,
+        handoff_seit=fake.zeit - 60,
     )
     assert erg.exit == 0, erg.zeile
     getippt = [a for a in fake.aufrufe if a[0] == "tippen"]
@@ -170,14 +170,16 @@ def test_f2_abloesen_ueberspringt_a_bei_frischen_dateien(
     assert fake.namen()[0] == "fenster_starten"
 
 
-def test_f2_abloesen_tippt_a_wenn_dateien_alt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f2_abloesen_tippt_a_wenn_dateien_alt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo, wt = _respawn_umgebung(tmp_path, monkeypatch)
     fake = respawn_test.FakeWerkzeug(wt)
     erg = respawn.abloesen(
-        repo, respawn_test.SPEC, respawn_test.TICKET, werkzeug=fake,
-        warte_max=600, handoff_seit=fake.zeit - 60,
+        repo,
+        respawn_test.SPEC,
+        respawn_test.TICKET,
+        werkzeug=fake,
+        warte_max=600,
+        handoff_seit=fake.zeit - 60,
     )
     assert erg.exit == 0, erg.zeile
     assert fake.namen()[0] == "tippen"
@@ -195,9 +197,7 @@ def test_f2_eine_pfadquelle_relativ(ordner: Path) -> None:
 # --- F3: respawn gescheitert → Stufe 5 ---------------------------------------------------
 
 
-def test_f3_respawn_gescheitert_stufe5_kein_zweiter_versuch(
-    ordner: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f3_respawn_gescheitert_stufe5_kein_zweiter_versuch(ordner: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     spion = Spion(exit_code=2)
     monkeypatch.setattr(respawn, "abloesen", spion)
     u = _stufe2(ordner)
@@ -241,10 +241,8 @@ def test_f4_stufe2_wartegrenze(ordner: Path, minuten: int, exit_code: int) -> No
 
 
 @pytest.mark.parametrize(("still", "getippt"), [(1, []), (2, [(ZIEL, "/exit")])])
-def test_f5_exit_mindest_ruhe(
-    ordner: Path, still: int, getippt: list[tuple[str, str]]
-) -> None:
-    u = FakeUmwelt(ordner, still_min=still, offen=False)
+def test_f5_exit_mindest_ruhe(ordner: Path, still: int, getippt: list[tuple[str, str]]) -> None:
+    u = FakeUmwelt(ordner, still_min=still, stufe="zu")
     erg = _lauf(u)
     assert erg.exit == 0
     assert u.wz.getippt == getippt
@@ -266,9 +264,7 @@ def test_f6_tippen_scheitert_stufe_gemerkt_kein_zweites_tippen(ordner: Path) -> 
     assert u.wz.getippt == []
 
 
-def test_f6_leitstand_fehler_nichts_getippt(
-    ordner: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f6_leitstand_fehler_nichts_getippt(ordner: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def kaputt(*_a: Any, **_k: Any) -> None:
         raise OSError("Leitstand nicht schreibbar")
 
@@ -292,9 +288,7 @@ def test_f7_leiter_ohne_private_aufseher_funktionen() -> None:
 
 
 @pytest.fixture
-def welt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> tuple[stand_test.FakeWelt, Path]:
+def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[stand_test.FakeWelt, Path]:
     monkeypatch.setenv("TO_SPAWN_LEITSTAND_ORDNER", str(tmp_path / "leitstand"))
     monkeypatch.setenv("TO_SPAWN_AUFSEHER_STAND", str(tmp_path / "stand"))
     repo = _stand_repo(tmp_path, monkeypatch)
@@ -315,7 +309,7 @@ def test_f8_echte_lage_richtiges_ziel_je_ticket(
     assert lage.ziel == f"=spec-{stand_test.SPEC}:2"
     assert lage.fenster == aufseher_stand.STILL
     assert lage.still_min == 25
-    assert lage.offen is True
+    assert lage.stufe == "offen"
     assert u.lage(stand_test.SPEC, 431, None).ziel == f"=spec-{stand_test.SPEC}:1"
 
 
@@ -362,7 +356,7 @@ def test_f8_ticket_lage_kein_sub_issue(welt: tuple[stand_test.FakeWelt, Path]) -
 
 def test_f9_stufe4_wieder_offen_zurueck(ordner: Path) -> None:
     leitstand.setze_leiter_stufe(TICKET, 4, time.time())
-    u = FakeUmwelt(ordner, still_min=5, offen=True)
+    u = FakeUmwelt(ordner, still_min=5, stufe="offen")
     erg = _lauf(u)
     assert erg.exit == 0
     assert leitstand.leiter_eintrag(TICKET) == (0, None)

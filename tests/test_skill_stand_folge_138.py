@@ -43,9 +43,7 @@ def _mini_klon(tmp: Path, *, origin: bool = True) -> Path:
     return klon
 
 
-def _lauf(
-    art: str, klon: Path, skills: Path, env: dict[str, str]
-) -> subprocess.CompletedProcess[str]:
+def _lauf(art: str, klon: Path, skills: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     claude_md = skills.parent / "CLAUDE.md"
     if art == "sh":
         befehl = [
@@ -123,9 +121,7 @@ def test_ohne_python_abbruch_vor_dem_kopieren(art: str, tmp_path: Path) -> None:
     lauf = _lauf(art, SKILL, skills, env)
     assert lauf.returncode != 0, lauf.stdout + lauf.stderr
     assert "python" in (lauf.stdout + lauf.stderr).lower()
-    assert sorted(p.name for p in alt.iterdir()) == ["alt.txt"], (
-        "Zielordner wurde verändert"
-    )
+    assert sorted(p.name for p in alt.iterdir()) == ["alt.txt"], "Zielordner wurde verändert"
     assert not (skills / "_alt").exists(), "alter Stand wurde schon weggeschoben"
 
 
@@ -133,9 +129,7 @@ def test_ohne_python_abbruch_vor_dem_kopieren(art: str, tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("art", INSTALLER)
-def test_neuinstallation_meldet_stempel_nicht_als_altlast(
-    art: str, tmp_path: Path
-) -> None:
+def test_neuinstallation_meldet_stempel_nicht_als_altlast(art: str, tmp_path: Path) -> None:
     klon, _bare, _sha = _skill_klon(tmp_path)
     env = _umgebung(tmp_path)
     skills = tmp_path / "heim" / "skills"
@@ -144,11 +138,7 @@ def test_neuinstallation_meldet_stempel_nicht_als_altlast(
     zweiter = _lauf(art, klon, skills, env)
     assert zweiter.returncode == 0, zweiter.stdout + zweiter.stderr
     assert "Alter Stand gesichert" in zweiter.stdout
-    falsch = [
-        z
-        for z in zweiter.stdout.splitlines()
-        if "nur im alten Stand" in z and skill_stand.STEMPEL in z
-    ]
+    falsch = [z for z in zweiter.stdout.splitlines() if "nur im alten Stand" in z and skill_stand.STEMPEL in z]
     assert not falsch, falsch
     assert (skills / "to-spawn" / skill_stand.STEMPEL).exists()
 
@@ -167,10 +157,7 @@ def test_ungespeicherte_aenderung_stempel_dirty_nicht_aktuell(tmp_path: Path) ->
     (klon / "datei.txt").write_text("geändert\n", encoding="utf-8")
     daten = skill_stand.stempel(ziel, klon)
     assert daten["dirty"] == "ja"
-    assert (
-        json.loads((ziel / skill_stand.STEMPEL).read_text(encoding="utf-8"))["dirty"]
-        == "ja"
-    )
+    assert json.loads((ziel / skill_stand.STEMPEL).read_text(encoding="utf-8"))["dirty"] == "ja"
     zustand, text = skill_stand.vergleich(ziel)
     assert zustand != skill_stand.AKTUELL, text
     assert "ungespeichert" in text, text
@@ -179,8 +166,5 @@ def test_ungespeicherte_aenderung_stempel_dirty_nicht_aktuell(tmp_path: Path) ->
 def test_pfad_ohne_python_hat_wirklich_kein_python(tmp_path: Path) -> None:
     """Selbstprüfung der Attrappe: im Test-PATH findet sich kein Python."""
     pfad = _pfad_ohne_python(tmp_path)
-    assert (
-        shutil.which("python3", path=pfad) is None
-        and shutil.which("python", path=pfad) is None
-    )
+    assert shutil.which("python3", path=pfad) is None and shutil.which("python", path=pfad) is None
     assert os.path.isdir(pfad)

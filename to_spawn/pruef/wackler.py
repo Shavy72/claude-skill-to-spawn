@@ -5,9 +5,7 @@ still grün. Zweimal rot bleibt rot. Ablauf im Rot-Fall:
 
 1. Einzel-Wiederholung nur der roten Tests (billig). Grün zählt nur, wenn genau so viele Tests
    bestanden (``passed``) wie vorher rot waren — skip/xfail/abgewählt heißt „nie grün gelaufen“.
-2. Danach ein zweiter voller Lauf. Nur ist auch er grün — jeder vorher rote Test darin mit Namen
-   als bestanden belegt (``Namentlich``; sonst ausgezählt), nicht nur Exit 0 —, gibt es Exit 0
-   mit Urteil „wackler“.
+2. Danach ein zweiter voller Lauf. Nur ist auch er grün, gibt es Exit 0 mit Urteil „wackler“.
    Ist er wieder rot (z. B. reihenfolge-abhängiger Test, allein grün), bleibt es Rot.
 
 Die Kosten fallen nur im seltenen Rot-Fall an und stehen getrennt im Prüf-Protokoll.
@@ -18,7 +16,6 @@ ist nichts belegt, das erste Rot bleibt stehen (fail-closed).
 
 from __future__ import annotations
 
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -52,19 +49,26 @@ class Zaehlbar(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class Bericht:
+    """Maschinenlesbares Ergebnis eines Testlaufs (z. B. aus JUnit-XML + Knoten-Beleg, #149)."""
+
+    #: Zahl der gelaufenen Tests, wenn alle ausgewählten liefen; ``None`` = unbelegt/abgebrochen.
+    gelaufen: int | None
+    #: Zahl der bestandenen Tests ohne skip/xfail/xpass/error/failure; ``None`` = unbelegt.
+    bestanden: int | None
+    #: Zahl der im Bericht eingetragenen Testfälle (0 = nichts gelaufen, z. B. ``--co``).
+    im_bericht: int = 0
+    #: Vorzeitiger Abbruch (z. B. ``pytest.exit(..., returncode=0)``).
+    abgebrochen: bool = False
+    #: Eindeutige Knoten-Kennungen (``nodeid``) aller bestandenen Tests; ``None`` = nicht belegt.
+    bestanden_namen: frozenset[str] | None = None
+
+
 @runtime_checkable
-class Namentlich(Protocol):
-    def mit_beleg(self, befehl: list[str], beleg: Path) -> list[str]:
-        """``befehl`` so erweitert, dass der Lauf sein Ergebnis je Test nach ``beleg`` schreibt."""
-        ...
-
-    def alle_bestanden(self, beleg: Path, namen: set[str], gelaufen: int | None = None) -> bool:
-        """Steht jeder Test aus ``namen`` (Kennung wie aus ``rote``) im Beleg als bestanden?
-
-        ``gelaufen``: Zahl der Tests im ersten vollen Lauf; stehen im Beleg anders viele, ist
-        nichts belegt (Abwahl, Ausgleich). ``None`` = unbekannt, dann zählen nur die Namen.
-        Fehlt der Beleg, ist er unlesbar oder fehlt ein Name darin: ``False`` (fail-closed).
-        """
+class Berichtbar(Protocol):
+    def bericht(self, befehl: list[str], ausgabe: str) -> Bericht | None:
+        """Maschinenlesbares Ergebnis zum gelaufenen ``befehl``; ``None`` = Bericht fehlt."""
         ...
 
 
@@ -78,6 +82,25 @@ class Wiederholung:
     voll_s: float = 0.0
 
 
+def _bericht(adapter: object, befehl: list[str], ausgabe: str) -> Bericht | None:
+    """Liest ``Bericht``, wenn ``adapter`` ``Berichtbar`` ist; sonst ``None``."""
+    return adapter.bericht(befehl, ausgabe) if isinstance(adapter, Berichtbar) else None
+
+
+def _zaehle(
+    adapter: object, befehl: list[str], ausgabe: str, bericht: Bericht | None = None
+) -> tuple[int | None, int | None]:
+    """(gelaufen, bestanden) bevorzugt aus dem maschinenlesbaren Bericht, sonst aus ``Zaehlbar``."""
+    if isinstance(adapter, Berichtbar):
+        b = bericht if bericht is not None else adapter.bericht(befehl, ausgabe)
+        if b is None or b.abgebrochen:
+            return None, None
+        return b.gelaufen, b.bestanden
+    if isinstance(adapter, Zaehlbar):
+        return adapter.gelaufen(ausgabe), adapter.bestanden(ausgabe)
+    return None, None
+
+
 def nochmal(adapter: object, repo: Path, befehl: list[str], erst: ausfuehren.Lauf) -> Wiederholung | None:
     """Wiederholt die roten Tests aus ``erst`` einmal; ``None`` = nicht wiederholt, Rot bleibt."""
     if not isinstance(adapter, Wiederholbar):
@@ -86,9 +109,10 @@ def nochmal(adapter: object, repo: Path, befehl: list[str], erst: ausfuehren.Lau
     erst_rot = adapter.rote(erst.ausgabe)
     if zweit_befehl is None or not erst_rot:
         return None
-    zaehlt = isinstance(adapter, Zaehlbar)
-    if zaehlt and adapter.gelaufen(erst.ausgabe) is None:
-        # Erster Lauf nicht belegt ganz (abgebrochen, Ausgabe ohne Zählung): ungelaufene Tests
+    zaehlt = isinstance(adapter, (Berichtbar, Zaehlbar))
+    erst_gelaufen, erst_bestanden = _zaehle(adapter, befehl, erst.ausgabe) if zaehlt else (None, None)
+    if zaehlt and (erst_gelaufen is None or erst_bestanden is None):
+        # Erster Lauf nicht belegt ganz (abgebrochen, Bericht/Zählung fehlt): ungelaufene Tests
         # könnten rot sein, also kann keine Wiederholung daraus Grün machen.
         return None
     zweit = ausfuehren.lauf(zweit_befehl, repo)
@@ -102,47 +126,41 @@ def nochmal(adapter: object, repo: Path, befehl: list[str], erst: ausfuehren.Lau
         return Wiederholung(False, (), zweit_befehl, dauer)
     # Gelaufen == gesammelt: genau die roten Tests müssen nochmal gelaufen sein, sonst ist
     # „nicht mehr rot“ nur „nicht gelaufen“. Bestanden == nicht mehr rot: skip/xfail ist kein
-    # Grün. Ohne ``Zaehlbar`` ist beides nie belegt.
+    # Grün. Ohne ``Berichtbar``/``Zaehlbar`` ist beides nie belegt.
+    zweit_bericht = _bericht(adapter, zweit_befehl, zweit.ausgabe)
+    zweit_gelaufen, zweit_bestanden = _zaehle(adapter, zweit_befehl, zweit.ausgabe, zweit_bericht)
+    if not zaehlt or zweit_gelaufen != len(erst_rot) or zweit_bestanden != len(erst_rot - noch_rot):
+        return Wiederholung(False, (), zweit_befehl, dauer)
     if (
-        not zaehlt
-        or adapter.gelaufen(zweit.ausgabe) != len(erst_rot)
-        or adapter.bestanden(zweit.ausgabe) != len(erst_rot - noch_rot)
+        zweit_bericht is not None
+        and zweit_bericht.bestanden_namen is not None
+        and not (erst_rot - noch_rot) <= zweit_bericht.bestanden_namen
     ):
         return Wiederholung(False, (), zweit_befehl, dauer)
     wackler = tuple(sorted(erst_rot - noch_rot))
     if zweit.code:
         return Wiederholung(False, wackler, zweit_befehl, dauer)
     # Einzeln grün reicht nicht (reihenfolge-abhängig): erst ein zweiter voller Lauf entscheidet.
+    # Auch er wird ausgezählt UND bei ``Berichtbar`` namentlich belegt: Skip, Abwahl, Ausgleich
+    # über einen anderen Test oder Ausstieg mit Exit 0 ergeben nie „wackler“ (#149).
     voll_befehl = adapter.voll_nochmal_befehl(befehl)
-    with tempfile.TemporaryDirectory(prefix="to_spawn_beleg_") as ordner:
-        beleg = Path(ordner) / "voll.xml"
-        namentlich = isinstance(adapter, Namentlich)
-        voll = ausfuehren.lauf(adapter.mit_beleg(voll_befehl, beleg) if namentlich else voll_befehl, repo)
-        # Mit Namens-Beleg zählt nur er: jeder vorher rote Test ist im vollen Lauf bestanden
-        # (#149 Fix 1). Zahlen ließen sich durch einen anderen Test ausgleichen und hingen an der
-        # Schlusszeile des ersten Laufs.
-        belegt = voll.code == 0 and (
-            adapter.alle_bestanden(beleg, erst_rot, adapter.gelaufen(erst.ausgabe) if zaehlt else None)
-            if namentlich
-            else _voll_belegt(adapter, erst.ausgabe, len(erst_rot), voll.ausgabe)
-        )
+    voll = ausfuehren.lauf(voll_befehl, repo)
     voll_s = round(voll.dauer_s, 2)
-    if not belegt:
+    if voll.code != 0:
         return Wiederholung(False, (), zweit_befehl, dauer, voll_s)
+    voll_bericht = _bericht(adapter, voll_befehl, voll.ausgabe)
+    voll_gelaufen, voll_bestanden = _zaehle(adapter, voll_befehl, voll.ausgabe, voll_bericht)
+    if (
+        erst_gelaufen is None
+        or erst_bestanden is None
+        or voll_gelaufen != erst_gelaufen
+        or voll_bestanden is None
+        or voll_bestanden < erst_bestanden + len(erst_rot)
+    ):
+        return Wiederholung(False, (), zweit_befehl, dauer, voll_s)
+    if isinstance(adapter, Berichtbar):
+        if voll_bericht is None or voll_bericht.abgebrochen or voll_bericht.bestanden_namen is None:
+            return Wiederholung(False, (), zweit_befehl, dauer, voll_s)
+        if not erst_rot <= voll_bericht.bestanden_namen:
+            return Wiederholung(False, (), zweit_befehl, dauer, voll_s)
     return Wiederholung(True, wackler, zweit_befehl, dauer, voll_s)
-
-
-def _voll_belegt(adapter: Zaehlbar, erst: str, rot: int, voll: str) -> bool:
-    """Nur für Adapter ohne ``Namentlich``: ist der zweite volle Lauf ausgezählt grün (#149)?
-
-    Gelaufen == wie im ersten Lauf, bestanden == im ersten Lauf bestanden plus die vorher roten:
-    ein Skip, eine Abwahl oder ein Ausstieg mit Exit 0 ist kein Grün. Ohne ablesbare Zählung des
-    ersten Laufs gilt nur ein Lauf, in dem jeder gelaufene Test bestand.
-    """
-    gelaufen, bestanden = adapter.gelaufen(voll), adapter.bestanden(voll)
-    if gelaufen is None or bestanden is None:
-        return False
-    vorher = adapter.bestanden(erst)
-    if vorher is None:
-        return bestanden == gelaufen
-    return gelaufen == adapter.gelaufen(erst) and bestanden == vorher + rot

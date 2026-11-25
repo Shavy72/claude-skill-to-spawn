@@ -17,7 +17,8 @@ import sys
 from pathlib import Path
 
 import pytest
-from conftest import attrappe
+
+from conftest import attrappe, repo_dateien
 
 SKILL = Path(__file__).resolve().parent.parent
 CLI = SKILL / "to_spawn.py"
@@ -39,7 +40,11 @@ TOKEN = "dummy-token-nur-test"
 
 def _git(ordner: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", *args], cwd=str(ordner), check=True, capture_output=True, text=True,
+        ["git", *args],
+        cwd=str(ordner),
+        check=True,
+        capture_output=True,
+        text=True,
         encoding="utf-8",  # (#68)
     ).stdout.strip()
 
@@ -56,11 +61,7 @@ def _neues_repo(ordner: Path) -> Path:
 
 
 def _umgebung(heim: Path, **extra: str) -> dict[str, str]:
-    umgebung = {
-        k: v
-        for k, v in os.environ.items()
-        if k not in ("BWS_ACCESS_TOKEN", "TO_SPAWN_REPO", "BAU_WT_DIR")
-    }
+    umgebung = {k: v for k, v in os.environ.items() if k not in ("BWS_ACCESS_TOKEN", "TO_SPAWN_REPO", "BAU_WT_DIR")}
     umgebung["HOME"] = str(heim)
     umgebung["USERPROFILE"] = str(heim)  # (#68)
     umgebung["PYTHONUTF8"] = "1"  # (#68)
@@ -69,9 +70,7 @@ def _umgebung(heim: Path, **extra: str) -> dict[str, str]:
     return umgebung
 
 
-def _cli(
-    *args: str, cwd: Path, env: dict[str, str], stdin: str = ""
-) -> subprocess.CompletedProcess[str]:
+def _cli(*args: str, cwd: Path, env: dict[str, str], stdin: str = "") -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(CLI), "nest", *args],
         cwd=str(cwd),
@@ -91,9 +90,7 @@ def _cli(
 
 def test_onboarding_setzt_flags_und_laesst_fremde_schluessel(tmp_path: Path) -> None:
     datei = tmp_path / ".claude.json"
-    datei.write_text(
-        json.dumps({"fremd": 1, "projects": {"/alt": {"a": 1}}}), encoding="utf-8"
-    )
+    datei.write_text(json.dumps({"fremd": 1, "projects": {"/alt": {"a": 1}}}), encoding="utf-8")
     ergebnis = _cli(
         "onboarding",
         "--claude-json",
@@ -119,8 +116,13 @@ def test_onboarding_setzt_flags_und_laesst_fremde_schluessel(tmp_path: Path) -> 
 def test_onboarding_legt_fehlende_datei_an(tmp_path: Path) -> None:
     datei = tmp_path / "neu" / ".claude.json"
     ergebnis = _cli(
-        "onboarding", "--claude-json", str(datei), "--trust", "/r",
-        cwd=tmp_path, env=_umgebung(tmp_path),
+        "onboarding",
+        "--claude-json",
+        str(datei),
+        "--trust",
+        "/r",
+        cwd=tmp_path,
+        env=_umgebung(tmp_path),
     )
     assert ergebnis.returncode == 0, ergebnis.stderr
     daten = json.loads(datei.read_text(encoding="utf-8"))
@@ -132,8 +134,13 @@ def test_onboarding_kaputtes_json_bricht_ab_ohne_ueberschreiben(tmp_path: Path) 
     datei = tmp_path / ".claude.json"
     datei.write_text("{kaputt", encoding="utf-8")
     ergebnis = _cli(
-        "onboarding", "--claude-json", str(datei), "--trust", "/r",
-        cwd=tmp_path, env=_umgebung(tmp_path),
+        "onboarding",
+        "--claude-json",
+        str(datei),
+        "--trust",
+        "/r",
+        cwd=tmp_path,
+        env=_umgebung(tmp_path),
     )
     assert ergebnis.returncode != 0
     assert datei.read_text(encoding="utf-8") == "{kaputt"
@@ -171,9 +178,7 @@ def test_sandbox_datei_je_worktree_mit_eigenem_pfad(tmp_path: Path, haupt: Path)
     heim = tmp_path / "heim"
     heim.mkdir()
     for ziel in (sieben, acht):
-        ergebnis = _cli(
-            "sandbox", str(ziel), "--repo", str(haupt), cwd=haupt, env=_umgebung(heim)
-        )
+        ergebnis = _cli("sandbox", str(ziel), "--repo", str(haupt), cwd=haupt, env=_umgebung(heim))
         assert ergebnis.returncode == 0, ergebnis.stderr
 
     a = _sandbox_datei(sieben)
@@ -207,8 +212,12 @@ def test_sandbox_legt_fehlenden_worktree_an(tmp_path: Path) -> None:
     heim = tmp_path / "heim"
     heim.mkdir()
     ergebnis = _cli(
-        "sandbox", "9", "--repo", str(haupt),
-        cwd=haupt, env=_umgebung(heim, BAU_WT_DIR=str(wt_basis)),
+        "sandbox",
+        "9",
+        "--repo",
+        str(haupt),
+        cwd=haupt,
+        env=_umgebung(heim, BAU_WT_DIR=str(wt_basis)),
     )
     assert ergebnis.returncode == 0, ergebnis.stderr
     ziel = wt_basis / "wt-9"
@@ -220,9 +229,7 @@ def test_sandbox_legt_fehlenden_worktree_an(tmp_path: Path) -> None:
 def test_sandbox_vorhandener_worktree_bleibt_unberuehrt(tmp_path: Path, haupt: Path) -> None:
     ziel = _worktree(haupt, tmp_path / "wt" / "wt-5", "eigener-zweig")
     (ziel / "arbeit.txt").write_text("halb fertig\n", encoding="utf-8")
-    ergebnis = _cli(
-        "sandbox", str(ziel), "--repo", str(haupt), cwd=haupt, env=_umgebung(tmp_path)
-    )
+    ergebnis = _cli("sandbox", str(ziel), "--repo", str(haupt), cwd=haupt, env=_umgebung(tmp_path))
     assert ergebnis.returncode == 0, ergebnis.stderr
     assert _git(ziel, "branch", "--show-current") == "eigener-zweig"
     assert (ziel / "arbeit.txt").read_text(encoding="utf-8") == "halb fertig\n"
@@ -246,11 +253,12 @@ def test_sandbox_praefix_modus_aus_und_fehlendes_srt(tmp_path: Path, haupt: Path
 def test_sandbox_praefix_trocken_schreibt_nichts(tmp_path: Path, haupt: Path) -> None:
     ziel = tmp_path / "wt" / "wt-4"
     an = {"sandbox": {"modus": "an"}}
-    praefix = nest.sandbox_praefix(
-        an, str(ziel), haupt, which={"srt": "/x/srt", "bwrap": "/x/bwrap"}.get, trocken=True
-    )
+    praefix = nest.sandbox_praefix(an, str(ziel), haupt, which={"srt": "/x/srt", "bwrap": "/x/bwrap"}.get, trocken=True)
     assert praefix == [
-        "/x/srt", "--settings", str(ziel / ".to-spawn" / "sandbox.json"), "--",
+        "/x/srt",
+        "--settings",
+        str(ziel / ".to-spawn" / "sandbox.json"),
+        "--",
         *nest.SANDBOX_KENNUNG,
     ]
     assert not ziel.exists()
@@ -262,8 +270,11 @@ def _bau_repo(tmp_path: Path, modus: str) -> Path:
     manifeste.mkdir(parents=True)
     (manifeste / "spec-900.json").write_text(
         json.dumps(
-            {"spec": 900, "feature": "wegwerf",
-             "tickets": {"901": {"title": "Wegwerf", "schaetzung_k": 50, "umfang": "x"}}},
+            {
+                "spec": 900,
+                "feature": "wegwerf",
+                "tickets": {"901": {"title": "Wegwerf", "schaetzung_k": 50, "umfang": "x"}},
+            },
             ensure_ascii=False,
         ),
         encoding="utf-8",
@@ -292,8 +303,14 @@ def test_bau_probelauf_zeigt_sandbox_praefix(tmp_path: Path, modus: str) -> None
     )
     ergebnis = subprocess.run(
         [sys.executable, str(SKRIPTE / "bau.py"), "901", "--dry-run"],
-        cwd=str(repo), env=umgebung, capture_output=True, text=True,
-        encoding="utf-8", errors="replace", timeout=60, check=False,
+        cwd=str(repo),
+        env=umgebung,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+        check=False,
     )
     ausgabe = ergebnis.stdout + ergebnis.stderr
     assert ergebnis.returncode == 0, ausgabe
@@ -347,16 +364,19 @@ def bws_welt(tmp_path: Path) -> tuple[Path, dict[str, str]]:
 
 
 @pytest.mark.braucht("posix")  # (#68)
-def test_secrets_schreibt_env_600_ohne_werte_in_ausgabe(
-    tmp_path: Path, bws_welt: tuple[Path, dict[str, str]]
-) -> None:
+def test_secrets_schreibt_env_600_ohne_werte_in_ausgabe(tmp_path: Path, bws_welt: tuple[Path, dict[str, str]]) -> None:
     _heim, umgebung = bws_welt
     ziel = tmp_path / "repo" / ".env"
     ziel.parent.mkdir()
     ziel.write_text("ALT=1\nAPI_KEY=alter-wert\n# Kommentar\n", encoding="utf-8")
     ergebnis = _cli(
-        "secrets", "--ziel", str(ziel), "--projekt", "proj-42",
-        cwd=tmp_path, env={**umgebung, "BWS_ACCESS_TOKEN": TOKEN},
+        "secrets",
+        "--ziel",
+        str(ziel),
+        "--projekt",
+        "proj-42",
+        cwd=tmp_path,
+        env={**umgebung, "BWS_ACCESS_TOKEN": TOKEN},
     )
     ausgabe = ergebnis.stdout + ergebnis.stderr
     assert ergebnis.returncode == 0, ausgabe
@@ -375,9 +395,7 @@ def test_secrets_schreibt_env_600_ohne_werte_in_ausgabe(
 
 
 @pytest.mark.braucht("posix")  # (#68)
-def test_secrets_token_aus_datei(
-    tmp_path: Path, bws_welt: tuple[Path, dict[str, str]]
-) -> None:
+def test_secrets_token_aus_datei(tmp_path: Path, bws_welt: tuple[Path, dict[str, str]]) -> None:
     heim, umgebung = bws_welt
     token_datei = heim / ".config" / "to-spawn" / "bws_token"
     token_datei.parent.mkdir(parents=True)
@@ -398,17 +416,18 @@ def test_secrets_bws_fehler_laesst_env_unveraendert(
     ziel = tmp_path / ".env"
     ziel.write_text("ALT=1\n", encoding="utf-8")
     ergebnis = _cli(
-        "secrets", "--ziel", str(ziel),
-        cwd=tmp_path, env={**umgebung, "BWS_ACCESS_TOKEN": TOKEN, **stoerung},
+        "secrets",
+        "--ziel",
+        str(ziel),
+        cwd=tmp_path,
+        env={**umgebung, "BWS_ACCESS_TOKEN": TOKEN, **stoerung},
     )
     assert ergebnis.returncode != 0
     assert ziel.read_text(encoding="utf-8") == "ALT=1\n"
     assert TOKEN not in ergebnis.stdout + ergebnis.stderr
 
 
-def test_secrets_ohne_token_setup_zeile(
-    tmp_path: Path, bws_welt: tuple[Path, dict[str, str]]
-) -> None:
+def test_secrets_ohne_token_setup_zeile(tmp_path: Path, bws_welt: tuple[Path, dict[str, str]]) -> None:
     _heim, umgebung = bws_welt
     ziel = tmp_path / ".env"
     ergebnis = _cli("secrets", "--ziel", str(ziel), cwd=tmp_path, env=umgebung)
@@ -437,9 +456,7 @@ def _werkzeug_welt(tmp_path: Path) -> tuple[Path, Path, Path]:
     claude_home = tmp_path / "heim" / ".claude"
     ordner = claude_home / "skills" / "skill-da"
     ordner.mkdir(parents=True)
-    (ordner / "SKILL.md").write_text(
-        "---\nname: skill-da\ndescription: probe\n---\n", encoding="utf-8"
-    )
+    (ordner / "SKILL.md").write_text("---\nname: skill-da\ndescription: probe\n---\n", encoding="utf-8")
     home_json = tmp_path / "heim" / ".claude.json"
     return repo, claude_home, home_json
 
@@ -456,8 +473,12 @@ def test_werkzeuge_nur_pruefen_ruft_nie_installation(tmp_path: Path) -> None:
         return None if name == "ffmpeg" else f"/x/{name}"
 
     bericht = nest.pruefe_werkzeuge(
-        repo, claude_home=claude_home, home_json=home_json,
-        which=which, ausfuehren=ausfuehren, installieren=False,
+        repo,
+        claude_home=claude_home,
+        home_json=home_json,
+        which=which,
+        ausfuehren=ausfuehren,
+        installieren=False,
     )
     assert aufrufe == []
     assert bericht.exit_code == 1
@@ -487,8 +508,12 @@ def test_werkzeuge_installieren_ruft_ausfuehrer(tmp_path: Path) -> None:
         return f"/x/{name}"
 
     bericht = nest.pruefe_werkzeuge(
-        repo, claude_home=claude_home, home_json=home_json,
-        which=which, ausfuehren=ausfuehren, installieren=True,
+        repo,
+        claude_home=claude_home,
+        home_json=home_json,
+        which=which,
+        ausfuehren=ausfuehren,
+        installieren=True,
     )
     assert len(aufrufe) == 1 and "apt-get" in aufrufe[0] and aufrufe[0][-1] == "ffmpeg"
     zeilen = {z.name: z.zustand for z in bericht.unterbau}
@@ -517,8 +542,11 @@ def test_werkzeuge_cli_alles_da_exit_0(tmp_path: Path) -> None:
     for name in ("apt-get", "npm", "sudo"):
         attrappe(binaer, name, _PROTOKOLL.format(protokoll=str(protokoll), name=name))
     ergebnis = _cli(
-        "werkzeuge", "--repo", str(repo),
-        cwd=tmp_path, env=_umgebung(claude_home.parent, PATH=str(binaer)),
+        "werkzeuge",
+        "--repo",
+        str(repo),
+        cwd=tmp_path,
+        env=_umgebung(claude_home.parent, PATH=str(binaer)),
     )
     assert ergebnis.returncode == 0, ergebnis.stdout + ergebnis.stderr
     aufrufe = protokoll.read_text(encoding="utf-8") if protokoll.exists() else ""
@@ -533,9 +561,7 @@ def test_auswahl_skills_und_mcps_aus_werkzeugen(tmp_path: Path) -> None:
     ordner = claude_home / "skills" / "skill-ab"
     ordner.mkdir()
     (ordner / "SKILL.md").write_text("---\nname: skill-ab\n---\n", encoding="utf-8")
-    home_json.write_text(
-        json.dumps({"mcpServers": {"mcp-an": {}, "mcp-fremd": {}}}), encoding="utf-8"
-    )
+    home_json.write_text(json.dumps({"mcpServers": {"mcp-an": {}, "mcp-fremd": {}}}), encoding="utf-8")
     datei = repo / ".to-spawn" / "werkzeuge.json"
     daten = json.loads(datei.read_text(encoding="utf-8"))
     daten["kategorien"]["recherche"] = ["mcp-an"]
@@ -559,9 +585,7 @@ def test_rechte_ohne_terminal_exit_3_datei_unveraendert(tmp_path: Path) -> None:
     einstellungen = heim / ".claude" / "settings.json"
     einstellungen.parent.mkdir(parents=True)
     einstellungen.write_text('{"model": "x"}\n', encoding="utf-8")
-    ergebnis = _cli(
-        "rechte", "--eintragen", cwd=tmp_path, env=_umgebung(heim), stdin="JA\n"
-    )
+    ergebnis = _cli("rechte", "--eintragen", cwd=tmp_path, env=_umgebung(heim), stdin="JA\n")
     assert ergebnis.returncode == 3
     assert "Das darf nur ein Mensch im eigenen Terminal" in ergebnis.stdout + ergebnis.stderr
     assert einstellungen.read_text(encoding="utf-8") == '{"model": "x"}\n'
@@ -607,26 +631,70 @@ def test_rechte_eintragen_nur_mit_ja_ohne_doppelte(tmp_path: Path) -> None:
 
 
 def test_nest_ordner_ohne_repo_eigene_namen() -> None:
-    for datei in [*NEST.rglob("*"), SKILL / "to_spawn" / "nest.py"]:
-        if datei.is_file():
-            assert "duoplus" not in datei.read_text(encoding="utf-8").lower(), datei
+    for datei in [*repo_dateien(NEST), SKILL / "to_spawn" / "nest.py"]:
+        try:
+            text = datei.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        assert "duoplus" not in text.lower(), datei
+
+
+def test_nest_ordner_ueberspringt_pycache_und_binaer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#532: übrig gebliebene ``nest/__pycache__/*.pyc`` und Binärdateien machen den Wächter nicht rot."""
+    # Fall 1: Git-Repo mit getrackter Textdatei + ungetracktem __pycache__/x.pyc (Zufalls-Bytes)
+    repo = _neues_repo(tmp_path / "repo")
+    nest_git = repo / "nest"
+    nest_git.mkdir()
+    (nest_git / "sauber.sh").write_text("#!/usr/bin/env bash\necho ok\n", encoding="utf-8")
+    _git(repo, "add", "nest/sauber.sh")
+    (nest_git / "__pycache__").mkdir()
+    (nest_git / "__pycache__" / "x.pyc").write_bytes(b"\xcb\r\r\n\x00\x80\xff\xfe\xde\xad")
+    monkeypatch.setattr(sys.modules[__name__], "NEST", nest_git)
+    test_nest_ordner_ohne_repo_eigene_namen()
+
+    # Gegenprobe: getrackte Datei mit verbotenem Namen schlägt weiter an
+    (nest_git / "verboten.sh").write_text("echo duoplus\n", encoding="utf-8")
+    _git(repo, "add", "nest/verboten.sh")
+    with pytest.raises(AssertionError):
+        test_nest_ordner_ohne_repo_eigene_namen()
+
+    # Fall 2: Ohne git (Rückfall) überspringt der Wächter __pycache__ und Binärdateien ebenfalls
+    nest_lose = tmp_path / "ohne-git" / "nest"
+    (nest_lose / "__pycache__").mkdir(parents=True)
+    (nest_lose / "sauber.sh").write_text("#!/usr/bin/env bash\necho ok\n", encoding="utf-8")
+    (nest_lose / "__pycache__" / "x.pyc").write_bytes(b"\xcb\r\r\n\x00\x80\xff\xfe")
+    (nest_lose / "bild.bin").write_bytes(b"\x89PNG\r\n\x1a\n\x80\xff")
+    monkeypatch.setattr(sys.modules[__name__], "NEST", nest_lose)
+    test_nest_ordner_ohne_repo_eigene_namen()
 
 
 @pytest.mark.parametrize("name", ["nest_server.sh", "nest_push.sh", "ssh_durch_sandbox.sh"])
 @pytest.mark.braucht("bash")  # (#68)
 def test_nest_skripte_syntax_sauber(name: str) -> None:
-    ergebnis = subprocess.run(
-        ["bash", "-n", str(NEST / name)], capture_output=True, text=True, check=False
-    )
+    ergebnis = subprocess.run(["bash", "-n", str(NEST / name)], capture_output=True, text=True, check=False)
     assert ergebnis.returncode == 0, ergebnis.stderr
 
 
 @pytest.mark.braucht("bash")  # (#68)
 def test_nest_server_trocken_zeigt_parameter(tmp_path: Path) -> None:
     ergebnis = subprocess.run(
-        ["bash", str(NEST / "nest_server.sh"), "--trocken", "--repo", "probe-org/probe-repo",
-         "--nutzer", "probenutzer", "--git-name", "Probe", "--git-mail", "p@example.invalid"],
-        capture_output=True, text=True, timeout=30, check=False,
+        [
+            "bash",
+            str(NEST / "nest_server.sh"),
+            "--trocken",
+            "--repo",
+            "probe-org/probe-repo",
+            "--nutzer",
+            "probenutzer",
+            "--git-name",
+            "Probe",
+            "--git-mail",
+            "p@example.invalid",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
     )
     ausgabe = ergebnis.stdout + ergebnis.stderr
     assert ergebnis.returncode == 0, ausgabe
@@ -648,7 +716,10 @@ def test_nest_server_trocken_zeigt_parameter(tmp_path: Path) -> None:
 def test_nest_server_ohne_repo_bricht_ab() -> None:
     ergebnis = subprocess.run(
         ["bash", str(NEST / "nest_server.sh"), "--trocken"],
-        capture_output=True, text=True, timeout=30, check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
     )
     assert ergebnis.returncode == 2
     assert "--repo" in ergebnis.stderr
@@ -658,9 +729,11 @@ def test_nest_server_ohne_repo_bricht_ab() -> None:
 def test_nest_push_trocken_zeigt_auswahl(tmp_path: Path) -> None:
     repo, claude_home, _home_json = _werkzeug_welt(tmp_path)
     ergebnis = subprocess.run(
-        ["bash", str(NEST / "nest_push.sh"), "--trocken", "--host-root", "probe-root",
-         "--repo", str(repo)],
-        capture_output=True, text=True, timeout=60, check=False,
+        ["bash", str(NEST / "nest_push.sh"), "--trocken", "--host-root", "probe-root", "--repo", str(repo)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
         # TO_SPAWN_PY: Python des Aufrufers (#325) statt eines fremden python3 im PATH (#68).
         env=_umgebung(claude_home.parent, TO_SPAWN_PY=sys.executable),
     )
@@ -676,7 +749,9 @@ def test_ssh_durch_sandbox_ohne_proxy_bricht_ab(tmp_path: Path) -> None:
         ["bash", str(NEST / "ssh_durch_sandbox.sh"), "h", "22"],
         # TO_SPAWN_PY: unter Windows liegt kein Python in /usr/bin (#68).
         env={"PATH": "/usr/bin:/bin", "TO_SPAWN_PY": sys.executable},
-        capture_output=True, text=True, timeout=30,
+        capture_output=True,
+        text=True,
+        timeout=30,
         check=False,
     )
     assert ergebnis.returncode != 0
@@ -690,7 +765,6 @@ def test_install_kopiert_nest() -> None:
     assert '"nest"' in ps1
 
 
-
 # --- Übertragung: settings.json + MCPs ----------------------------------------------
 
 
@@ -702,8 +776,13 @@ def test_einstellungen_rechte_nie_aus_quelle_und_bleiben_am_ziel(tmp_path: Path)
     )
     ziel = tmp_path / "ziel.json"
     ergebnis = _cli(
-        "einstellungen", "--quelle", str(quelle), "--ziel", str(ziel),
-        cwd=tmp_path, env=_umgebung(tmp_path),
+        "einstellungen",
+        "--quelle",
+        str(quelle),
+        "--ziel",
+        str(ziel),
+        cwd=tmp_path,
+        env=_umgebung(tmp_path),
     )
     assert ergebnis.returncode == 0, ergebnis.stderr
     assert json.loads(ziel.read_text(encoding="utf-8")) == {"model": "neu"}
@@ -711,8 +790,7 @@ def test_einstellungen_rechte_nie_aus_quelle_und_bleiben_am_ziel(tmp_path: Path)
         json.dumps({"model": "alt", "permissions": {"allow": ["Bash(git status:*)"]}}),
         encoding="utf-8",
     )
-    _cli("einstellungen", "--quelle", str(quelle), "--ziel", str(ziel),
-         cwd=tmp_path, env=_umgebung(tmp_path))
+    _cli("einstellungen", "--quelle", str(quelle), "--ziel", str(ziel), cwd=tmp_path, env=_umgebung(tmp_path))
     daten = json.loads(ziel.read_text(encoding="utf-8"))
     assert daten["model"] == "neu"
     assert daten["permissions"] == {"allow": ["Bash(git status:*)"]}
@@ -735,8 +813,14 @@ def test_mcp_export_600_ohne_werte_in_ausgabe(tmp_path: Path) -> None:
     )
     ziel = tmp_path / "mcp.json"
     ergebnis = _cli(
-        "mcp-export", "--ziel", str(ziel), "suche", "chrome-devtools", "fehlt",
-        cwd=tmp_path, env=_umgebung(heim),
+        "mcp-export",
+        "--ziel",
+        str(ziel),
+        "suche",
+        "chrome-devtools",
+        "fehlt",
+        cwd=tmp_path,
+        env=_umgebung(heim),
     )
     assert ergebnis.returncode == 0, ergebnis.stderr
     assert GEHEIM_1 not in ergebnis.stdout + ergebnis.stderr
@@ -764,27 +848,35 @@ def test_fix_bau_probelauf_ohne_sandbox_konfig_ohne_srt(tmp_path: Path) -> None:
     for name in ("srt", "bwrap", "claude"):
         attrappe(binaer, name, "raise SystemExit(0)\n")
     umgebung = _umgebung(
-        tmp_path, PATH=f"{binaer}{os.pathsep}{os.environ['PATH']}",
+        tmp_path,
+        PATH=f"{binaer}{os.pathsep}{os.environ['PATH']}",
         BAU_WT_DIR=str(tmp_path / "wt"),
     )
     ergebnis = subprocess.run(
         [sys.executable, str(SKRIPTE / "bau.py"), "901", "--dry-run"],
-        cwd=str(repo), env=umgebung, capture_output=True, text=True,
-        encoding="utf-8", errors="replace", timeout=60, check=False,
+        cwd=str(repo),
+        env=umgebung,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+        check=False,
     )
     assert ergebnis.returncode == 0, ergebnis.stdout + ergebnis.stderr
     assert "--settings " + str(tmp_path / "wt") not in ergebnis.stdout + ergebnis.stderr
 
 
-def test_fix_secrets_null_schluessel_schreibt_nichts(
-    tmp_path: Path, bws_welt: tuple[Path, dict[str, str]]
-) -> None:
+def test_fix_secrets_null_schluessel_schreibt_nichts(tmp_path: Path, bws_welt: tuple[Path, dict[str, str]]) -> None:
     _heim, umgebung = bws_welt
     binaer = Path(umgebung["PATH"].split(os.pathsep)[0])
     attrappe(binaer, "bws", "import sys; sys.stdout.write('[]')\n")
     ziel = tmp_path / ".env"
     ergebnis = _cli(
-        "secrets", "--ziel", str(ziel), cwd=tmp_path,
+        "secrets",
+        "--ziel",
+        str(ziel),
+        cwd=tmp_path,
         env={**umgebung, "BWS_ACCESS_TOKEN": TOKEN},
     )
     assert ergebnis.returncode != 0
@@ -794,18 +886,19 @@ def test_fix_secrets_null_schluessel_schreibt_nichts(
     assert ziel.read_text(encoding="utf-8") == "ALT=1\n"
 
 
-def test_fix_env_wert_einfache_anfuehrung_rundreise(
-    tmp_path: Path, bws_welt: tuple[Path, dict[str, str]]
-) -> None:
+def test_fix_env_wert_einfache_anfuehrung_rundreise(tmp_path: Path, bws_welt: tuple[Path, dict[str, str]]) -> None:
     dotenv = pytest.importorskip("dotenv")
     _heim, umgebung = bws_welt
     binaer = Path(umgebung["PATH"].split(os.pathsep)[0])
-    schwierig = "dummy it's $HOME \"x\" #y"
+    schwierig = 'dummy it\'s $HOME "x" #y'
     daten = json.dumps([{"key": "SCHWER", "value": schwierig}])
     attrappe(binaer, "bws", f"import sys; sys.stdout.write({daten!r} + '\\n')\n")
     ziel = tmp_path / ".env"
     ergebnis = _cli(
-        "secrets", "--ziel", str(ziel), cwd=tmp_path,
+        "secrets",
+        "--ziel",
+        str(ziel),
+        cwd=tmp_path,
         env={**umgebung, "BWS_ACCESS_TOKEN": TOKEN},
     )
     assert ergebnis.returncode == 0, ergebnis.stderr
@@ -822,14 +915,17 @@ def test_fix_mcp_import_merged_atomar_600(tmp_path: Path) -> None:
     )
     quelle = tmp_path / "mcp.json"
     quelle.write_text(
-        json.dumps(
-            {"alt": {"command": "neu"}, "suche": {"command": "npx", "env": {"K": GEHEIM_1}}}
-        ),
+        json.dumps({"alt": {"command": "neu"}, "suche": {"command": "npx", "env": {"K": GEHEIM_1}}}),
         encoding="utf-8",
     )
     ergebnis = _cli(
-        "mcp-import", "--quelle", str(quelle), "--claude-json", str(claude_json),
-        cwd=tmp_path, env=_umgebung(tmp_path),
+        "mcp-import",
+        "--quelle",
+        str(quelle),
+        "--claude-json",
+        str(claude_json),
+        cwd=tmp_path,
+        env=_umgebung(tmp_path),
     )
     assert ergebnis.returncode == 0, ergebnis.stderr
     assert GEHEIM_1 not in ergebnis.stdout + ergebnis.stderr
@@ -913,8 +1009,12 @@ def test_fix_worktree_anlegen_holt_origin(tmp_path: Path) -> None:
     heim = tmp_path / "heim"
     heim.mkdir()
     ergebnis = _cli(
-        "sandbox", "12", "--repo", str(haupt),
-        cwd=haupt, env=_umgebung(heim, BAU_WT_DIR=str(tmp_path / "wt")),
+        "sandbox",
+        "12",
+        "--repo",
+        str(haupt),
+        cwd=haupt,
+        env=_umgebung(heim, BAU_WT_DIR=str(tmp_path / "wt")),
     )
     assert ergebnis.returncode == 0, ergebnis.stderr
     assert (tmp_path / "wt" / "wt-12" / "neu.txt").is_file(), "vorher git fetch origin"
@@ -925,9 +1025,7 @@ def test_fix_zweigname_ohne_ticket_gesaeubert(tmp_path: Path) -> None:
     haupt = tmp_path / "klon"
     subprocess.run(["git", "clone", "-q", str(quelle), str(haupt)], check=True)
     ziel = tmp_path / "wt" / "mein wt~x"
-    ergebnis = _cli(
-        "sandbox", str(ziel), "--repo", str(haupt), cwd=haupt, env=_umgebung(tmp_path)
-    )
+    ergebnis = _cli("sandbox", str(ziel), "--repo", str(haupt), cwd=haupt, env=_umgebung(tmp_path))
     assert ergebnis.returncode == 0, ergebnis.stderr
     assert _git(ziel, "branch", "--show-current") == "mein-wt-x"
 
@@ -946,8 +1044,13 @@ def test_fix_werkzeuge_nur_genannte_unterbauten(tmp_path: Path) -> None:
         return 1
 
     bericht = nest.pruefe_werkzeuge(
-        repo, claude_home=claude_home, home_json=home_json,
-        which=lambda _n: None, ausfuehren=ausfuehren, installieren=True, ist_root=True,
+        repo,
+        claude_home=claude_home,
+        home_json=home_json,
+        which=lambda _n: None,
+        ausfuehren=ausfuehren,
+        installieren=True,
+        ist_root=True,
     )
     namen = {z.name for z in bericht.unterbau}
     assert {"bubblewrap", "socat", "ripgrep", "srt"} <= namen
@@ -957,17 +1060,19 @@ def test_fix_werkzeuge_nur_genannte_unterbauten(tmp_path: Path) -> None:
     assert "ffmpeg" not in installiert and "@openai/codex" in installiert
     datei.unlink()
     ohne = nest.pruefe_werkzeuge(
-        repo, claude_home=claude_home, home_json=home_json,
-        which=lambda _n: None, ausfuehren=ausfuehren, installieren=False,
+        repo,
+        claude_home=claude_home,
+        home_json=home_json,
+        which=lambda _n: None,
+        ausfuehren=ausfuehren,
+        installieren=False,
     )
     assert {z.name for z in ohne.unterbau} == {"bubblewrap", "socat", "ripgrep", "srt"}
     assert ohne.hinweise
 
 
 def test_fix_rechte_ergaenzt(tmp_path: Path) -> None:
-    for eintrag in (
-        "Bash(git push:*)", "Bash(gh issue close:*)", "Bash(python3 */to_spawn.py eintrag:*)"
-    ):
+    for eintrag in ("Bash(git push:*)", "Bash(gh issue close:*)", "Bash(python3 */to_spawn.py eintrag:*)"):
         assert eintrag in nest.RECHTE_ERLAUBEN
 
 
@@ -1031,9 +1136,14 @@ def test_fix_ssh_helfer_connect_ohne_anmeldung_in_argv(tmp_path: Path) -> None:
     ergebnis = subprocess.run(
         ["bash", str(NEST / "ssh_durch_sandbox.sh"), "10.0.0.9", "22"],
         input=b"hallo\n",
-        env={"PATH": "/usr/bin:/bin", "TO_SPAWN_PY": sys.executable,  # (#68)
-             "HTTPS_PROXY": f"http://nutzer:dummy-auth@127.0.0.1:{proxy.port}"},
-        capture_output=True, timeout=30, check=False,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "TO_SPAWN_PY": sys.executable,  # (#68)
+            "HTTPS_PROXY": f"http://nutzer:dummy-auth@127.0.0.1:{proxy.port}",
+        },
+        capture_output=True,
+        timeout=30,
+        check=False,
     )
     proxy.faden.join(5)
     assert ergebnis.returncode == 0, ergebnis.stderr

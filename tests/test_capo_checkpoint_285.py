@@ -36,7 +36,7 @@ from test_waechter_213 import (  # noqa: F401  (welt = Fixture)
 SKILL = Path(__file__).resolve().parent.parent
 CHECKPOINT = "checkpoint:human"
 # Session-Kommentare tragen seit #402 (Nachschau R1) die Marke capo.SESSION_KOPF —
-# gh-Login trennt Session und David nicht (gleiches Konto).
+# gh-Login trennt Session und Menschen nicht (gleiches Konto).
 FRAGE = "Bau-Session: Frage: Soll der Abschalter sofort greifen?"
 VORSCHLAG = "Vorschlag: sofort aus, weil die Doktrin Kosten vor Komfort stellt."
 
@@ -96,7 +96,7 @@ def test_annahme_nach_frist_mit_vorschlag(welt: dict[str, Path]) -> None:
 
     annahme = [t for t in _texte(welt, "902") if t.startswith("Aufseher: Annahme nach")]
     assert len(annahme) == 1, _texte(welt, "902")
-    assert "nach Doktrin — David kann kippen" in annahme[0]
+    assert "nach Doktrin — der Mensch kann kippen" in annahme[0]
     assert "sofort aus, weil die Doktrin" in annahme[0]
 
     zeilen = [z for z in _bau_log(welt, "902") if z.get("typ") == "entscheidung"]
@@ -124,7 +124,7 @@ def test_vor_der_frist_passiert_nichts(welt: dict[str, Path]) -> None:
     assert _mails(welt) == []
 
 
-# --- c) David hat geantwortet → nichts ---------------------------------------
+# --- c) Der Mensch hat geantwortet → nichts ---------------------------------------
 
 
 def test_antwort_von_david_verhindert_annahme(welt: dict[str, Path]) -> None:
@@ -188,7 +188,7 @@ def test_folge_runde_bekommt_auftrag_mit(welt: dict[str, Path], tmux: dict[str, 
     innen = starts[0][-1]
     assert "BAU_AUFTRAG=" in innen, innen
     assert "beweis_fehlt" in innen and "commit_ohne_nummer" in innen, innen
-    assert innen.endswith("bau 901 --sofort"), innen
+    assert f"{folge.BAU_IM_FENSTER} 901 --sofort; " in innen, innen  # #277: bau.py direkt
 
 
 # --- f) bau --auftrag landet im Prompt ---------------------------------------

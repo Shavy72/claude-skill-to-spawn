@@ -1,6 +1,6 @@
 """Blocker gilt als erledigt bei grünem Staging (#1527).
 
-David (21.11.2026): „Kein Ticket darf darauf warten, dass ein anderes live ist.“
+Vorgabe des Menschen (21.11.2026): „Kein Ticket darf darauf warten, dass ein anderes live ist.“
 Ein Ticket mit Nutzer-Ablauf bleibt bis zum Live-Klickweg offen. Die Deploy-Schlange
 setzt nach grünem Staging-Deploy das Label ``staging:fertig``; ab dann zählt es für
 Folge-Tickets wie ein geschlossener Blocker. Die Regel lebt nur in
@@ -30,7 +30,7 @@ SKRIPTE = SKILL / "skripte"
 if str(SKILL) not in sys.path:
     sys.path.insert(0, str(SKILL))
 
-from to_spawn import gh, ticketstand  # noqa: E402
+from to_spawn import gh, ticket_zustand, ticketstand  # noqa: E402
 
 _ZAEHLER = itertools.count()
 
@@ -65,7 +65,7 @@ def test_offene_blocker_ueberspringt_staging_fertig() -> None:
 
 
 def test_label_name_eine_konstante() -> None:
-    assert gh.STAGING_FERTIG_LABEL == "staging:fertig"
+    assert ticket_zustand.STAGING_FERTIG_LABEL == "staging:fertig"
 
 
 # --- bau.py wartet nicht auf einen Blocker, der grün auf Staging liegt -------------

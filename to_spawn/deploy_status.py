@@ -17,12 +17,11 @@ from __future__ import annotations
 import json
 import logging
 import os
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from . import bau_log, config
+from . import bau_log, config, prozessbaum
 
 log = logging.getLogger("to_spawn.deploy_status")
 
@@ -66,11 +65,7 @@ def lese_status(pfad: Path) -> list[dict[str, Any]]:
         except ValueError:
             log.warning("Kaputte Zeile %d in %s übersprungen.", nummer, pfad)
             continue
-        if (
-            not isinstance(eintrag, dict)
-            or not eintrag.get("phase")
-            or not eintrag.get("lauf")
-        ):
+        if not isinstance(eintrag, dict) or not eintrag.get("phase") or not eintrag.get("lauf"):
             log.warning("Zeile %d in %s ohne phase/lauf übersprungen.", nummer, pfad)
             continue
         zeilen.append(eintrag)
@@ -92,11 +87,7 @@ def _schluessel(eintrag: dict[str, Any]) -> tuple[str, str, str]:
 
 def uebernimm(repo: Path, ticket: str, zeilen: list[dict[str, Any]]) -> int:
     """Neue Phasen als ``deploy_phase`` ins Bau-Log; Rückgabe = Zahl neuer Zeilen."""
-    schon_da = {
-        _schluessel(z)
-        for z in bau_log.lese(repo, ticket)
-        if z.get("typ") == "deploy_phase"
-    }
+    schon_da = {_schluessel(z) for z in bau_log.lese(repo, ticket) if z.get("typ") == "deploy_phase"}
     neu = 0
     for zeile in zeilen:
         schluessel = _schluessel(zeile)
@@ -127,33 +118,20 @@ def _einzeilig(text: Any) -> str:
 
 
 def prozess_lebt(pid: Any) -> bool | None:
-    """True = lebt, False = sicher tot, None = unbekannt (keine PID, Windows, Fehler).
+    """True = lebt, False = sicher tot, None = unbekannt (ungültige PID oder Fehler).
 
-    Unter Windows gibt es keine Prüfung: ``os.kill(pid, 0)`` würde dort den
-    Prozess beenden, und die PID aus Git-Bash ist keine Windows-PID.
+    Fragt die eine Stelle :func:`prozessbaum.lebt` (Linux: ``/proc``, Windows: Kernel).
     """
-    if (
-        not isinstance(pid, int)
-        or isinstance(pid, bool)
-        or pid <= 0
-        or sys.platform == "win32"
-    ):
+    if not isinstance(pid, int) or isinstance(pid, bool) or not 0 < pid < 2**31:
         return None
     try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
+        return prozessbaum.lebt(pid)
     except OSError as fehler:
         log.warning("PID %s nicht prüfbar: %s", pid, fehler)
         return None
-    return True
 
 
-def bericht(
-    zeilen: list[dict[str, Any]], still_min: float, jetzt: datetime
-) -> tuple[str, int]:
+def bericht(zeilen: list[dict[str, Any]], still_min: float, jetzt: datetime) -> tuple[str, int]:
     """Kurzer Text (≤ 3 Zeilen) und Exit-Code für die Zeilen eines Laufs."""
     letzte = zeilen[-1]
     lauf = letzte.get("lauf")
@@ -193,8 +171,7 @@ def bericht(
     ]
     if still_s > still_min * 60:
         zeilen_text.append(
-            f"Keine neue Phase seit {int(still_s // 60)} min — Gate hängt oder ist gestorben, "
-            "Prozess prüfen"
+            f"Keine neue Phase seit {int(still_s // 60)} min — Gate hängt oder ist gestorben, Prozess prüfen"
         )
         return "\n".join(zeilen_text), EXIT_STILL
     return "\n".join(zeilen_text), EXIT_LAEUFT
@@ -237,9 +214,7 @@ def deploy_status(
         neu = uebernimm(repo, str(nummer), zeilen)
         log.debug("%d neue deploy_phase-Zeilen für Ticket %s", neu, nummer)
     else:
-        log.warning(
-            "kein Ticket (--ticket, TO_SPAWN_TICKET oder wt-<N>) — nur Anzeige, Bau-Log bleibt unverändert."
-        )
+        log.warning("kein Ticket (--ticket, TO_SPAWN_TICKET oder wt-<N>) — nur Anzeige, Bau-Log bleibt unverändert.")
 
     text, code = bericht(zeilen, still_min, datetime.now(timezone.utc))
     print(text)

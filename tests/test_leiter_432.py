@@ -22,7 +22,7 @@ import pytest
 SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL))
 
-from to_spawn import aufseher_stand, leiter, leitstand, respawn
+from to_spawn import aufseher_stand, leiter, leitstand, respawn, ticket_zustand
 
 SPEC = 9399
 TICKET = 9432
@@ -52,7 +52,7 @@ class FakeUmwelt:
         *,
         fenster: str = aufseher_stand.STILL,
         still_min: int | None = 0,
-        offen: bool | None = True,
+        stufe: ticket_zustand.Stufe | None = "offen",
         kontext_k: float | None = None,
         handoff_k: float = 250.0,
         werkzeug: FakeWerkzeug | None = None,
@@ -60,7 +60,7 @@ class FakeUmwelt:
         self.wt = wt
         self.fenster = fenster
         self.still_min = still_min
-        self.offen = offen
+        self.stufe = stufe
         self.kontext_k = kontext_k
         self.grenze = handoff_k
         self.uhr = time.time()
@@ -72,7 +72,7 @@ class FakeUmwelt:
     def lage(self, spec: int, ticket: int, seit: float | None) -> leiter.Lage:
         prompt = seit is not None and respawn.start_prompt_da(self.wt, ticket, seit)
         return leiter.Lage(
-            offen=self.offen,
+            stufe=self.stufe,
             fenster=self.fenster,
             still_min=self.still_min,
             kontext_k=self.kontext_k,
@@ -206,9 +206,7 @@ class Spion:
         self.aufrufe: list[tuple[Any, ...]] = []
         self.exit_code = exit_code
 
-    def __call__(
-        self, repo: Path, spec: int, ticket: int, **kw: Any
-    ) -> respawn.Ergebnis:
+    def __call__(self, repo: Path, spec: int, ticket: int, **kw: Any) -> respawn.Ergebnis:
         self.aufrufe.append((repo, spec, ticket, kw))
         return respawn.Ergebnis(self.exit_code, f"respawn #{ticket}: Testzeile")
 
@@ -223,9 +221,7 @@ def _stufe2(wt: Path) -> FakeUmwelt:
 
 
 @pytest.mark.xfail(strict=True, reason="#432 Fixrunde 1 F1/F6")
-def test_prompt_datei_frisch_respawn(
-    ordner: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_prompt_datei_frisch_respawn(ordner: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     spion = Spion()
     monkeypatch.setattr(respawn, "abloesen", spion)
     u = _stufe2(ordner)
@@ -239,9 +235,7 @@ def test_prompt_datei_frisch_respawn(
 
 
 @pytest.mark.xfail(strict=True, reason="#432 Fixrunde 1 F1/F3")
-def test_prompt_datei_respawn_scheitert_stufe2_bleibt(
-    ordner: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_prompt_datei_respawn_scheitert_stufe2_bleibt(ordner: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     spion = Spion(exit_code=2)
     monkeypatch.setattr(respawn, "abloesen", spion)
     u = _stufe2(ordner)
@@ -253,9 +247,7 @@ def test_prompt_datei_respawn_scheitert_stufe2_bleibt(
 
 
 @pytest.mark.xfail(strict=True, reason="#432 Fixrunde 1 F1/F6")
-def test_prompt_datei_fehlt_nichts(
-    ordner: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_prompt_datei_fehlt_nichts(ordner: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     spion = Spion()
     monkeypatch.setattr(respawn, "abloesen", spion)
     u = _stufe2(ordner)
@@ -298,7 +290,7 @@ def test_leiter_hat_keinen_eigenen_startweg() -> None:
 
 
 def test_ticket_zu_exit_einmal(ordner: Path) -> None:
-    u = FakeUmwelt(ordner, still_min=3, offen=False)
+    u = FakeUmwelt(ordner, still_min=3, stufe="zu")
     erg = _lauf(u)
     assert erg.exit == 0
     assert u.wz.getippt == [(ZIEL, "/exit")]
@@ -316,12 +308,10 @@ def test_ticket_zu_exit_einmal(ordner: Path) -> None:
     [
         {"still_min": 90},
         {"still_min": None, "kontext_k": 280.0},
-        {"still_min": 30, "offen": False},
+        {"still_min": 30, "stufe": "zu"},
     ],
 )
-def test_arbeitende_session_nie_angestupst(
-    ordner: Path, einstellung: dict[str, Any]
-) -> None:
+def test_arbeitende_session_nie_angestupst(ordner: Path, einstellung: dict[str, Any]) -> None:
     u = FakeUmwelt(ordner, fenster=aufseher_stand.ARBEITET, **einstellung)
     erg = _lauf(u)
     assert erg.exit == 0
@@ -330,18 +320,14 @@ def test_arbeitende_session_nie_angestupst(
 
 
 def test_rueckfrage_nie_getippt(ordner: Path) -> None:
-    u = FakeUmwelt(
-        ordner, fenster=aufseher_stand.RUECKFRAGE, still_min=60, kontext_k=300
-    )
+    u = FakeUmwelt(ordner, fenster=aufseher_stand.RUECKFRAGE, still_min=60, kontext_k=300)
     _lauf(u)
     assert u.wz.getippt == []
 
 
-@pytest.mark.parametrize(
-    "fenster", [aufseher_stand.KEIN_FENSTER, aufseher_stand.FENSTER_UNBEKANNT]
-)
+@pytest.mark.parametrize("fenster", [aufseher_stand.KEIN_FENSTER, aufseher_stand.FENSTER_UNBEKANNT])
 def test_kein_fenster_nichts(ordner: Path, fenster: str) -> None:
-    u = FakeUmwelt(ordner, fenster=fenster, still_min=60, offen=False)
+    u = FakeUmwelt(ordner, fenster=fenster, still_min=60, stufe="zu")
     _lauf(u)
     assert u.wz.getippt == []
 
@@ -366,14 +352,10 @@ def test_stufe2_arbeitet_bleibt(ordner: Path) -> None:
 
 
 def test_entscheide_rein() -> None:
-    lage = leiter.Lage(True, aufseher_stand.STILL, 20, None, False)
-    assert (
-        leiter.entscheide(lage, leiter.Gemerkt(0, None), 0.0, 250).aktion == "anstupsen"
-    )
-    lage19 = leiter.Lage(True, aufseher_stand.STILL, 19, None, False)
-    assert (
-        leiter.entscheide(lage19, leiter.Gemerkt(0, None), 0.0, 250).aktion == "nichts"
-    )
+    lage = leiter.Lage("offen", aufseher_stand.STILL, 20, None, False)
+    assert leiter.entscheide(lage, leiter.Gemerkt(0, None), 0.0, 250).aktion == "anstupsen"
+    lage19 = leiter.Lage("offen", aufseher_stand.STILL, 19, None, False)
+    assert leiter.entscheide(lage19, leiter.Gemerkt(0, None), 0.0, 250).aktion == "nichts"
     assert leiter.STUPS_MIN == 20 and leiter.NACH_STUPS_MIN == 15
 
 
@@ -410,9 +392,7 @@ def test_leitstand_kaputt_exit1_eine_zeile(ordner: Path) -> None:
 # --- Leitstand-Format ---------------------------------------------------------------------
 
 
-def test_leitstand_altes_und_neues_format(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_leitstand_altes_und_neues_format(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TO_SPAWN_LEITSTAND_ORDNER", str(tmp_path))
     leitstand.setze_leiter_stufe(1, 2)
     assert leitstand.leiter_stufe(1) == 2
@@ -421,9 +401,7 @@ def test_leitstand_altes_und_neues_format(
     assert leitstand.leiter_stufe(1) == 1
     assert leitstand.leiter_eintrag(1) == (1, 123.5)
     # Altes Format: nackte Zahl je Ticket.
-    leitstand.aendere_zustand(
-        lambda z: z.setdefault("leiter_stufe", {}).__setitem__("7", 4)
-    )
+    leitstand.aendere_zustand(lambda z: z.setdefault("leiter_stufe", {}).__setitem__("7", 4))
     assert leitstand.leiter_stufe(7) == 4
     assert leitstand.leiter_eintrag(7) == (4, None)
     roh = json.loads((tmp_path / "zustand.json").read_text(encoding="utf-8"))
@@ -446,9 +424,7 @@ def test_handoff_grenze_aus_smart_zone(tmp_path: Path) -> None:
 
 
 def _cli_modul() -> Any:
-    spec = importlib.util.spec_from_file_location(
-        "to_spawn_cli_432", SKILL / "to_spawn.py"
-    )
+    spec = importlib.util.spec_from_file_location("to_spawn_cli_432", SKILL / "to_spawn.py")
     assert spec and spec.loader
     modul = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(modul)
@@ -465,9 +441,7 @@ def test_cli_dry_run_genau_eine_zeile(
     monkeypatch.setattr(leiter, "echte_umwelt", lambda repo, gh_repo: u)
     monkeypatch.setenv("TO_SPAWN_REPO", str(tmp_path))
     monkeypatch.chdir(tmp_path)
-    code = _cli_modul().main(
-        ["leiter", str(SPEC), str(TICKET), "--dry-run", "--gh-repo", "a/b"]
-    )
+    code = _cli_modul().main(["leiter", str(SPEC), str(TICKET), "--dry-run", "--gh-repo", "a/b"])
     raus = capsys.readouterr().out
     assert code == 0
     assert raus.endswith("\n") and raus.count("\n") == 1, repr(raus)

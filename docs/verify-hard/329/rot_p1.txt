@@ -1,0 +1,13 @@
+# Rot 1: Ordner review/ fehlt (Stand origin/main)
+E       assert ['_gemeinsam....TRAG.md', ...] == []
+FAILED tests/test_review_quelle_329.py::test_quelle_vollstaendig - AssertionE...
+1 failed, 3 passed in 0.08s
+
+# Rot 2: review/ 1:1 aus installierter Fassung kopiert, nur Test-Helfer umgestellt, noch nicht neutralisiert, ohne .gitignore
+E       AssertionError: fehlt unter review/: ['.gitignore']
+E       assert ['.gitignore'] == []
+E       AssertionError: nicht öffentlich-tauglich: ['review/VERTRAG.md:4 (duoplus)', 'review/VERTRAG.md:4 (heim-pfad)', 'review/VERTRAG.md:103 (duoplus)', 'review/auftraege/datenbank.md:14 (duoplus)', 'review/auftraege/infra.md:12 (duoplus)', 'review/auftraege/kosten.md:17 (duoplus)', 'review/auftraege/oberflaeche.md:20 (duoplus)', 'review/auftraege/python.md:17 (duoplus)', 'review/auftraege/shell.md:18 (duoplus)', 'review/auftraege/sicherheit.md:18 (duoplus)', 'review/auftraege/spec.md:22 (duoplus)', 'review/auftraege/tests.md:16 (duoplus)']
+E       assert ['review/VERT...uoplus)', ...] == []
+FAILED tests/test_review_quelle_329.py::test_quelle_vollstaendig - AssertionE...
+FAILED tests/test_review_quelle_329.py::test_oeffentlich_tauglich - Assertion...
+2 failed, 2 passed in 0.14s

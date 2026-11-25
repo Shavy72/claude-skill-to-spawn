@@ -123,17 +123,11 @@ class Blick:
     def _bereit(self, ticket: int) -> bool:
         """Ticket offen und Fenster still? Sonst (arbeitet, Rückfrage, zu) nichts tun."""
         lage = self.naht.lage(self.spec, ticket)
-        if (
-            lage is None
-            or lage.offen is not True
-            or lage.fenster != aufseher_stand.STILL
-        ):
+        if lage is None or lage.stufe != "offen" or lage.fenster != aufseher_stand.STILL:
             log.debug(
                 "#%s: Handoff fällig, aber %s — keine Leiter",
                 ticket,
-                "kein Sub-Issue"
-                if lage is None
-                else f"offen={lage.offen}, Fenster {lage.fenster}",
+                "kein Sub-Issue" if lage is None else f"stufe={lage.stufe}, Fenster {lage.fenster}",
             )
             return False
         return True
@@ -186,11 +180,7 @@ class EchteNaht:
         """Ticket-Nummern aus ``docs/agents/manifests/spec-<S>.json``; Namen ohne Zahl
         fallen weg. ``FileNotFoundError``/``ValueError`` wie :func:`manifest.lade_manifest`."""
         nummern = manifest.lade_manifest(self.repo, spec)["tickets"]
-        return [
-            int(n)
-            for n in sorted(nummern, key=manifest.ticket_schluessel)
-            if str(n).isdigit()
-        ]
+        return [int(n) for n in sorted(nummern, key=manifest.ticket_schluessel) if str(n).isdigit()]
 
     def aktuell(self, ticket: int) -> eigener_handoff.Treffer | None:
         """Gültiger eigener Handoff (:func:`eigener_handoff.aktuell`)."""
@@ -251,9 +241,7 @@ class EchteNaht:
 
 
 @contextmanager
-def laeuft(
-    spec: int, naht: Naht, *, uhr: Callable[[], float] = time.time
-) -> Iterator[Blick]:
+def laeuft(spec: int, naht: Naht, *, uhr: Callable[[], float] = time.time) -> Iterator[Blick]:
     """Blick als Daemon-Faden ``handoff-blick-<S>``, solange der ``with``-Block läuft.
 
     Zwischen zwei Durchgängen wartet der Faden auf ein Stopp-Signal (kein ``sleep``),

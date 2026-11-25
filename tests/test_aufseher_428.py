@@ -21,6 +21,8 @@ from types import ModuleType
 
 import pytest
 
+from conftest import repo_dateien
+
 SKILL = Path(__file__).resolve().parent.parent
 NEST = SKILL / "nest" / "nest_server.sh"
 INSTALL_PS1 = SKILL / "install.ps1"
@@ -51,6 +53,10 @@ ERLAUBTE_WACHE_VORSILBEN: tuple[str, ...] = ("Deploy-", "Gate-", "Blocker-", "Um
 #: Issue-Kommentare „Wächter: …“ müssen weiter als eigene Kommentare erkannt werden).
 RUECKWAERTS_MARKE = "#428-alt"
 
+#: Einzelne Fundstellen (Datei, Zeilentext ohne Rand-Leerzeichen), die den alten Namen tragen dürfen.
+#: Neue Einträge nur mit Ticket-Grund. (#214 Teil B: review-hook/stop.py angeglichen, Liste wieder leer.)
+AUSNAHME_ZEILEN: frozenset[tuple[str, str]] = frozenset()
+
 ROLLEN_MUSTER = re.compile(r"Wächter\w*|\bWachen?\b|\b[Ww]atchers?\b")
 
 TEXT_ENDUNGEN = {
@@ -69,8 +75,8 @@ TEXT_ENDUNGEN = {
 
 def _aktive_dateien() -> list[Path]:
     dateien: list[Path] = []
-    for pfad in SKILL.rglob("*"):
-        if not pfad.is_file() or pfad.suffix not in TEXT_ENDUNGEN:
+    for pfad in repo_dateien(SKILL):
+        if pfad.suffix not in TEXT_ENDUNGEN:
             continue
         rel = pfad.relative_to(SKILL).as_posix()
         if any(rel == o or rel.startswith(o + "/") for o in AUSGENOMMENE_ORDNER):
@@ -93,6 +99,17 @@ def _rollen_treffer(text: str) -> list[str]:
     return treffer
 
 
+def _funde_in_zeilen(rel: str, zeilen: list[str]) -> list[str]:
+    """Fundstellen ``rel:nr: wort`` einer Datei, ohne Rückwärts-Marke und ``AUSNAHME_ZEILEN``."""
+    funde: list[str] = []
+    for nr, zeile in enumerate(zeilen, 1):
+        if RUECKWAERTS_MARKE in zeile or (rel, zeile.strip()) in AUSNAHME_ZEILEN:
+            continue
+        for wort in _rollen_treffer(zeile):
+            funde.append(f"{rel}:{nr}: {wort}")
+    return funde
+
+
 def test_grep_waechter_keine_alte_rollenbezeichnung_in_aktiven_dateien() -> None:
     funde: list[str] = []
     for pfad in _aktive_dateien():
@@ -100,11 +117,7 @@ def test_grep_waechter_keine_alte_rollenbezeichnung_in_aktiven_dateien() -> None
             zeilen = pfad.read_text(encoding="utf-8").splitlines()
         except UnicodeDecodeError:
             continue
-        for nr, zeile in enumerate(zeilen, 1):
-            if RUECKWAERTS_MARKE in zeile:
-                continue
-            for wort in _rollen_treffer(zeile):
-                funde.append(f"{pfad.relative_to(SKILL)}:{nr}: {wort}")
+        funde += _funde_in_zeilen(pfad.relative_to(SKILL).as_posix(), zeilen)
     assert not funde, "Alte Rollenbezeichnung gefunden:\n" + "\n".join(funde[:60])
 
 
@@ -114,10 +127,7 @@ def test_rollen_muster_trifft_rolle_aber_nicht_identifier() -> None:
     assert _rollen_treffer("die Nachfolge-Wache startet") == ["Wache"]
     assert _rollen_treffer("The watcher tab") == ["watcher"]
     assert _rollen_treffer("Deploy-Wache: pgrep") == []
-    assert (
-        _rollen_treffer("waechter_lauf.py wache.py -OhneWache TO_SPAWN_WACHE_SPEC")
-        == []
-    )
+    assert _rollen_treffer("waechter_lauf.py wache.py -OhneWache TO_SPAWN_WACHE_SPEC") == []
 
 
 def test_skill_md_eine_aufsicht_je_spec() -> None:
@@ -133,9 +143,7 @@ def test_skill_md_eine_aufsicht_je_spec() -> None:
 def _bashrc_funktionen() -> str:
     """Funktionsblock der .bashrc aus nest_server.sh (von ``_bau_py()`` bis ``sessions()``)."""
     text = NEST.read_text(encoding="utf-8")
-    m = re.search(
-        r"^_bau_py\(\) \{.*?^sessions\(\) \{[^\n]*\n", text, re.DOTALL | re.MULTILINE
-    )
+    m = re.search(r"^_bau_py\(\) \{.*?^sessions\(\) \{[^\n]*\n", text, re.DOTALL | re.MULTILINE)
     assert m, "Funktionsblock _bau_py … sessions() fehlt in nest_server.sh"
     return m.group(0)
 
@@ -144,9 +152,7 @@ def _bashrc_funktionen() -> str:
 def test_nest_bashrc_aufseher_startet_wache_py(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     (repo / "scripts").mkdir(parents=True)
-    (repo / "scripts" / "wache.py").write_text(
-        "import sys\nprint('WACHE_PY', *sys.argv[1:])\n", encoding="utf-8"
-    )
+    (repo / "scripts" / "wache.py").write_text("import sys\nprint('WACHE_PY', *sys.argv[1:])\n", encoding="utf-8")
     block = tmp_path / "funktionen.sh"
     block.write_text(_bashrc_funktionen(), encoding="utf-8")
     skript = f'export REPO="{repo}"; source "{block}"; type aufseher >/dev/null && aufseher 42 --dry-run; wache 7'
@@ -166,9 +172,7 @@ def test_nest_bashrc_aufseher_startet_wache_py(tmp_path: Path) -> None:
 def test_nest_bestehende_bashrc_bekommt_aufseher_nachgetragen() -> None:
     """Server mit älterem Nest-Kopf (ohne aufseher) bekommen die Funktion idempotent nachgetragen."""
     text = NEST.read_text(encoding="utf-8")
-    assert re.search(r"grep -q[^\n]*aufseher\(\)", text), (
-        "Nachtrag für bestehende .bashrc fehlt"
-    )
+    assert re.search(r"grep -q[^\n]*aufseher\(\)", text), "Nachtrag für bestehende .bashrc fehlt"
     # Erstanlage + Nachtrag: zwei Definitionen, die beide wache.py starten (Abstände egal).
     assert len(re.findall(r"aufseher\(\)\s*\{[^}]*wache\.py", text)) >= 2
 
@@ -192,13 +196,9 @@ def test_install_ps1_aufseher_funktion_laeuft_echt(tmp_path: Path) -> None:
     m = re.search(r"(function aufseher \{.*?\n\})", text, re.DOTALL)
     assert m
     (tmp_path / "scripts").mkdir()
-    (tmp_path / "scripts" / "wache.py").write_text(
-        "import sys\nprint('WACHE_PY', *sys.argv[1:])\n", encoding="utf-8"
-    )
+    (tmp_path / "scripts" / "wache.py").write_text("import sys\nprint('WACHE_PY', *sys.argv[1:])\n", encoding="utf-8")
     python = sys.executable
-    funktion = m.group(1).replace(
-        'python "./scripts/wache.py"', f'& "{python}" "./scripts/wache.py"'
-    )
+    funktion = m.group(1).replace('python "./scripts/wache.py"', f'& "{python}" "./scripts/wache.py"')
     lauf = subprocess.run(
         ["pwsh", "-NoProfile", "-Command", f"{funktion}\naufseher 9"],
         cwd=tmp_path,
@@ -218,7 +218,7 @@ def test_install_ps1_aufseher_funktion_laeuft_echt(tmp_path: Path) -> None:
 def test_capo_alte_waechter_marke_bleibt_eigener_kommentar(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Kommentare von vor #428 („Wächter: …“) dürfen nie als Davids Antwort gelten."""
+    """Kommentare von vor #428 („Wächter: …“) dürfen nie als Antwort des Menschen gelten."""
     monkeypatch.syspath_prepend(str(SKILL))
     from to_spawn import capo
 
@@ -273,9 +273,7 @@ def test_capo_aufpasser_kommentar_ist_nie_davids_antwort(
 @pytest.fixture
 def leitstand(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     monkeypatch.syspath_prepend(str(SKILL))
-    spec = importlib.util.spec_from_file_location(
-        "leitstand_aufseher_428", SKILL / "skripte" / "leitstand.py"
-    )
+    spec = importlib.util.spec_from_file_location("leitstand_aufseher_428", SKILL / "skripte" / "leitstand.py")
     assert spec and spec.loader
     modul = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, spec.name, modul)
@@ -322,10 +320,15 @@ _ALTE_MARKE = "W" + "ächter:"
 #: Logik-Vergleiche mit der alten Marke: ``startswith(… "Wächter:" …)``, ``== "Wächter:…"``,
 #: ``"Wächter:…" in x`` / ``x in "Wächter:…"``. Docstrings und Testdaten treffen nicht.
 _LOGIK_MUSTER = re.compile(
-    r"startswith\([^)\n]*[\"']" + _ALTE_MARKE
-    + r"|(?:==|!=)\s*[\"']" + _ALTE_MARKE
-    + r"|[\"']" + _ALTE_MARKE + r"[^\"'\n]*[\"']\s*(?:==|!=|in\b|not\s+in\b)"
-    + r"|\bin\s+[\"']" + _ALTE_MARKE
+    r"startswith\([^)\n]*[\"']"
+    + _ALTE_MARKE
+    + r"|(?:==|!=)\s*[\"']"
+    + _ALTE_MARKE
+    + r"|[\"']"
+    + _ALTE_MARKE
+    + r"[^\"'\n]*[\"']\s*(?:==|!=|in\b|not\s+in\b)"
+    + r"|\bin\s+[\"']"
+    + _ALTE_MARKE
 )
 
 
@@ -364,3 +367,15 @@ def test_vorfall_alter_rollenname_ist_kein_neuer_vorfall(monkeypatch: pytest.Mon
     alt = vorfall("Frage ohne eigenen Vorschlag — der Wächter rät nicht (#285)")
     neu = vorfall("Frage ohne eigenen Vorschlag — der Aufseher rät nicht (#285)")
     assert alt.schluessel() == neu.schluessel()
+
+
+def test_aktive_dateien_ueberspringt_unter_pycache_und_caches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#532: verschachtelte ``__pycache__``/``.ruff_cache``-Reste zählen nicht als aktive Skill-Dateien."""
+    (tmp_path / "nest" / "__pycache__").mkdir(parents=True)
+    (tmp_path / "nest" / "sauber.sh").write_text("echo ok\n", encoding="utf-8")
+    (tmp_path / "nest" / "__pycache__" / "rest").write_text("Wächter\n", encoding="utf-8")
+    (tmp_path / "probe" / ".ruff_cache").mkdir(parents=True)
+    (tmp_path / "probe" / ".ruff_cache" / "123").write_text("Wächter\n", encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "SKILL", tmp_path)
+    rel = [p.relative_to(tmp_path).as_posix() for p in _aktive_dateien()]
+    assert rel == ["nest/sauber.sh"]

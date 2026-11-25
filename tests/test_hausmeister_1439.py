@@ -74,17 +74,13 @@ def test_rebase_und_gemeldeter_stand_zweig_weg_ohne_sicherung(zw: Welt) -> None:
     git(wt, "rebase", "-q", "origin/master")
     git(wt, "push", "-q", "-f", "origin", "ticket/41-test")
     tip = _tip(zw, "ticket/41-test")
-    r = hausmeister.zweig_aufraeumen(
-        ORIGIN, "ticket/41-test", uebernommen_tip=tip, loeschen=True
-    )
+    r = hausmeister.zweig_aufraeumen(ORIGIN, "ticket/41-test", uebernommen_tip=tip, loeschen=True)
     assert r.art == "gelöscht" and not r.fehler and not r.trocken
     assert "ticket/41-test" not in _heads(zw)
     assert not [h for h in _heads(zw) if h.startswith("sicherung/")]
 
 
-def test_ticket_zu_commit_nirgends_sonst_wird_erst_gesichert(
-    zw: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_ticket_zu_commit_nirgends_sonst_wird_erst_gesichert(zw: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     """Ticket zu, Commit nur auf dem Zweig: sicherung/<N> trägt ihn, dann ist der Zweig weg."""
     zw.worktree(42)
     zw.ticket(42, "CLOSED", vor_stunden=48)
@@ -135,7 +131,7 @@ def test_nach_der_pruefung_nachgeschoben_bleibt_dann_naechster_lauf_entscheidet_
 
 
 def test_ohne_ticket_nummer_nie_angefasst_steht_in_liste_fuer_david(zw: Welt) -> None:
-    """``ticket/ohne-nummer``: nie angefasst, fuer_david, in der Liste für David."""
+    """``ticket/ohne-nummer``: nie angefasst, fuer_david, in der Liste für den Menschen."""
     _commit(zw.haupt, "x.txt", "x\n")
     git(zw.haupt, "push", "-q", "origin", "HEAD:refs/heads/ticket/ohne-nummer")
     r = hausmeister.zweig_aufraeumen(ORIGIN, "ticket/ohne-nummer", loeschen=True)

@@ -33,7 +33,7 @@ from pathlib import Path
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import bau_log, config, konsole, manifest  # noqa: E402
+from to_spawn import auswahl, bau_log, config, konsole, manifest, prozessbaum, werkzeug  # noqa: E402
 
 log = logging.getLogger("sessions_stand")
 #: Repo, in dem gearbeitet wird: ``TO_SPAWN_REPO`` (setzt die Weiterleitung im Repo), sonst
@@ -45,8 +45,8 @@ MUSTER = re.compile(r"(?:scripts|skripte)[\\/](bau|wache)\.py\"?\s+(\d+)")
 #: Claude-Session aus ``bau``: der Settings-Pfad trägt die Ticket-Nummer (``<repo>-bau\\<N>-<zeit>[-<anhang>]``,
 #: Anhang seit ``mkdtemp`` in ``bau.py``).
 VERWAIST = re.compile(r"[\w.-]+-bau[\\/](\d+)-\d{8}-\d{6}(?:-\w+)?[\\/]settings\.json")
-#: Prozessnamen einer laufenden Claude-Session (Windows ``claude.exe``/``node.exe``, Linux ``claude``/``node``).
-SESSION_NAMEN = frozenset({"claude.exe", "node.exe", "claude", "node"})
+#: Prozessnamen einer laufenden Bau-Session (``claude``/``node``/``agy``, Windows + Linux, #660).
+SESSION_NAMEN = werkzeug.SESSION_NAMEN_ALLE
 #: Namen, unter denen eine verwaiste Claude-Session auftaucht (``node.exe`` bleibt draußen — auf Windows zu unscharf).
 VERWAIST_NAMEN = frozenset({"claude.exe", "claude", "node"})
 
@@ -58,6 +58,9 @@ class Prozess:
     name: str
     cmd: str
     start: datetime | None
+    #: Arbeitsordner, gelesen beim Erstellen der echten Liste (``prozesse_linux`` / ``prozesse_lesen``, #588);
+    #: ``None`` = unbekannt (aufgezeichnete Liste, unlesbar) → zählt als eigenes Repo.
+    ordner: Path | None = None
 
 
 @dataclass
@@ -98,15 +101,24 @@ def prozesse_linux() -> list[Prozess]:
     out = subprocess.run(
         ["ps", "-ww", "-eo", "pid,ppid,lstart,comm,args", "--no-headers"],
         capture_output=True,
-        text=True,
-        errors="replace",
+        **konsole.UNTERPROZESS_TEXT,
         check=False,
         env={**os.environ, "LC_ALL": "C"},
+        **prozessbaum.fensterlos(),
     ).stdout
     if not out.strip():
         log.error("Prozessliste leer — ist ``ps`` (procps) installiert?")
         return []
-    return ps_zeilen_parsen(out)
+    # Lebens-Prüfung (#494) und Arbeitsordner (#212) gehören zum Lesen der echten Liste, nicht
+    # in ``zuordnen`` (#564, #588): das urteilt nur aus der übergebenen Liste, auch über
+    # aufgezeichnete mit erfundenen Nummern. Ordner zuerst, dann Lebens-Prüfung: stirbt ein
+    # Prozess dazwischen, fällt er raus, statt mit unlesbarem Ordner als eigener zu zählen.
+    lebende: list[Prozess] = []
+    for p in ps_zeilen_parsen(out):
+        p.ordner = arbeitsordner(p.pid)
+        if not beendet(p.pid):
+            lebende.append(p)
+    return lebende
 
 
 def prozesse_lesen() -> list[Prozess]:
@@ -120,9 +132,7 @@ def prozesse_lesen() -> list[Prozess]:
     out = subprocess.run(
         ["powershell", "-NoProfile", "-Command", ps],
         capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
+        **konsole.UNTERPROZESS_TEXT,
         check=False,
         # Aus Takt/Leitstand ohne Konsole gestartet: sonst öffnet PowerShell je Aufruf ein Fenster.
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
@@ -131,6 +141,8 @@ def prozesse_lesen() -> list[Prozess]:
         log.error("Prozessliste leer — läuft das auf Windows mit PowerShell?")
         return []
     rohe = json.loads(out)
+    if isinstance(rohe, dict):
+        rohe = [rohe]
     ergebnis: list[Prozess] = []
     for r in rohe:
         start = None
@@ -139,13 +151,21 @@ def prozesse_lesen() -> list[Prozess]:
                 start = datetime.fromisoformat(r["Start"])
             except ValueError:
                 start = None
+        pid = int(r["ProcessId"])
+        # Arbeitsordner (#212) und Lebens-Prüfung (#494) wie in prozesse_linux:
+        # Ordner zuerst, dann Lebens-Prüfung — ein zwischen WMI und Blick beendeter
+        # Prozess fällt raus, statt mit unlesbarem Ordner als eigener zu zählen.
+        ordner = arbeitsordner(pid)
+        if beendet(pid):
+            continue
         ergebnis.append(
             Prozess(
-                int(r["ProcessId"]),
+                pid,
                 int(r.get("ParentProcessId") or 0),
                 str(r.get("Name") or ""),
                 str(r.get("CommandLine") or ""),
                 start,
+                ordner,
             )
         )
     return ergebnis
@@ -188,27 +208,69 @@ def manifeste_lesen(spec: str | None) -> dict[str, Eintrag]:
             log.warning("Manifest unlesbar %s: %s", d.name, e)
             continue
         s = str(m.get("spec") or "")
-        if s and s not in eintraege:
+        auswahl_stand = auswahl.lesen(REPO, s) if s else None
+        if s and s not in eintraege and auswahl.wache_erlaubt(REPO, s, auswahl=auswahl_stand, gelesen=True):
             eintraege[s] = Eintrag(s, "spec", f"Aufseher Spec #{s} ({m.get('feature', '')})")
         for n, t in (m.get("tickets") or {}).items():
+            if s and not auswahl.ticket_erlaubt(REPO, s, str(n), auswahl=auswahl_stand, gelesen=True):
+                continue
             eintraege[str(n)] = Eintrag(str(n), "ticket", str(t.get("title") or ""))
     return eintraege
 
 
-def fremdes_repo(pid: int) -> bool:
-    """Läuft dieser ``bau.py``/``wache.py`` in einem anderen Repo als ``REPO``? (#212)
-
-    Linux: Arbeitsordner aus ``/proc/<pid>/cwd`` — außerhalb von ``REPO`` zählt der
-    Prozess nicht (zwei Repos mit derselben Ticket-Nummer auf einem Rechner, oder
-    „lokal“ und „Server“ auf demselben Rechner). Ohne ``/proc`` (Windows) oder bei
-    unlesbarem Ordner zählt er wie bisher.
-    """
+def arbeitsordner(pid: int) -> Path | None:
+    """Arbeitsordner aus ``/proc/<pid>/cwd`` (Linux) bzw. PEB (Windows); ``None`` = unlesbar."""
+    if sys.platform == "win32":
+        try:
+            pfad = prozessbaum.arbeitsordner_windows(pid)
+            return Path(pfad).resolve() if pfad else None
+        except OSError:
+            return None
     try:
-        ordner = Path(os.readlink(f"/proc/{pid}/cwd")).resolve()
+        return Path(os.readlink(f"/proc/{pid}/cwd")).resolve()
     except OSError:
+        return None
+
+
+def ordner_fremd(ordner: Path | None) -> bool:
+    """Liegt ``ordner`` außerhalb von ``REPO``? (#212)
+
+    Außerhalb zählt der Prozess nicht (zwei Repos mit derselben Ticket-Nummer auf einem
+    Rechner, oder „lokal“ und „Server“ auf demselben Rechner). Unbekannter Ordner
+    (``None``) zählt wie bisher als eigener.
+    """
+    if ordner is None:
         return False
     wurzel = REPO.resolve()
     return ordner != wurzel and wurzel not in ordner.parents
+
+
+def beendet(pid: int) -> bool:
+    """Ist der Prozess seit ``ps``/WMI beendet? Linux: ``/proc/<pid>`` weg/Zombie; Windows: Kernel.
+
+    Nur beim Lesen der echten Liste (``prozesse_linux`` / ``prozesse_lesen``) gefragt, nie in ``zuordnen`` (#564).
+
+    Ein beendeter Prozess läuft nicht mehr, auch wenn ``ordner_fremd`` ihn mangels lesbarem
+    Ordner mitzählt (#494): sonst gälte etwa die eben beendete Aufseher-Attrappe eines
+    Nachbar-Tests als lebender Aufseher, und ``spawn_srv.sh`` meldete bei vollem Rechner
+    „Aufseher startet nach“ (Exit 0), obwohl niemand nachstartet.
+    """
+    if sys.platform == "win32":
+        try:
+            return prozessbaum.ist_weg_windows(pid)
+        except OSError:
+            return False
+    if not Path("/proc/self").is_dir():
+        return False
+    if not Path(f"/proc/{pid}").exists():
+        return True
+    try:  # Zombie (beendet, nicht abgeholt): /proc/<pid> da, cwd aber ENOENT
+        os.readlink(f"/proc/{pid}/cwd")
+    except FileNotFoundError:
+        return True
+    except OSError:
+        pass
+    return False
 
 
 def zuordnen(eintraege: dict[str, Eintrag], alle: list[Prozess]) -> None:
@@ -218,7 +280,7 @@ def zuordnen(eintraege: dict[str, Eintrag], alle: list[Prozess]) -> None:
         m = MUSTER.search(p.cmd)
         if not m:
             continue
-        if fremdes_repo(p.pid):
+        if ordner_fremd(p.ordner):
             continue
         art, nummer = m.group(1), m.group(2)
         e = eintraege.get(nummer)
@@ -243,7 +305,7 @@ def zuordnen(eintraege: dict[str, Eintrag], alle: list[Prozess]) -> None:
     for p in alle:
         if p.name.lower() not in VERWAIST_NAMEN or p.pid in bekannte:
             continue
-        if fremdes_repo(p.pid):  # Claude-Session eines anderen Repos ist hier keine Waise (#212)
+        if ordner_fremd(p.ordner):  # Claude-Session eines anderen Repos ist hier keine Waise (#212)
             continue
         m = VERWAIST.search(p.cmd)
         if not m:

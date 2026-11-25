@@ -20,7 +20,11 @@ def _lauf(tmp_path: Path, tickets: str) -> subprocess.CompletedProcess[str]:
     # Leeres Wegwerf-Repo: der Regularien-Prüfer weigert/bricht ab, es startet nie ein Fenster.
     return subprocess.run(
         [str(PS), "-NoProfile", "-File", str(SKRIPT), "-Spec", "48", "-Tickets", tickets, "-DryRun"],
-        cwd=tmp_path, capture_output=True, text=True, timeout=120, check=False,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
     )
 
 

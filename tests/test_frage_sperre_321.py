@@ -1,4 +1,4 @@
-"""Frage-Sperre (#321): Bau-Sessions fragen David nie — Hooks und Rechte in ``bau.py`` und im Bau-Server-Template."""
+"""Frage-Sperre (#321): Bau-Sessions fragen den Menschen nie — Hooks und Rechte in ``bau.py`` und im Bau-Server-Template."""
 
 from __future__ import annotations
 
@@ -102,6 +102,7 @@ def test_setup_skript_standard_nicht_auf_wegwerf_worktree() -> None:
 FRAGE_SPERRE_BEFEHL = "node ~/.claude/hooks/smart-zone/staffel/frage-sperre.mjs"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows: absoluter Pfad statt ~ (#565)")
 def test_frage_sperre_befehl_gleich_wie_server_template(bau: types.ModuleType) -> None:
     hooks = bau.staffel_hooks()
     assert hooks["Stop"][0]["hooks"][0]["command"] == FRAGE_SPERRE_BEFEHL
@@ -109,3 +110,12 @@ def test_frage_sperre_befehl_gleich_wie_server_template(bau: types.ModuleType) -
     assert pre[0]["hooks"][0]["command"] == FRAGE_SPERRE_BEFEHL
     if SETUP_SKRIPT.is_file() and "frage-sperre.mjs" in SETUP_SKRIPT.read_text(encoding="utf-8"):
         assert json.loads(_template())["hooks"]["Stop"][0]["hooks"][0]["command"] == FRAGE_SPERRE_BEFEHL
+
+
+def test_frage_sperre_befehl_ohne_tilde_unter_windows(bau: types.ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#565: unter Windows kein ``~`` im Hook-Befehl (MSYS_NO_PATHCONV macht daraus einen Pfad unter C:/c/)."""
+    monkeypatch.setattr(bau.sys, "platform", "win32")
+    befehl = bau.frage_sperre_befehl()
+    assert "~" not in befehl and "\\" not in befehl
+    assert befehl.startswith("node ") and "frage-sperre.mjs" in befehl
+    assert Path.home().as_posix() in befehl

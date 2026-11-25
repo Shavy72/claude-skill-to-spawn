@@ -51,9 +51,7 @@ def _repo(tmp_path: Path, konfig: dict | None) -> Path:
     (repo / ".git").mkdir(parents=True)
     if konfig is not None:
         (repo / ".to-spawn").mkdir()
-        (repo / ".to-spawn" / "config.json").write_text(
-            json.dumps(konfig), encoding="utf-8"
-        )
+        (repo / ".to-spawn" / "config.json").write_text(json.dumps(konfig), encoding="utf-8")
     return repo
 
 
@@ -172,6 +170,10 @@ def test_pruef_ohne_schalter_ist_immer_pruef(tmp_path: Path) -> None:
     assert deploy_art(["bash", "gate.sh", "--irgendwas"], a.skripte) == "pruef"
 
 
+@pytest.mark.skipif(
+    __import__("sys").platform == "win32",
+    reason="Windows fragt seit #251 ohne pgrep ab; Gegenstück dort: test_deploy_wache_251",
+)
 def test_pgrep_fehlt_deploy_wache_fail_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Ohne ``pgrep`` im PATH bricht die Deploy-Wache ab statt „kein Deploy“ zu melden —
     auch unter Windows, wo der Systemtext übersetzt ist („WinError 2 …“)."""

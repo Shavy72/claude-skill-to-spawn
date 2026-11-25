@@ -47,9 +47,7 @@ from to_spawn import aufpasser
 from to_spawn.waechter_lauf import transkript_ordner
 
 # Nur Linux mit tmux; ohne fcntl (Windows) die Datei samt Nachfolgern überspringen statt Sammelfehler (#68).
-fcntl = pytest.importorskip(
-    "fcntl", reason="Aufpasser-Weg-Tests nur unter Linux (fcntl, tmux)"
-)
+fcntl = pytest.importorskip("fcntl", reason="Aufpasser-Weg-Tests nur unter Linux (fcntl, tmux)")
 
 BAU_CLAUDE = """#!/bin/bash
 # Start-Attrappe, die wie bau.py eine Claude-Session startet (hier: die Schlaf-Attrappe).
@@ -115,9 +113,7 @@ def _fenster_id(name: str) -> tuple[str, str]:
     raise AssertionError(f"Fenster {name!r} fehlt")
 
 
-def _lauf_direkt(
-    welt: Welt, jetzt: float | None = None, hang_min: float = 90, **extra: object
-) -> int:
+def _lauf_direkt(welt: Welt, jetzt: float | None = None, hang_min: float = 90, **extra: object) -> int:
     """Lauf mit einspritzbarer Uhr (``jetzt``) und weiteren Einstellungen."""
     e = aufpasser.Einstellungen(
         zustand=welt.zustand,
@@ -143,17 +139,13 @@ def _bau_claude_vorlage(welt: Welt, skript: str = BAU_CLAUDE) -> str:
 
 def _sessions(welt: Welt) -> list[dict]:
     ordner = welt.heim / ".claude" / "sessions"
-    return [
-        json.loads(p.read_text(encoding="utf-8")) for p in sorted(ordner.glob("*.json"))
-    ]
+    return [json.loads(p.read_text(encoding="utf-8")) for p in sorted(ordner.glob("*.json"))]
 
 
 # --- F1: Gesprächs-ID + Zustand aus ~/.claude/sessions/ ---------------------
 
 
-def test_f1_zwei_fenster_gleicher_cwd_richtige_id(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f1_zwei_fenster_gleicher_cwd_richtige_id(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     """Beide Sessions laufen im selben cwd, keine trägt die ID in argv — die ID
     kommt nur aus der eigenen ``sessions/<pid>.json``, nie aus der des Nachbarn."""
     monkeypatch.setenv("GH_STUB_UNTER", f"{SPEC}:9002|9003")
@@ -168,10 +160,7 @@ def test_f1_zwei_fenster_gleicher_cwd_richtige_id(
     assert info.status == "idle" and info.cwd == welt.repo and info.aus_json
     # Nachbar-Fenster-IDs ⇒ die JSON passt nicht ⇒ keine ID (nie die fremde).
     wid_b, pid_b = _fenster_id("bau 9003")
-    assert (
-        aufpasser.session_finden(welt_pane_pid("bau 9002"), wid_b, pid_b, welt.heim)
-        is None
-    )
+    assert aufpasser.session_finden(welt_pane_pid("bau 9002"), wid_b, pid_b, welt.heim) is None
 
     _still_seit(welt, "bau 9002", 100, stufe=1, eingriff=time.time() - 100 * 60)
     assert welt.lauf("--bau-vorlage", _bau_claude_vorlage(welt)) == 0
@@ -182,28 +171,20 @@ def test_f1_zwei_fenster_gleicher_cwd_richtige_id(
 
 def test_f1_ohne_json_ohne_argv_keine_id_braucht_david(welt: Welt) -> None:
     """Kein Transkript-Fallback mehr: selbst ein frisches ``.jsonl`` im Projekt-Ordner
-    liefert keine ID. Ergebnis: nichts anfassen, Meldung „braucht David“, Stufe 3."""
+    liefert keine ID. Ergebnis: nichts anfassen, Meldung „braucht den Menschen“, Stufe 3."""
     welt.worktree(9002, schmutzig=True)
-    _fenster(
-        welt, "bau 9002", f"{welt.bin}/claude nur-prompt", FAKE_CLAUDE_OHNE_JSON="1"
-    )
+    _fenster(welt, "bau 9002", f"{welt.bin}/claude nur-prompt", FAKE_CLAUDE_OHNE_JSON="1")
     ordner = transkript_ordner(welt.repo, welt.heim)
     ordner.mkdir(parents=True)
     (ordner / f"{uuid.uuid4()}.jsonl").write_text("{}\n", encoding="utf-8")
     wid, pid = _fenster_id("bau 9002")
-    assert (
-        aufpasser.session_finden(welt_pane_pid("bau 9002"), wid, pid, welt.heim) is None
-    )
+    assert aufpasser.session_finden(welt_pane_pid("bau 9002"), wid, pid, welt.heim) is None
     _still_seit(welt, "bau 9002", 100, stufe=1, eingriff=time.time() - 100 * 60)
     assert welt.lauf() == 0
     assert "bau 9002" in fenster_namen()
     assert not welt.protokoll_bau.exists()
     assert not git(welt.origin, "branch", "--list", "sicherung/*").strip()
-    treffer = [
-        k
-        for k in welt.kommentare()
-        if "keine Gesprächs-ID gefunden — braucht David" in k
-    ]
+    treffer = [k for k in welt.kommentare() if "keine Gesprächs-ID gefunden — braucht den Menschen" in k]
     assert len(treffer) == 1, welt.kommentare()
     assert welt.eintrag("bau 9002")["stufe"] == 3
 
@@ -221,11 +202,7 @@ def test_f1_argv_id_muss_zur_json_passen(welt: Welt) -> None:
     # Nur argv ⇒ ID aus argv, nicht aus JSON.
     info = aufpasser.session_finden(pane_pid, wid, pid, welt.heim)
     assert info and info.session_id == sid and not info.aus_json and info.status is None
-    claude_pid = next(
-        p
-        for p in aufpasser.prozess_baum(pane_pid)
-        if aufpasser.session_id_aus_argv(aufpasser._argv(p))
-    )
+    claude_pid = next(p for p in aufpasser.prozess_baum(pane_pid) if aufpasser.session_id_aus_argv(aufpasser._argv(p)))
     ordner = welt.heim / ".claude" / "sessions"
     ordner.mkdir(parents=True, exist_ok=True)
     datei = ordner / f"{claude_pid}.json"
@@ -269,16 +246,12 @@ def test_f1_argv_id_muss_zur_json_passen(welt: Welt) -> None:
     info = aufpasser.session_finden(pane_pid, wid, pid, welt.heim)
     assert info and not info.aus_json and info.status is None
     # JSON eines toten Prozesses ⇒ ungültig.
-    (ordner / "999999.json").write_text(
-        json.dumps({"pid": 999999, "sessionId": "tot", "cwd": "/"})
-    )
+    (ordner / "999999.json").write_text(json.dumps({"pid": 999999, "sessionId": "tot", "cwd": "/"}))
     assert aufpasser._session_json_lesen(999999, wid, pid, welt.heim) is None
 
 
 def test_f1_list_windows_liefert_fenster_und_pane_id(welt: Welt) -> None:
-    a = aufpasser.Aufpasser(
-        aufpasser.Einstellungen(zustand=welt.zustand, tmux_socket=SOCKET, trocken=True)
-    )
+    a = aufpasser.Aufpasser(aufpasser.Einstellungen(zustand=welt.zustand, tmux_socket=SOCKET, trocken=True))
     (f,) = a.fenster(SITZUNG, SPEC)
     assert re.fullmatch(r"@\d+", f.window_id) and re.fullmatch(r"%\d+", f.pane_id)
 
@@ -304,12 +277,8 @@ def test_f2_busy_gilt_als_arbeitend(welt: Welt) -> None:
 
 
 def test_f2_limit_zeile_echt_und_neue_marker() -> None:
-    eintrag = json.loads(
-        (HILFEN / "limit_zeile_echt.jsonl").read_text(encoding="utf-8")
-    )
-    text = " ".join(
-        b["text"] for b in eintrag["message"]["content"] if b.get("type") == "text"
-    )
+    eintrag = json.loads((HILFEN / "limit_zeile_echt.jsonl").read_text(encoding="utf-8"))
+    text = " ".join(b["text"] for b in eintrag["message"]["content"] if b.get("type") == "text")
     assert "hit your session limit" in text
     assert aufpasser.arbeitet(f"…\n{text}\n❯")
     assert aufpasser.LIMIT_TEXT.search(text)
@@ -336,9 +305,84 @@ def test_f2_rueckfrage_nie_send_keys_einmal_meldung(welt: Welt) -> None:
     assert welt.lauf() == 0
     time.sleep(0.5)
     assert pane_text("bau 9002") == vorher
-    treffer = [k for k in welt.kommentare() if "braucht David" in k and "bau 9002" in k]
+    treffer = [k for k in welt.kommentare() if "braucht den Menschen" in k and "bau 9002" in k]
     assert len(treffer) == 1, welt.kommentare()
     assert welt.eintrag("bau 9002").get("stufe", 0) == 0
+
+
+def test_frage_am_prompt_erkennung() -> None:
+    frage = "Vorschlag: /code-review ultra starten? Ja/Nein.\n\n"
+    feld = "─" * 30 + "\n❯ \n" + "─" * 30 + "\n  Statuszeile\n"
+    assert aufpasser.frage_am_prompt(frage + feld)
+    assert aufpasser.frage_am_prompt("Weiter? yes/no\n" + feld)
+    assert not aufpasser.frage_am_prompt("Ich habe fertig gebaut.\n" + feld)
+    # Ja/Nein weit oben im Verlauf (nicht am Prompt) zählt nicht.
+    assert not aufpasser.frage_am_prompt(frage + "x\n" * 10 + feld)
+
+
+def test_frage_am_prompt_live_ja_aufforderung_wartet_zu_recht() -> None:
+    """Live-Ja-Aufforderung sichtbar: Session wartet auf den Menschen, kein Anstupser (#485)."""
+    from to_spawn import briefkasten
+
+    feld = "─" * 30 + "\n❯ \n" + "─" * 30 + "\n  Statuszeile\n"
+    ohne = "Soll das live gehen? Ja/Nein\n"
+    mit = ohne + f"Bitte tippe {briefkasten.ja_aufforderung(5)}\n"
+    assert aufpasser.frage_am_prompt(ohne + feld)
+    assert not aufpasser.frage_am_prompt(mit + feld)
+
+
+def test_frage_am_prompt_stupst_frueh_an(welt: Welt) -> None:
+    _fenster(welt, "bau 9002", "printf 'Vorschlag: Review starten? Ja/Nein.\\n'; sleep 3600")
+    _still_seit(welt, "bau 9002", 10, stufe=0)
+    assert welt.lauf() == 0
+    time.sleep(1)
+    assert "Aufpasser: Du stehst seit 10 min still" in pane_text("bau 9002")
+    assert welt.eintrag("bau 9002")["stufe"] == 1
+
+
+def test_frage_am_prompt_frisch_wartet(welt: Welt) -> None:
+    _fenster(welt, "bau 9002", "printf 'Vorschlag: Review starten? Ja/Nein.\\n'; sleep 3600")
+    _still_seit(welt, "bau 9002", 1, stufe=0)
+    assert welt.lauf() == 0
+    assert welt.eintrag("bau 9002").get("stufe", 0) == 0
+
+
+@pytest.mark.parametrize(
+    "zeile",
+    [
+        "Starten? (j/n)",
+        "Weiter (y/n)",
+        "Überschreiben [y/N]",
+        "Überschreiben [J/n]",
+        "Soll ich das tun, Ja oder Nein",
+        "start it, yes or no",
+        "Soll ich weitermachen?",
+    ],
+)
+def test_frage_am_prompt_formen(zeile: str) -> None:
+    feld = "─" * 30 + "\n❯ \n" + "─" * 30 + "\n  Statuszeile\n"
+    assert aufpasser.frage_am_prompt(zeile + "\n\n" + feld), zeile
+    assert not aufpasser.frage_am_prompt(zeile + "\n" + "x\n" * 4 + feld), zeile
+
+
+def test_frage_am_prompt_arbeitende_session_nicht_angestupst(welt: Welt) -> None:
+    _fenster(welt, "bau 9002", "printf 'Review starten? Ja/Nein.\\nesc to interrupt\\n'; sleep 3600")
+    _still_seit(welt, "bau 9002", 10, stufe=0)
+    assert welt.lauf() == 0
+    time.sleep(0.5)
+    assert "Aufpasser: Du stehst" not in pane_text("bau 9002")
+    assert welt.eintrag("bau 9002").get("stufe", 0) == 0
+
+
+def test_frage_am_prompt_kurze_schwelle_nur_stufe_0(welt: Welt) -> None:
+    welt.worktree(9002, schmutzig=True)
+    _fenster(welt, "bau 9002", "printf 'Review starten? Ja/Nein.\\n'; sleep 3600")
+    t0 = time.time()
+    _still_seit(welt, "bau 9002", 10, stufe=1, eingriff=t0 - 600)
+    assert _lauf_direkt(welt, jetzt=t0) == 0
+    assert welt.eintrag("bau 9002")["stufe"] == 1
+    assert not welt.protokoll_bau.exists()
+    assert not git(welt.origin, "branch", "--list", "sicherung/*").strip()
 
 
 # --- F3: Stufen-Logik — Text geändert nach Eingriff = Erfolg ----------------
@@ -349,9 +393,7 @@ def test_f3_text_geaendert_nach_eingriff_setzt_stufe_zurueck(welt: Welt) -> None
     sid = str(uuid.uuid4())
     _fenster(welt, "bau 9002", f"{welt.bin}/claude --session-id {sid} x")
     t0 = time.time()
-    welt.stand_setzen(
-        "bau 9002", hash="alt", stufe=1, seit=t0 - 100 * 60, eingriff=t0 - 100 * 60
-    )
+    welt.stand_setzen("bau 9002", hash="alt", stufe=1, seit=t0 - 100 * 60, eingriff=t0 - 100 * 60)
     # Lauf A: Text hat sich seit dem Anstupsen geändert ⇒ Eingriff hat gewirkt.
     assert _lauf_direkt(welt, jetzt=t0) == 0
     e = welt.eintrag("bau 9002")
@@ -417,9 +459,7 @@ def test_f4_fortsetzen_auch_als_letztes_fenster_sitzung_lebt(welt: Welt) -> None
     assert welt.eintrag("bau 9002")["stufe"] == 2
 
 
-def test_f5_nachweis_fehlt_meldung_stufe_3(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f5_nachweis_fehlt_meldung_stufe_3(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     # Die Attrappe schreibt bei ``exit`` keine Session-Datei, der Nachweis kann
     # also nie gelingen: die volle Frist (120 s) abzuwarten prüft nichts mehr,
     # verlängert nur das Fenster für fremde Störungen im Voll-Lauf (#149).
@@ -430,9 +470,7 @@ def test_f5_nachweis_fehlt_meldung_stufe_3(
     _still_seit(welt, "bau 9002", 100, stufe=1, eingriff=time.time() - 100 * 60)
     vorlage = _bau_claude_vorlage(
         welt,
-        BAU_CLAUDE.replace(
-            'exec "{claude}"', 'FAKE_CLAUDE_STATUS=exit exec "{claude}"'
-        ),
+        BAU_CLAUDE.replace('exec "{claude}"', 'FAKE_CLAUDE_STATUS=exit exec "{claude}"'),
     )
     assert welt.lauf("--bau-vorlage", vorlage) == 0
     argv = welt.protokoll_bau.read_text(encoding="utf-8").splitlines()
@@ -440,16 +478,13 @@ def test_f5_nachweis_fehlt_meldung_stufe_3(
     treffer = [
         k
         for k in welt.kommentare()
-        if f"Fortsetzen fehlgeschlagen (Session {sid[:8]} nicht wieder da) — braucht David"
-        in k
+        if f"Fortsetzen fehlgeschlagen (Session {sid[:8]} nicht wieder da) — braucht den Menschen" in k
     ]
     assert len(treffer) == 1, welt.kommentare()
     assert welt.eintrag("bau 9002")["stufe"] == 3
 
 
-def test_f5_fenster_weg_nach_nachweis_meldung_statt_absturz(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f5_fenster_weg_nach_nachweis_meldung_statt_absturz(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     """#149: Stirbt die fortgesetzte Session gleich nach dem Nachweis (unter Last
     sah der Nachweis ihre Session-Datei noch), ist das Fenster weg. Der Lauf darf
     dann nicht mit tmux „can't find window“ abbrechen, sondern meldet Stufe 3."""
@@ -462,18 +497,67 @@ def test_f5_fenster_weg_nach_nachweis_meldung_statt_absturz(
         tmux("kill-window", "-t", fenster_ziel("bau 9002"))
         return True
 
-    monkeypatch.setattr(
-        aufpasser.Aufpasser, "_fortsetzen_nachweisen", nachweis_dann_weg
-    )
+    monkeypatch.setattr(aufpasser.Aufpasser, "_fortsetzen_nachweisen", nachweis_dann_weg)
     assert welt.lauf("--bau-vorlage", _bau_claude_vorlage(welt)) == 0
     treffer = [
         k
         for k in welt.kommentare()
-        if f"Fortsetzen fehlgeschlagen (Session {sid[:8]} nicht wieder da) — braucht David"
-        in k
+        if f"Fortsetzen fehlgeschlagen (Session {sid[:8]} nicht wieder da) — braucht den Menschen" in k
     ]
     assert len(treffer) == 1, welt.kommentare()
     assert welt.eintrag("bau 9002")["stufe"] == 3
+
+
+def test_f5_fortsetzen_nachweis_braucht_zwei_treffer_hintereinander(
+    welt: Welt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#149: Ein einzelner Treffer reicht nicht (Session kann sofort wieder enden);
+    erst zwei Treffer direkt hintereinander belegen das Fortsetzen."""
+    sid = str(uuid.uuid4())
+    treffer = aufpasser.SessionInfo(pid=12345, session_id=sid, cwd=welt.repo, status="idle", aus_json=True)
+    a = aufpasser.Aufpasser(aufpasser.Einstellungen(zustand=welt.zustand, tmux_socket=SOCKET))
+    fenster = aufpasser.Fenster(
+        sitzung=SITZUNG,
+        spec=SPEC,
+        index="1",
+        name="bau 9002",
+        pfad=str(welt.repo),
+        pane_pid=12345,
+        window_id="@1",
+        pane_id="%1",
+    )
+    monkeypatch.setattr(a, "tmux", lambda *_args, **_kw: "12345\n")
+    monkeypatch.setattr(aufpasser, "NACHWEIS_S", 3)
+
+    zeit = [0.0]
+
+    def uhr() -> float:
+        return zeit[0]
+
+    def schlafen(s: float) -> None:
+        zeit[0] += s
+
+    monkeypatch.setattr(aufpasser.time, "monotonic", uhr)
+    monkeypatch.setattr(aufpasser.time, "sleep", schlafen)
+
+    # Wechselnd da/weg: nie zweimal direkt hintereinander → False.
+    folge_wechsel = iter([treffer, None, treffer, None])
+    monkeypatch.setattr(
+        aufpasser,
+        "session_finden",
+        lambda *_a, **_k: next(folge_wechsel, None),
+    )
+    assert a._fortsetzen_nachweisen(fenster, sid) is False
+
+    # Erst zwei Treffer direkt hintereinander → True.
+    zeit[0] = 0.0
+    folge_doppelt = iter([treffer, None, treffer, treffer])
+    monkeypatch.setattr(
+        aufpasser,
+        "session_finden",
+        lambda *_a, **_k: next(folge_doppelt, None),
+    )
+    assert a._fortsetzen_nachweisen(fenster, sid) is True
 
 
 def test_f4_respawn_und_kill_nur_mit_freigabe() -> None:
@@ -481,31 +565,19 @@ def test_f4_respawn_und_kill_nur_mit_freigabe() -> None:
     assert quelle.count("kill-window") == 1
     assert quelle.count("respawn-window") == 1
     baum = ast.parse(quelle)
-    funktionen = {
-        k.name: k
-        for k in ast.walk(baum)
-        if isinstance(k, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
+    funktionen = {k.name: k for k in ast.walk(baum) if isinstance(k, (ast.FunctionDef, ast.AsyncFunctionDef))}
     for name, wort in (
         ("_fenster_schliessen", "kill-window"),
         ("_fenster_fortsetzen", "respawn-window"),
     ):
         fn = funktionen[name]
-        konstanten = [
-            k.value
-            for k in ast.walk(fn)
-            if isinstance(k, ast.Constant) and isinstance(k.value, str)
-        ]
+        konstanten = [k.value for k in ast.walk(fn) if isinstance(k, ast.Constant) and isinstance(k.value, str)]
         assert any(wort in k for k in konstanten), name
         assert any(a.arg == "freigabe" for a in fn.args.args), name
-        assert any(isinstance(k, ast.Raise) for k in ast.walk(fn)), (
-            f"{name} muss ohne Freigabe abbrechen"
-        )
+        assert any(isinstance(k, ast.Raise) for k in ast.walk(fn)), f"{name} muss ohne Freigabe abbrechen"
 
 
-def test_f5_bau_resume_ohne_transkript_bricht_ab(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f5_bau_resume_ohne_transkript_bricht_ab(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``bau.py --resume <id>``: fehlt ``~/.claude/projects/<cwd-slug>/<id>.jsonl``,
     Exit 2 mit Fehlerzeile — nie frisch starten."""
     arbeit = tmp_path / "repo"
@@ -517,9 +589,7 @@ def test_f5_bau_resume_ohne_transkript_bricht_ab(
         json.dumps(
             {
                 "spec": 900,
-                "tickets": {
-                    "901": {"title": "Wegwerf", "schaetzung_k": 1, "umfang": "x"}
-                },
+                "tickets": {"901": {"title": "Wegwerf", "schaetzung_k": 1, "umfang": "x"}},
             }
         ),
         encoding="utf-8",
@@ -567,18 +637,14 @@ def test_f6_text_aendert_sich_kurz_vor_eingriff_kein_eingriff(welt: Welt) -> Non
 # --- F7: Worktree aus ``git worktree list`` -----------------------------------
 
 
-def test_f7_worktree_aus_git_liste_trotz_falschem_bau_wt_dir(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f7_worktree_aus_git_liste_trotz_falschem_bau_wt_dir(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BAU_WT_DIR", str(welt.tmp / "falsch"))
     monkeypatch.setenv("GH_STUB_UNTER", f"{SPEC}:9002|9003")
     monkeypatch.setenv("GH_STUB_ZU", "9003")
     wt = welt.worktree(9003, schmutzig=True)
     assert aufpasser.worktree_finden(welt.repo, 9003) == wt.resolve()
     assert aufpasser.worktree_finden(welt.repo, 9004) is None
-    assert aufpasser.worktree_finden(welt.repo, 9004, welt.repo) is None, (
-        "Hauptrepo nie"
-    )
+    assert aufpasser.worktree_finden(welt.repo, 9004, welt.repo) is None, "Hauptrepo nie"
     assert aufpasser.worktree_finden(welt.repo, 9004, wt) == wt.resolve()
     _fenster(welt, "bau 9003", "sleep 3600")
     _still_seit(welt, "bau 9003", 20)
@@ -613,9 +679,7 @@ def test_f8_sicherung_ohne_env_und_mit_kette(welt: Welt) -> None:
     (wt / ".credentials.json").write_text("{}", encoding="utf-8")
     erster = aufpasser.sichern(wt, 9002)
     assert erster
-    dateien = git(
-        welt.origin, "ls-tree", "-r", "--name-only", "refs/heads/sicherung/9002"
-    ).split()
+    dateien = git(welt.origin, "ls-tree", "-r", "--name-only", "refs/heads/sicherung/9002").split()
     assert "neu.txt" in dateien and "README.md" in dateien
     for geheim in (
         ".env",
@@ -626,16 +690,14 @@ def test_f8_sicherung_ohne_env_und_mit_kette(welt: Welt) -> None:
         ".credentials.json",
     ):
         assert geheim not in dateien, geheim
-    assert git(
-        welt.origin, "log", "-1", "--format=%P", "refs/heads/sicherung/9002"
-    ).split() == [git(wt, "rev-parse", "HEAD").strip()]
+    assert git(welt.origin, "log", "-1", "--format=%P", "refs/heads/sicherung/9002").split() == [
+        git(wt, "rev-parse", "HEAD").strip()
+    ]
     # Zweite Sicherung: zwei Eltern (HEAD + vorige Sicherung), Push ohne Zwang.
     (wt / "zweite.txt").write_text("mehr\n", encoding="utf-8")
     zweiter = aufpasser.sichern(wt, 9002)
     assert zweiter and zweiter != erster
-    eltern = git(
-        welt.origin, "log", "-1", "--format=%P", "refs/heads/sicherung/9002"
-    ).split()
+    eltern = git(welt.origin, "log", "-1", "--format=%P", "refs/heads/sicherung/9002").split()
     assert sorted(eltern) == sorted([git(wt, "rev-parse", "HEAD").strip(), erster])
     assert "?? .env" in git(wt, "status", "--porcelain")
 
@@ -658,9 +720,7 @@ def test_f9_lauf_sperre_zweiter_lauf_geht_sofort(welt: Welt) -> None:
 # --- F10: Start-Regel ------------------------------------------------------------
 
 
-def test_f10_labels_verhindern_start(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_f10_labels_verhindern_start(welt: Welt, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("GH_STUB_UNTER", f"{SPEC}:9002|9003|9004|9005")
     daten = tmp_path / "gh_daten.json"
     daten.write_text(
@@ -687,9 +747,7 @@ def test_f10_start_gedaechtnis_zwei_starts_dann_meldung(welt: Welt) -> None:
     argv = welt.protokoll_bau.read_text(encoding="utf-8").splitlines()
     assert argv == ["9002", "9002"], argv
     treffer = [
-        k
-        for k in welt.kommentare()
-        if "#9002 startet nicht (Fenster verschwindet wieder) — braucht David" in k
+        k for k in welt.kommentare() if "#9002 startet nicht (Fenster verschwindet wieder) — braucht den Menschen" in k
     ]
     assert len(treffer) == 1, welt.kommentare()
     assert len(welt.stand()["starts"]["9002"]) == 2
@@ -698,9 +756,7 @@ def test_f10_start_gedaechtnis_zwei_starts_dann_meldung(welt: Welt) -> None:
 # --- F11: Schließen nur nach Karenz -------------------------------------------------
 
 
-def test_f11_ticket_zu_schliesst_erst_nach_karenz(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f11_ticket_zu_schliesst_erst_nach_karenz(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GH_STUB_UNTER", f"{SPEC}:9003")
     monkeypatch.setenv("GH_STUB_ZU", "9003")
     _fenster(welt, "bau 9003", "sleep 3600")
@@ -742,9 +798,7 @@ def _deploy_attrappe(welt: Welt, name: str) -> subprocess.Popen[bytes]:
     return subprocess.Popen([str(skript)])
 
 
-def test_f12_waise_aelter_6h_wird_ignoriert(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f12_waise_aelter_6h_wird_ignoriert(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     # Gefälschtes ``ps``: jeder Prozess ist „7 Stunden alt“.
     (welt.bin / "ps").write_text("#!/bin/bash\necho 25200\n", encoding="utf-8")
     (welt.bin / "ps").chmod(0o755)
@@ -781,13 +835,9 @@ def test_f12_muster_aus_repo_config(welt: Welt) -> None:
         ),
         encoding="utf-8",
     )
-    a = aufpasser.Aufpasser(
-        aufpasser.Einstellungen(zustand=welt.zustand, tmux_socket=SOCKET, trocken=True)
-    )
+    a = aufpasser.Aufpasser(aufpasser.Einstellungen(zustand=welt.zustand, tmux_socket=SOCKET, trocken=True))
     muster = a.deploy_muster_fuer([welt.repo])
-    assert re.search(muster, "bash /x/mein_deploy.sh") and re.search(
-        muster, "nest_hoch.sh"
-    )
+    assert re.search(muster, "bash /x/mein_deploy.sh") and re.search(muster, "nest_hoch.sh")
     assert re.search(muster, "safe_deploy_vps.sh")
     prozess = _deploy_attrappe(welt, "mein_deploy.sh")
     try:
@@ -800,9 +850,7 @@ def test_f12_muster_aus_repo_config(welt: Welt) -> None:
 
 
 def test_f12_sh_fehlendes_programm_wird_runtime_error(welt: Welt) -> None:
-    a = aufpasser.Aufpasser(
-        aufpasser.Einstellungen(zustand=welt.zustand, tmux_socket=SOCKET, trocken=True)
-    )
+    a = aufpasser.Aufpasser(aufpasser.Einstellungen(zustand=welt.zustand, tmux_socket=SOCKET, trocken=True))
     with pytest.raises(RuntimeError, match="gibt-es-nicht"):
         a.sh("programm-gibt-es-nicht-4711")
     with pytest.raises(RuntimeError, match="Zeit"):
@@ -829,12 +877,8 @@ def _crontab_fake(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, inhalt: str) 
 ALT_ZEILE = "*/15 * * * * /usr/bin/python3 /home/bau/aufpasser/aufpasser.py >> /home/bau/aufpasser/cron.out 2>&1"
 
 
-def test_f13_alt_zeile_ohne_marke_wird_ersetzt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    datei = _crontab_fake(
-        tmp_path, monkeypatch, f"0 3 * * * /usr/bin/backup.sh\n{ALT_ZEILE}\n"
-    )
+def test_f13_alt_zeile_ohne_marke_wird_ersetzt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    datei = _crontab_fake(tmp_path, monkeypatch, f"0 3 * * * /usr/bin/backup.sh\n{ALT_ZEILE}\n")
     zustand = tmp_path / "zustand"
     assert aufpasser.main(["--zustand", str(zustand), "--cron-einrichten"]) == 0
     zeilen = datei.read_text(encoding="utf-8").splitlines()
@@ -850,10 +894,7 @@ def test_f13_trocken_zeigt_nur_und_legt_nichts_an(
 ) -> None:
     datei = _crontab_fake(tmp_path, monkeypatch, f"{ALT_ZEILE}\n")
     zustand = tmp_path / "zustand"
-    assert (
-        aufpasser.main(["--zustand", str(zustand), "--trocken", "--cron-einrichten"])
-        == 0
-    )
+    assert aufpasser.main(["--zustand", str(zustand), "--trocken", "--cron-einrichten"]) == 0
     aus = capsys.readouterr()
     assert "[trocken]" in aus.out and str(SKRIPTE / "aufpasser.py") in aus.out
     assert datei.read_text(encoding="utf-8") == f"{ALT_ZEILE}\n"
@@ -869,9 +910,7 @@ def test_f13_trocken_lauf_legt_keinen_zustandsordner_an(welt: Welt) -> None:
 # --- F14: Meldungs-Doppelschutz erst nach Erfolg ---------------------------------
 
 
-def test_f14_schluessel_erst_nach_erfolgreichem_kommentar(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f14_schluessel_erst_nach_erfolgreichem_kommentar(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     original = (welt.bin / "gh").read_text(encoding="utf-8")
     vorspann = (
         "import sys\n"

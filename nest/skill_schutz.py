@@ -99,10 +99,17 @@ _GIT_ANLEGEN = {
 # Optionen, deren Wert selbst ein Schreibziel ist.
 _GIT_ZIEL_OPTIONEN = {"--separate-git-dir"}
 _PY_SCHREIBT = re.compile(
-    r"open\([^)]*['\"][wax]\+?b?['\"]|write_text|write_bytes|shutil\.|os\.(?:remove|unlink|rename|replace)"
-    r"|\.unlink\(|\.rename\(|Path\([^)]*\)\.replace\("
+    r"open\([^)]*['\"](?:[wax][bt+]*|r[bt]*\+[bt]*)['\"]|write_text|write_bytes|shutil\."
+    r"|os\.(?:remove|unlink|rename|replace|mkdir|makedirs|rmdir|truncate|chmod|chown)"
+    r"|\.(?:unlink|rename|touch|mkdir|rmdir)\(|Path\([^)]*\)\.replace\("
 )
-_PRAEFIXE = {"sudo", "env", "nohup", "command", "exec", "time"}
+_PY_OPT_MIT_WERT = {"-W", "-X", "--check-hash-based-pycs"}
+_PY_HEREDOC = re.compile(r"(?:^|[\s;&|(`/])python\d*(?:\.\d+)?(?:\.exe)?(?:\s+(?:-[^\s]*|-))*\s*<<")
+_PRAEFIXE = {"sudo", "env", "nohup", "command", "exec", "time", "busybox"}
+_SCHLUESSELWOERTER = {"if", "then", "else", "elif", "while", "until", "do", "!", "{", "}"}
+_SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
+_SHELL_MIT_WERT = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}
+_MAX_TIEFE = 16
 
 
 def _home() -> Path:
@@ -135,11 +142,15 @@ def _in_skills(pfad: str, cwd: Path) -> bool:
         return ".claude/skills" in pfad
 
 
-def _tokens(teil: str) -> list[str]:
+def _tokens_mit_status(teil: str) -> tuple[list[str], bool]:
     try:
-        return shlex.split(teil)
+        return shlex.split(teil), True
     except ValueError:
-        return teil.split()
+        return teil.split(), False
+
+
+def _tokens(teil: str) -> list[str]:
+    return _tokens_mit_status(teil)[0]
 
 
 def _git_ziel_args(args: list[str], mit_wert: set[str]) -> tuple[list[str], list[str]]:
@@ -205,16 +216,71 @@ def _git_schreibt(args: list[str], cwd: Path) -> bool:
     return unterbefehl in _GIT_SCHREIBEND and (repo_in_skills or _in_skills(str(ordner), cwd))
 
 
-def _teil_schreibt(tokens: list[str], cwd: Path) -> bool:
+def _py_code_schreibt(code: str, cwd: Path) -> bool:
+    """True, wenn Python-Inline-Code erkennbar in den Skill-Ordner schreibt."""
+    if not _PY_SCHREIBT.search(code):
+        return False
+    return ".claude/skills" in code or ".claude\\skills" in code or _in_skills(".", cwd)
+
+
+def _python_c_code(args: list[str]) -> str | None:
+    """Liefert den Inline-Code hinter ``-c`` (auch ``-uc``/``-cCODE``) oder ``None``."""
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in ("--", "-") or not a.startswith("-"):
+            return None
+        if a in _PY_OPT_MIT_WERT:
+            i += 2
+            continue
+        if a.startswith("--") or a.startswith(("-W", "-X")):
+            i += 1
+            continue
+        if "c" in a[1:]:
+            rest = a[1:].partition("c")[2]
+            if rest:
+                return rest
+            return args[i + 1] if i + 1 < len(args) else ""
+        if "m" in a[1:]:
+            return None
+        i += 1
+    return None
+
+
+def _shell_c_code(args: list[str]) -> str | None:
+    """Liefert den Befehl hinter ``-c`` einer Shell (z. B. ``bash -ec …``) oder ``None``."""
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in ("--", "-") or not a.startswith(("-", "+")):
+            return None
+        if a in _SHELL_MIT_WERT:
+            i += 2
+            continue
+        if a.startswith("--"):
+            i += 1
+            continue
+        if a.startswith("-") and "c" in a[1:]:
+            return args[i + 1] if i + 1 < len(args) else ""
+        i += 1
+    return None
+
+
+def _teil_schreibt(tokens: list[str], cwd: Path, *, shlex_ok: bool = True, _tiefe: int = 0) -> bool:
     git_env: list[str] = []  # GIT_DIR=…/GIT_WORK_TREE=… als globale git-Optionen
-    while tokens and (tokens[0] in _PRAEFIXE or ("=" in tokens[0] and not tokens[0].startswith("-"))):
+    while tokens and (
+        tokens[0] in _SCHLUESSELWOERTER
+        or tokens[0] in _PRAEFIXE
+        or ("=" in tokens[0] and not tokens[0].startswith("-"))
+    ):
         name, _, wert = tokens[0].partition("=")
         if name in _GIT_ENV:
             git_env.append(f"{_GIT_ENV[name]}={wert}")
         tokens = tokens[1:]
     if not tokens:
         return False
-    befehl, args = Path(tokens[0]).name, tokens[1:]
+    befehl = Path(tokens[0]).name.removesuffix(".exe")
+    args = tokens[1:]
     if befehl == "git":
         args = git_env + args
     nicht_optionen = [a for a in args if not a.startswith("-")]
@@ -230,33 +296,497 @@ def _teil_schreibt(tokens: list[str], cwd: Path) -> bool:
         return any(_in_skills(a, cwd) for a in nicht_optionen) or _in_skills(".", cwd)
     if befehl == "git":
         return _git_schreibt(args, cwd)
-    if re.fullmatch(r"python\d*(?:\.\d+)?", befehl) and "-c" in args:
-        code = args[args.index("-c") + 1] if args.index("-c") + 1 < len(args) else ""
-        return bool(_PY_SCHREIBT.search(code)) and (".claude/skills" in code or _in_skills(".", cwd))
+    if re.fullmatch(r"python\d*(?:\.\d+)?", befehl):
+        code = _python_c_code(args)
+        if code is not None:
+            if not shlex_ok:
+                code = " ".join(args)
+            return _py_code_schreibt(code, cwd)
+    if befehl in _SHELLS:
+        code = _shell_c_code(args)
+        if code is not None:
+            if not shlex_ok:
+                code = " ".join(args)
+            return bash_schreibt_in_skills(code, cwd, _tiefe=_tiefe + 1)
+    if befehl == "eval" and args:
+        return bash_schreibt_in_skills(" ".join(args), cwd, _tiefe=_tiefe + 1)
     return False
 
 
-def bash_schreibt_in_skills(befehl: str, cwd: Path) -> bool:
+_HEREDOC_KOPF = re.compile(r"<<(-?)[ \t]*(['\"]?)([A-Za-z_]\w*)\2")
+_INTERPRETER = re.compile(
+    r"(?:^|[\s;&|(`/])(?:bash|sh|zsh|dash|ksh|eval|source|xargs|ssh|python\d*(?:\.\d+)?|perl|ruby|node)(?=[\s;&|)`]|$)"
+)
+
+
+class _Unsicher(Exception):
+    """Konstrukt nicht sicher verstanden → Befehl bleibt unverändert Befehl."""
+
+
+def _nach_fortsetzung(s: str, i: int) -> int:
+    """Überspringt Zeilenfortsetzungen ``\\`` + Zeilenumbruch ab ``i``."""
+    while i < len(s) and s[i] == "\\":
+        if s.startswith("\\\r\n", i):
+            i += 3
+        elif s.startswith("\\\n", i):
+            i += 2
+        else:
+            break
+    return i
+
+
+def _ende_einfachquote(s: str, start: int, *, ansi: bool = False) -> tuple[int, bool]:
+    """Index hinter schließendem ``'`` (mit Escapes bei ``$'…'``) sowie ``geschlossen``."""
+    j, n = start + 1, len(s)
+    while j < n:
+        if ansi and s[j] == "\\":
+            j += 2
+            continue
+        if s[j] == "'":
+            return j + 1, True
+        j += 1
+    return n, False
+
+
+def _ende_backtick(s: str, start: int) -> tuple[str, int, bool]:
+    """Extrahiert den Befehl in Backticks `` `…` `` (inkl. ``\\` ``-Entschachtelung)."""
+    inhalt: list[str] = []
+    j, n = start + 1, len(s)
+    while j < n:
+        if s[j] == "\\":
+            if s.startswith("\\\r\n", j):
+                j += 3
+                continue
+            if s.startswith("\\\n", j):
+                j += 2
+                continue
+            if j + 1 < n and s[j + 1] in '$`\\"':
+                inhalt.append(s[j + 1])
+                j += 2
+                continue
+            inhalt.append(s[j])
+            j += 1
+        elif s[j] == "`":
+            return "".join(inhalt), j + 1, True
+        else:
+            inhalt.append(s[j])
+            j += 1
+    return "".join(inhalt), n, False
+
+
+def _ist_arithmetik(s: str, innen_start: int) -> bool:
+    """True, wenn die zweite Klammer von ``$((`` direkt mit ``))`` schließt."""
+    tiefe, j, n = 1, innen_start + 1, len(s)
+    while j < n and tiefe > 0:
+        c = s[j]
+        if c == "\\":
+            j += 2
+            continue
+        if c == "'":
+            j, _ = _ende_einfachquote(s, j, ansi=j > innen_start + 1 and s[j - 1] == "$")
+            continue
+        if c == '"':
+            j, _, _ = _ende_doppelquote(s, j)
+            continue
+        if c == "(":
+            tiefe += 1
+        elif c == ")":
+            tiefe -= 1
+        j += 1
+    return tiefe == 0 and j < n and s[j] == ")"
+
+
+def _ende_klammer_subst(s: str, klammer_pos: int) -> tuple[str, int, bool]:
+    """Extrahiert den Inhalt einer Klammer-Ersetzung ab ``(`` (``$(…)``, ``<(…)``, ``>(…)``)."""
+    j, n = klammer_pos + 1, len(s)
+    tiefe, case_tiefe, befehlsanfang = 1, 0, True
+    offen: list[tuple[bool, str, bool]] = []
+    while j < n:
+        c = s[j]
+        if c == "\\":
+            j += 2
+            continue
+        if c == "#" and (j == klammer_pos + 1 or s[j - 1] in " \t\n;&|("):
+            ende = s.find("\n", j)
+            j = n if ende < 0 else ende
+            continue
+        if c == "'":
+            ansi = j > klammer_pos + 1 and s[j - 1] == "$"
+            j, geschlossen = _ende_einfachquote(s, j, ansi=ansi)
+            if not geschlossen:
+                return s[klammer_pos + 1 :], n, False
+            befehlsanfang = False
+            continue
+        if c == '"':
+            j, _, geschlossen = _ende_doppelquote(s, j)
+            if not geschlossen:
+                return s[klammer_pos + 1 :], n, False
+            befehlsanfang = False
+            continue
+        if c == "`":
+            _, j, geschlossen = _ende_backtick(s, j)
+            if not geschlossen:
+                return s[klammer_pos + 1 :], n, False
+            befehlsanfang = False
+            continue
+        if s.startswith("<<<", j):
+            befehlsanfang = False
+            j += 3
+            continue
+        if s.startswith("<<", j):
+            kopf = _HEREDOC_KOPF.match(s, j)
+            if kopf:
+                offen.append((bool(kopf.group(1)), kopf.group(3), bool(kopf.group(2))))
+                befehlsanfang = False
+                j = kopf.end()
+                continue
+        if c == "\n" and offen:
+            try:
+                j, _ = _rumpf_ueberspringen(s, j + 1, offen, [])
+            except _Unsicher:
+                return s[klammer_pos + 1 :], n, False
+            offen = []
+            befehlsanfang = True
+            continue
+        if c == "(":
+            tiefe += 1
+            befehlsanfang = True
+            j += 1
+            continue
+        if c == ")":
+            if tiefe == 1:
+                if case_tiefe > 0:
+                    befehlsanfang = True
+                    j += 1
+                    continue
+                return s[klammer_pos + 1 : j], j + 1, True
+            tiefe -= 1
+            j += 1
+            continue
+        if c.isalpha() or c == "_":
+            k = j + 1
+            while k < n and (s[k].isalnum() or s[k] == "_"):
+                k += 1
+            wort = s[j:k]
+            if befehlsanfang and wort == "case":
+                case_tiefe += 1
+                befehlsanfang = False
+            elif wort == "esac" and case_tiefe > 0:
+                case_tiefe -= 1
+                befehlsanfang = False
+            elif wort in _SCHLUESSELWOERTER:
+                befehlsanfang = True
+            else:
+                befehlsanfang = False
+            j = k
+            continue
+        if c in ";&|\n":
+            befehlsanfang = True
+        elif c not in " \t\r":
+            befehlsanfang = False
+        j += 1
+    return s[klammer_pos + 1 :], n, False
+
+
+def _ende_doppelquote(s: str, start: int) -> tuple[int, list[str], bool]:
+    """Scannt ``"…"`` ab ``start``, sammelt darin enthaltene ``$(…)``/Backticks."""
+    funde: list[str] = []
+    j, n = start + 1, len(s)
+    while j < n:
+        c = s[j]
+        if c == "\\":
+            j += 3 if s.startswith("\\\r\n", j) else 2
+            continue
+        if c == '"':
+            return j + 1, funde, True
+        if c == "$":
+            k = _nach_fortsetzung(s, j + 1)
+            if k < n and s[k] == "(":
+                k2 = _nach_fortsetzung(s, k + 1)
+                if k2 < n and s[k2] == "(" and _ist_arithmetik(s, k2):
+                    j = k2 + 1
+                    continue
+                innen, j, _ = _ende_klammer_subst(s, k)
+                funde.append(innen)
+                continue
+        if c == "`":
+            innen, j, _ = _ende_backtick(s, j)
+            funde.append(innen)
+            continue
+        j += 1
+    return n, funde, False
+
+
+def _ersetzungen_im_text(s: str, *, nur_subst: bool = False) -> list[str]:
+    """Findet ausführbare ``$(…)``/Backticks (und ``<(…)``/``>(…)`` außerhalb von Text).
+
+    Mit ``nur_subst=True`` (für ungequotete Heredoc-Rümpfe) gelten ``'``, ``"`` und ``#``
+    wie in der Shell als gewöhnliche Zeichen, nicht als Anführung oder Kommentar.
+    """
+    funde: list[str] = []
+    i, n = 0, len(s)
+    while i < n:
+        c = s[i]
+        if c == "\\":
+            i += 3 if s.startswith("\\\r\n", i) else 2
+            continue
+        if not nur_subst:
+            if c == "#" and (i == 0 or s[i - 1] in " \t\n;&|("):
+                ende = s.find("\n", i)
+                i = n if ende < 0 else ende
+                continue
+            if c == "'":
+                ende, geschlossen = _ende_einfachquote(s, i, ansi=i > 0 and s[i - 1] == "$")
+                i = ende if geschlossen else i + 1
+                continue
+            if c == '"':
+                i, innen_funde, _ = _ende_doppelquote(s, i)
+                funde.extend(innen_funde)
+                continue
+            if c in "<>" and i + 1 < n and s[i + 1] == "(":
+                innen, i, _ = _ende_klammer_subst(s, i + 1)
+                funde.append(innen)
+                continue
+        if c == "$":
+            k = _nach_fortsetzung(s, i + 1)
+            if k < n and s[k] == "(":
+                k2 = _nach_fortsetzung(s, k + 1)
+                if k2 < n and s[k2] == "(" and _ist_arithmetik(s, k2):
+                    i = k2 + 1
+                    continue
+                innen, i, _ = _ende_klammer_subst(s, k)
+                funde.append(innen)
+                continue
+        if c == "`":
+            innen, i, _ = _ende_backtick(s, i)
+            funde.append(innen)
+            continue
+        i += 1
+    return funde
+
+
+def _ohne_text(befehl: str) -> tuple[str, list[str]]:
+    """SSOT „Befehl oder Text“: Heredoc-Rümpfe und mehrzeilige Zeichenketten entfernen.
+
+    Ein Durchlauf Zeichen für Zeichen (außen / '…' / "…" / Kommentar / Escape). Ein Heredoc-Kopf
+    zählt nur im Zustand „außen“ (nie ``<<<``, ``\\<<``, in ``((…))``, Anführung oder Kommentar);
+    die Kopfzeile samt Umleitungs-Ziel bleibt. Mehrzeilige Zeichenketten werden nur geleert, wenn
+    sie sauber geöffnet und geschlossen wurden und keine ``$(…)``/Backticks enthalten. Ungequotete
+    Heredoc-Rümpfe mit ``$(…)``/Backticks geben ihre Ersetzungen als ausführbare Befehle heraus
+    (auch im Zweifel oder bei einem Interpreter im Aufruf).
+    """
+    zusatz: list[str] = []
+    try:
+        bereinigt = _text_entfernen(befehl, zusatz)
+    except _Unsicher:
+        return befehl, zusatz
+    if _INTERPRETER.search(befehl):
+        return befehl, zusatz
+    return bereinigt, zusatz
+
+
+def _text_entfernen(s: str, zusatz: list[str]) -> str:
+    aus: list[str] = []
+    offen: list[tuple[bool, str, bool]] = []  # (<<-, Begrenzer, angeführt) bis zum Zeilenende
+    i, n = 0, len(s)
+    while i < n:
+        c = s[i]
+        if c == "\\":
+            aus.append(s[i : i + 2])
+            i += 2
+        elif c == "#" and (i == 0 or s[i - 1] in " \t\n;&|("):
+            ende = s.find("\n", i)
+            ende = n if ende < 0 else ende
+            aus.append(s[i:ende])
+            i = ende
+        elif c == "'":
+            ansi = i > 0 and s[i - 1] == "$"
+            ende, geschlossen = _ende_einfachquote(s, i, ansi=ansi)
+            if not geschlossen:
+                raise _Unsicher
+            inhalt = s[i + 1 : ende - 1]
+            aus.append("''" if "\n" in inhalt and not ansi else s[i:ende])
+            i = ende
+        elif c == '"':
+            ende, innen_funde, geschlossen = _ende_doppelquote(s, i)
+            if not geschlossen or innen_funde:
+                zusatz.extend(innen_funde)
+                raise _Unsicher
+            inhalt = s[i + 1 : ende - 1]
+            aus.append('""' if "\n" in inhalt else s[i:ende])
+            i = ende
+        elif s.startswith("((", i):
+            tiefe, j = 0, i
+            while j < n:
+                tiefe += (s[j] == "(") - (s[j] == ")")
+                j += 1
+                if tiefe == 0:
+                    break
+            if tiefe:
+                raise _Unsicher
+            aus.append(s[i:j])
+            i = j
+        elif s.startswith("<<<", i):
+            aus.append("<<<")
+            i += 3
+        elif s.startswith("<<", i):
+            kopf = _HEREDOC_KOPF.match(s, i)
+            if not kopf:
+                raise _Unsicher
+            offen.append((bool(kopf.group(1)), kopf.group(3), bool(kopf.group(2))))
+            aus.append(kopf.group(0))
+            i = kopf.end()
+        elif c == "\n" and offen:
+            aus.append("\n")
+            i, rumpf_befehle = _rumpf_ueberspringen(s, i + 1, offen, zusatz)
+            for eintrag in rumpf_befehle:
+                aus.append(f"{eintrag}\n")
+            offen = []
+        else:
+            if c == "\n":
+                offen = []
+            aus.append(c)
+            i += 1
+    return "".join(aus)
+
+
+def _rumpf_ueberspringen(
+    s: str,
+    start: int,
+    offen: list[tuple[bool, str, bool]],
+    zusatz: list[str],
+) -> tuple[int, list[str]]:
+    """Index hinter den Rümpfen aller offenen Heredocs plus ausführbare Ersetzungen daraus."""
+    i = start
+    rumpf_befehle: list[str] = []
+    for strich, begrenzer, angefuehrt in offen:
+        rumpf_start = i
+        geschlossen = False
+        rumpf_ende = len(s)
+        while i < len(s):
+            ende = s.find("\n", i)
+            naechst = len(s) if ende < 0 else ende + 1
+            zeile = s[i : len(s) if ende < 0 else ende]
+            if (zeile.lstrip("\t") if strich else zeile) == begrenzer:
+                rumpf_ende = i
+                i = naechst
+                geschlossen = True
+                break
+            i = naechst
+        rumpf = s[rumpf_start:rumpf_ende]
+        if not angefuehrt:
+            funde = _ersetzungen_im_text(rumpf, nur_subst=True)
+            if funde:
+                rumpf_befehle.extend(funde)
+                zusatz.extend(funde)
+        if not geschlossen:
+            raise _Unsicher
+    return i, rumpf_befehle
+
+
+def _teile_trennen(s: str) -> list[str]:
+    """Teilt ``s`` an Shell-Trennern außerhalb von Anführungszeichen und Ersetzungen.
+
+    Bei ungeschlossenen Anführungszeichen oder Ersetzungen fällt die Zerlegung
+    konservativ auf ``_TRENNER`` zurück (fail-closed).
+    """
+    teile: list[str] = []
+    start, i, n = 0, 0, len(s)
+    while i < n:
+        c = s[i]
+        if c == "\\":
+            i += 3 if s.startswith("\\\r\n", i) else 2
+            continue
+        if c == "#" and (i == 0 or s[i - 1] in " \t\n;&|("):
+            teile.append(s[start:i].strip())
+            ende = s.find("\n", i)
+            if ende < 0:
+                return [t for t in teile if t]
+            i = ende + 1
+            start = i
+            continue
+        if c == "'":
+            i, geschlossen = _ende_einfachquote(s, i, ansi=i > 0 and s[i - 1] == "$")
+            if not geschlossen:
+                return [t for t in _TRENNER.split(s) if t]
+            continue
+        if c == '"':
+            i, _, geschlossen = _ende_doppelquote(s, i)
+            if not geschlossen:
+                return [t for t in _TRENNER.split(s) if t]
+            continue
+        if c == "`":
+            _, i, geschlossen = _ende_backtick(s, i)
+            if not geschlossen:
+                return [t for t in _TRENNER.split(s) if t]
+            continue
+        if c == "$":
+            k = _nach_fortsetzung(s, i + 1)
+            if k < n and s[k] == "(":
+                _, i, geschlossen = _ende_klammer_subst(s, k)
+                if not geschlossen:
+                    return [t for t in _TRENNER.split(s) if t]
+                continue
+        if c in "<>" and i + 1 < n and s[i + 1] == "(":
+            _, i, geschlossen = _ende_klammer_subst(s, i + 1)
+            if not geschlossen:
+                return [t for t in _TRENNER.split(s) if t]
+            continue
+        if s.startswith("((", i):
+            _, i, geschlossen = _ende_klammer_subst(s, i)
+            if not geschlossen:
+                return [t for t in _TRENNER.split(s) if t]
+            continue
+        if s.startswith(("&&", "||"), i):
+            teile.append(s[start:i].strip())
+            i += 2
+            start = i
+            continue
+        if c == "&" and (i == 0 or s[i - 1] != ">") and s[i + 1 : i + 2] != ">":
+            teile.append(s[start:i].strip())
+            i += 1
+            start = i
+            continue
+        if c in ";|\n)" or (c == "(" and (i == 0 or s[i - 1] not in "$<>@+?*!=")):
+            teile.append(s[start:i].strip())
+            i += 1
+            start = i
+            continue
+        i += 1
+    teile.append(s[start:].strip())
+    return [t for t in teile if t]
+
+
+def bash_schreibt_in_skills(befehl: str, cwd: Path, *, _tiefe: int = 0) -> bool:
     """True, wenn der Bash-Befehl erkennbar in den Skill-Ordner schreibt."""
-    # Python-Heredoc (``python3 - <<EOF … EOF``): Code steht hinter ``<<``.
-    heredoc = re.search(r"python\d*(?:\.\d+)?\s+-\s*<<", befehl)
-    if heredoc:
-        code = befehl[heredoc.end() :]
-        if _PY_SCHREIBT.search(code) and (".claude/skills" in code or _in_skills(".", cwd)):
-            return True
-        befehl = befehl[: heredoc.start()]
+    if _tiefe > _MAX_TIEFE:
+        return True
+    # Python-Heredoc (``python3 - <<EOF … EOF`` oder ``python3 <<EOF … EOF``).
+    heredoc = _PY_HEREDOC.search(befehl)
+    if heredoc and _py_code_schreibt(befehl[heredoc.end() :], cwd):
+        return True
+    bereinigt, zusatz = _ohne_text(befehl)
     aktuell = cwd
-    for teil in _TRENNER.split(befehl):
+    for teil in _teile_trennen(bereinigt):
         if not teil:
             continue
+        for innen in _ersetzungen_im_text(teil):
+            if innen and bash_schreibt_in_skills(innen, aktuell, _tiefe=_tiefe + 1):
+                return True
         for ziel in _UMLEITUNG.findall(teil):
             if _in_skills(ziel, aktuell):
                 return True
-        tokens = [t for t in _tokens(teil) if not re.match(r"^(?:\d|&)?>", t)]
+        roh_tokens, shlex_ok = _tokens_mit_status(teil)
+        tokens = [t for t in roh_tokens if not re.match(r"^(?:\d|&)?>", t)]
         if tokens[:1] == ["cd"] and len(tokens) > 1:
             aktuell = _aufloesen(tokens[1], aktuell)
             continue
-        if _teil_schreibt(tokens, aktuell):
+        if _PY_HEREDOC.search(teil) and _py_code_schreibt(befehl, aktuell):
+            return True
+        if _teil_schreibt(tokens, aktuell, shlex_ok=shlex_ok, _tiefe=_tiefe):
+            return True
+    for innen in zusatz:
+        if innen and bash_schreibt_in_skills(innen, cwd, _tiefe=_tiefe + 1):
             return True
     return False
 

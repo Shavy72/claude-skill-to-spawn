@@ -27,7 +27,7 @@ SKRIPTE = SKILL / "skripte"
 sys.path.insert(0, str(SKILL))
 
 import context_mode_attrappe  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
-from to_spawn import context_mode, setup  # noqa: E402
+from to_spawn import context_mode, konsole, setup  # noqa: E402
 
 SERVER = "plugin_context-mode_context-mode"
 
@@ -82,9 +82,7 @@ def heim(tmp_path: Path) -> Path:
     return home
 
 
-def _probelauf(
-    repo: Path, name: str, nummer: str, home: Path
-) -> subprocess.CompletedProcess[str]:
+def _probelauf(repo: Path, name: str, nummer: str, home: Path) -> subprocess.CompletedProcess[str]:
     env = {k: v for k, v in os.environ.items() if k not in {"TO_SPAWN_REPO"}}
     env["HOME"] = str(home)
     env["USERPROFILE"] = str(home)
@@ -251,15 +249,30 @@ def test_weg_echte_session_hat_start_mjs_und_ruft_ctx_werkzeug(tmp_path: Path) -
     werkzeug = f"mcp__{SERVER}__ctx_execute"
     prozess = subprocess.Popen(
         [
-            "claude", "-p", "--model", "claude-haiku-4-5-20251001",
-            "--settings", str(einstellungen), "--mcp-config", str(mcp), "--strict-mcp-config",
-            "--no-chrome", "--output-format", "stream-json", "--verbose",
+            "claude",
+            "-p",
+            "--model",
+            "claude-haiku-4-5-20251001",
+            "--settings",
+            str(einstellungen),
+            "--mcp-config",
+            str(mcp),
+            "--strict-mcp-config",
+            "--no-chrome",
+            "--output-format",
+            "stream-json",
+            "--verbose",
             (
-                f"Rufe das Werkzeug {werkzeug} auf mit language \"python\" und "
-                "code \"print(6*7*1000+237)\". Antworte nur mit der Ausgabe des Werkzeugs."
+                f'Rufe das Werkzeug {werkzeug} auf mit language "python" und '
+                'code "print(6*7*1000+237)". Antworte nur mit der Ausgabe des Werkzeugs.'
             ),
         ],
-        cwd=str(tmp_path), env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        cwd=str(tmp_path),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        **konsole.UNTERPROZESS_TEXT,  # stream-json ist UTF-8; cp1252 bricht im Lese-Thread ab
         start_new_session=True,  # eigene Prozessgruppe: bei Timeout stirbt auch start.mjs
     )
     gesehen: list[int] = []
@@ -337,7 +350,7 @@ def test_sessions_stand_zeigt_context_mode_je_session() -> None:
         "901": modul.Eintrag("901", "ticket", "mit"),
         "902": modul.Eintrag("902", "ticket", "ohne"),
     }
-    modul.fremdes_repo = lambda pid: False
+    assert modul.ordner_fremd(None) is False  # Ordner unbekannt = eigenes Repo, beide zählen
     modul.zuordnen(eintraege, alle)
     assert eintraege["901"].ctx == "✓"
     assert eintraege["902"].ctx == "✗"

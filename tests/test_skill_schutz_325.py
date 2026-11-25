@@ -32,9 +32,7 @@ def _hook(home: Path, eingabe: str) -> subprocess.CompletedProcess[str]:
 
 
 def _json(werkzeug: str, cwd: Path, **tool_input: str) -> str:
-    return json.dumps(
-        {"tool_name": werkzeug, "tool_input": tool_input, "cwd": str(cwd)}
-    )
+    return json.dumps({"tool_name": werkzeug, "tool_input": tool_input, "cwd": str(cwd)})
 
 
 @pytest.fixture()
@@ -57,16 +55,12 @@ def test_edit_relativ_aus_skill_ordner_wird_verweigert(home: Path) -> None:
 
 
 def test_edit_mit_tilde_wird_verweigert(home: Path) -> None:
-    ergebnis = _hook(
-        home, _json("MultiEdit", home, file_path="~/.claude/skills/to-spawn/x.py")
-    )
+    ergebnis = _hook(home, _json("MultiEdit", home, file_path="~/.claude/skills/to-spawn/x.py"))
     assert ergebnis.returncode == 2, ergebnis.stderr
 
 
 def test_write_ausserhalb_ist_erlaubt(home: Path) -> None:
-    ergebnis = _hook(
-        home, _json("Write", home, file_path=str(home / "repo" / "datei.py"))
-    )
+    ergebnis = _hook(home, _json("Write", home, file_path=str(home / "repo" / "datei.py")))
     assert ergebnis.returncode == 0, ergebnis.stderr
 
 
@@ -78,9 +72,7 @@ def test_bash_sed_i_in_skills_wird_verweigert(home: Path) -> None:
 
 
 def test_bash_skill_aufruf_mit_umleitung_nach_aussen_ist_erlaubt(home: Path) -> None:
-    befehl = (
-        "python3 ~/.claude/skills/to-spawn/to_spawn.py eintrag --ticket 1 > /tmp/log"
-    )
+    befehl = "python3 ~/.claude/skills/to-spawn/to_spawn.py eintrag --ticket 1 > /tmp/log"
     ergebnis = _hook(home, _json("Bash", home, command=befehl))
     assert ergebnis.returncode == 0, ergebnis.stderr
 
@@ -125,3 +117,171 @@ def test_path_replace_im_python_code_bleibt_verweigert(home: Path) -> None:
     befehl = "python3 -c \"__import__('pathlib').Path('a').replace('/root/.claude/skills/b')\""
     ergebnis = _hook(home, _json("Bash", home, command=befehl))
     assert ergebnis.returncode == 2, ergebnis.stderr
+
+
+# --- #470: Text ist kein Befehl (Heredoc-Rumpf, mehrzeilige Zeichenkette) ---
+
+
+def _bash(home: Path, befehl: str) -> int:
+    return _hook(home, _json("Bash", home, command=befehl)).returncode
+
+
+@pytest.mark.parametrize("kopf", ["<<EOF", "<<'EOF'", "<<-EOF", '<<"EOF"'])
+def test_heredoc_rumpf_mit_skill_pfad_ist_text(home: Path, kopf: str) -> None:
+    befehl = f"cat >> protokoll.md {kopf}\nrm ~/.claude/skills/x\necho > ~/.claude/skills/y\nEOF"
+    assert _bash(home, befehl) == 0
+
+
+def test_mehrzeiliges_argument_mit_skill_pfad_ist_text(home: Path) -> None:
+    befehl = 'gh issue create --title t --body "Beispiel:\ncat > ~/.claude/skills/x <<EOF\nrm ~/.claude/skills/x"'
+    assert _bash(home, befehl) == 0
+
+
+def test_heredoc_kopfzeile_ziel_in_skills_bleibt_verweigert(home: Path) -> None:
+    befehl = "cat > ~/.claude/skills/x <<'EOF'\ntext\nEOF"
+    assert _bash(home, befehl) == 2
+
+
+def test_heredoc_als_code_fuer_shell_bleibt_verweigert(home: Path) -> None:
+    befehl = "bash <<'EOF'\nrm ~/.claude/skills/x\nEOF"
+    assert _bash(home, befehl) == 2
+
+
+def test_zeichenkette_als_code_fuer_shell_bleibt_verweigert(home: Path) -> None:
+    befehl = 'sh -c "echo hi\nrm ~/.claude/skills/x"'
+    assert _bash(home, befehl) == 2
+
+
+@pytest.mark.parametrize(
+    "befehl",
+    [
+        "# cat <<EOF\nrm ~/.claude/skills/x\nEOF",
+        'echo "<<EOF"\nrm ~/.claude/skills/x\nEOF',
+        "cat <<<EOF\nrm ~/.claude/skills/x\nEOF",
+        "x=$((1<<N))\nrm ~/.claude/skills/x\nN",
+        "echo \\<<EOF\nrm ~/.claude/skills/x\nEOF",
+        "# it's\nrm ~/.claude/skills/x\n# don't",
+    ],
+    ids=["kommentar", "in_anfuehrung", "here_string", "rechenausdruck", "escape", "kommentar_apostroph"],
+)
+def test_scheinbarer_text_ist_befehl_bleibt_verweigert(home: Path, befehl: str) -> None:
+    assert _bash(home, befehl) == 2
+
+
+# --- #527: python -c mehrzeilig, $(…)/Backticks in Text, ungequoteter Heredoc ---
+
+
+@pytest.mark.parametrize(
+    "befehl",
+    [
+        'python3 -c \'print(1)\nopen("~/.claude/skills/x","w")\'',
+        "python3 -c \"print(1)\nopen('~/.claude/skills/x','w')\"",
+        "python -c \"import os; os.remove('~/.claude/skills/x')\"",
+        'python3 -uc \'print(1)\nopen("~/.claude/skills/x","w")\'',
+        'python3 -c\'print(1)\nopen("~/.claude/skills/x","w")\'',
+        'cd ~/.claude/skills/to-spawn && python3 -c \'print(1)\nopen("x","w")\'',
+        "python3 - <<EOF\nprint(1)\nEOF\nrm ~/.claude/skills/x",
+        'python3 <<EOF\nopen("~/.claude/skills/x","w")\nEOF',
+    ],
+    ids=[
+        "py_c_mehrzeilig_einfach",
+        "py_c_mehrzeilig_doppelt",
+        "py_c_semikolon",
+        "py_uc_gebundelt",
+        "py_c_angeklebt",
+        "py_c_nach_cd",
+        "py_heredoc_danach_rm",
+        "py_heredoc_ohne_minus",
+    ],
+)
+def test_python_c_mehrzeilig_wird_verweigert(home: Path, befehl: str) -> None:
+    assert _bash(home, befehl) == 2
+
+
+def test_python_c_mehrzeilig_nur_lesend_bleibt_erlaubt(home: Path) -> None:
+    befehl = "python3 -c 'print(1)\nprint(\"~/.claude/skills/x\")'"
+    assert _bash(home, befehl) == 0
+
+
+@pytest.mark.parametrize(
+    "befehl",
+    [
+        'echo "a\n$(rm ~/.claude/skills/x)"',
+        'echo "a\n`rm ~/.claude/skills/x`"',
+        'echo "a\n$(rm "~/.claude/skills/x")"',
+        'echo "a\n$(echo hi\nrm ~/.claude/skills/x)"',
+        'echo "a\n$\\\n(rm ~/.claude/skills/x)"',
+        'echo "$(rm ~/.claude/skills/x)"',
+        'echo "`rm ~/.claude/skills/x`"',
+        'cd ~/.claude/skills && echo "a\n$(rm x)"',
+    ],
+    ids=[
+        "dq_mehrzeilig_dollar",
+        "dq_mehrzeilig_backtick",
+        "dq_mehrzeilig_innere_anfuehrung",
+        "dq_mehrzeilig_mehrzeiliges_dollar",
+        "dq_zeilenfortsetzung_dollar",
+        "dq_einzeilig_dollar",
+        "dq_einzeilig_backtick",
+        "dq_nach_cd",
+    ],
+)
+def test_ersetzung_in_text_wird_verweigert(home: Path, befehl: str) -> None:
+    assert _bash(home, befehl) == 2
+
+
+@pytest.mark.parametrize(
+    "befehl",
+    [
+        'echo "a\n$(cat ~/.claude/skills/to-spawn/SKILL.md)"',
+        "echo 'a\n$(rm ~/.claude/skills/x)'",
+    ],
+    ids=["dq_lesend_dollar", "einfache_anfuehrung_kein_befehl"],
+)
+def test_harmlose_ersetzung_oder_einfache_anfuehrung_erlaubt(home: Path, befehl: str) -> None:
+    assert _bash(home, befehl) == 0
+
+
+@pytest.mark.parametrize(
+    "befehl",
+    [
+        "cat <<EOF\n$(rm ~/.claude/skills/x)\nEOF",
+        "cat <<EOF\n`rm ~/.claude/skills/x`\nEOF",
+        "cat <<-EOF\n\t$(rm ~/.claude/skills/x)\n\tEOF",
+        "cat <<EOF\nit's $(rm ~/.claude/skills/x) don't\nEOF",
+        "cat <<EOF\n# $(rm ~/.claude/skills/x)\nEOF",
+        "cat <<EOF\n$\\\n(rm ~/.claude/skills/x)\nEOF",
+        'cat <<EOF\n$(python3 -c \'print(1)\nopen("~/.claude/skills/x","w")\')\nEOF',
+        "cat <<EOF\n$(echo hi > ~/.claude/skills/x)\nEOF",
+        "cat <<EOF\nit's $(rm ~/.claude/skills/x) don't",
+        'echo "a\n$(cat <<EOF\nit\'s $(rm ~/.claude/skills/x)\nEOF\n)"',
+        'echo "a\n$(cat <<EOF\n)\nEOF\nrm ~/.claude/skills/x)"',
+    ],
+    ids=[
+        "heredoc_ungequotet_dollar",
+        "heredoc_ungequotet_backtick",
+        "heredoc_tab_dollar",
+        "heredoc_apostrophe_dollar",
+        "heredoc_kommentarzeichen_dollar",
+        "heredoc_zeilenfortsetzung_dollar",
+        "heredoc_python_c_mehrzeilig",
+        "heredoc_umleitung_in_dollar",
+        "heredoc_offen_apostrophe_dollar",
+        "heredoc_in_dq_subst_apostroph",
+        "heredoc_in_dq_subst_klammer",
+    ],
+)
+def test_heredoc_ohne_anfuehrung_mit_ersetzung_wird_verweigert(home: Path, befehl: str) -> None:
+    assert _bash(home, befehl) == 2
+
+
+@pytest.mark.parametrize(
+    "befehl",
+    [
+        "cat <<'EOF'\n$(rm ~/.claude/skills/x)\nEOF",
+        "cat <<EOF\nHallo $(cat ~/.claude/skills/to-spawn/SKILL.md)\nEOF",
+    ],
+    ids=["heredoc_gequotet_dollar_ist_text", "heredoc_ungequotet_lesend_dollar"],
+)
+def test_heredoc_mit_harmloser_ersetzung_erlaubt(home: Path, befehl: str) -> None:
+    assert _bash(home, befehl) == 0

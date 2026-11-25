@@ -28,6 +28,9 @@ from . import config
 
 log = logging.getLogger("to_spawn.bau_log")
 
+#: Typ der Zeile einer abgelehnten Komplett-Prüfung (#496); Zähler: ``komplett_lauf.ablehnungen``.
+KOMPLETT_ABGELEHNT = "komplett_abgelehnt"
+
 #: Erlaubte Zeilen-Typen (``staffel_limit`` meldet das Ende der Staffel-Kette).
 TYPEN = (
     "auftrag",
@@ -40,6 +43,8 @@ TYPEN = (
     "staffel_limit",
     # Aufseher (#213): Live-Beweis blockiert (Feld ``grund``) und Modell-Wechsel beim Limit.
     "blockiert",
+    # Bau-Session (#278): Frage an den Aufseher (``waechter_takt.FRAGE_TYPEN``).
+    "frage",
     "waechter_modell",
     # Aufseher (#254): Pause bis zum Limit-Reset und der Neustart danach.
     "waechter_pause",
@@ -47,11 +52,15 @@ TYPEN = (
     "zusammenfassung",
     # Lernschleife (#286): erkannter Stillstand mit Klasse/Symptom/Ursache/Lösung.
     "vorfall",
+    # bau.py (#274 P1): Warnung beim Start (Regel-Kopie ignoriert, Repo-Zusatz unbrauchbar), Feld ``text``.
+    "start_warnung",
     # Aufseher (#448): eigenes Fehl-Reopen zurückgenommen (Feld ``text``).
     "ruecknahme",
     # Aufsicht (#436): Kontext an der Handoff-Grenze → Aufseher-Ablösung über respawn
     # (Felder ``kontext``, ``grenze``, ``exit``, ``zeile``; ``exit`` null = nicht versucht).
     "aufseher_abloesung",
+    # komplett_lauf (#496): Komplett-Prüfung aus einem Bau-Ticket abgelehnt (Felder ``spec``, ``weg``).
+    KOMPLETT_ABGELEHNT,
 )
 
 #: Felder, deren ``None`` als ``null`` stehen bleibt, weil es etwas bedeutet (sonst
@@ -108,6 +117,94 @@ def log_ort(ticket: str | int, worktree: Path, hauptbaum: Path) -> Path | None:
     return None
 
 
+def log_ort_fuer(ticket: str | int, repo: Path) -> Path | None:
+    """Wie :func:`log_ort`, bestimmt den Ticket-Worktree selbst über :func:`config.worktree_pfad` (#438).
+
+    Gemeinsamer Helfer, damit Aufrufer ``config.worktree_pfad`` und :func:`log_ort` nicht
+    jeweils selbst zusammensetzen.
+    """
+    return log_ort(ticket, Path(config.worktree_pfad(ticket, repo)).expanduser(), repo)
+
+
+def _git(repo: Path, *args: str) -> tuple[int, str]:
+    """``git <args>`` im ``repo`` mit Zeitgrenze :data:`gh.GIT_ZEIT_S` (#375)."""
+    from . import gh  # spät: gh fragt config, aber nicht bau_log
+
+    return gh._git_ausgabe(list(args), repo, timeout=gh.GIT_ZEIT_S)
+
+
+def haupt_ref(repo: Path) -> str | None:
+    """``origin/<Hauptzweig>`` nach der Regel von ``gh.hauptzweig`` (#257, #375); ``None`` ohne den Ref."""
+    from . import gh  # spät: gh fragt config, aber nicht bau_log
+
+    ref = f"origin/{gh.hauptzweig(repo)}"
+    if _git(repo, "rev-parse", "--verify", "-q", ref)[0] == 0:
+        return ref
+    return None
+
+
+def zeilen_aus(text: str, quelle: str) -> list[dict[str, Any]]:
+    """JSONL-Zeilen parsen; kaputte Zeilen werden gewarnt und als ``{"typ": "kaputt"}`` gezählt."""
+    zeilen: list[dict[str, Any]] = []
+    for nr, roh in enumerate(text.splitlines(), 1):
+        roh = roh.strip()
+        if not roh:
+            continue
+        try:
+            eintrag = json.loads(roh)
+        except ValueError:
+            eintrag = None
+        if not isinstance(eintrag, dict):
+            log.warning("Kaputte Bau-Log-Zeile %s:%s — als „kaputt“ gezählt.", quelle, nr)
+            eintrag = {"typ": "kaputt"}
+        zeilen.append(eintrag)
+    return zeilen
+
+
+def log_vom_ref(repo: Path, ref: str, ticket: str | int) -> list[dict[str, Any]]:
+    """Bau-Log-Zeilen eines Tickets, wie sie auf ``ref`` liegen (#375)."""
+    pfad = log_im_repo(repo, ticket)
+    code, text = _git(repo, "show", f"{ref}:{pfad}")
+    if code != 0:
+        return []
+    return zeilen_aus(text, f"{ref}:{pfad}")
+
+
+def entscheidung_felder(z: dict[str, Any]) -> tuple[str, str, str]:
+    """(Frage, Wahl, Grund) einer ``entscheidung``-Zeile, ungekürzt (#375).
+
+    Einzige Stelle für den Rückfall auf die alten Bau-Log-Felder (``text`` → Frage,
+    ``entscheidungen`` → Wahl). Kürzen und Formatieren machen die Aufrufer.
+    """
+    frage = str(z.get("frage") or z.get("text") or "")
+    wahl = str(z.get("wahl") or z.get("entscheidungen") or "")
+    grund = str(z.get("grund") or "")
+    return frage, wahl, grund
+
+
+def hat_log_auf_origin(repo: Path, ticket: str | int, *, hauptzweig: str | None = None) -> bool:
+    """Liegt ein versioniertes Bau-Log von ``ticket`` auf ``origin/<Hauptzweig>`` oder
+    einem geholten Remote-Ticket-Zweig ``origin/ticket/<N>-*``? (#438)
+
+    Prüft nur lokale Remote-Tracking-Refs (kein Netz, kein ``git fetch``). Unversionierte
+    Laufdateien auf einem anderen Rechner liegen außerhalb von Git und sind hier nicht sichtbar.
+    """
+    from . import gh  # spät: gh fragt config, aber nicht bau_log
+
+    pfad = log_im_repo(repo, ticket)
+    if Path(pfad).is_absolute():
+        return False
+    haupt = hauptzweig or gh.hauptzweig(repo)
+    refs = [f"origin/{haupt}"]
+    code, zweige = _git(repo, "for-each-ref", "--format=%(refname)", f"refs/remotes/origin/ticket/{ticket}-*")
+    if code == 0 and zweige:
+        refs.extend(z.strip() for z in zweige.splitlines() if z.strip())
+    for ref in refs:
+        if _git(repo, "cat-file", "-e", f"{ref}:{pfad}")[0] == 0:
+            return True
+    return False
+
+
 def kontext_text(spitze_k: float | None) -> str:
     """Spitzen-Kontext als Text, z. B. „180,2k“; ``—`` ohne Wert (#238, #430)."""
     return f"{_komma(spitze_k)}k" if spitze_k else "—"
@@ -147,13 +244,10 @@ def log_repo(fallback: Path | None = None, *, versioniert: bool = False) -> Path
             return pfad.resolve()
         rueckfall = None if versioniert else log_rueckfall()
         if rueckfall is not None:
-            log.info(
-                "TO_SPAWN_LOG_REPO %s existiert nicht — Laufdatei im Hauptbaum %s.", pfad, rueckfall
-            )
+            log.info("TO_SPAWN_LOG_REPO %s existiert nicht — Laufdatei im Hauptbaum %s.", pfad, rueckfall)
             return rueckfall
         log.info(
-            "TO_SPAWN_LOG_REPO %s existiert (noch) nicht — keine Log-Zeile, "
-            "kein Ausweichen in den Hauptbaum.",
+            "TO_SPAWN_LOG_REPO %s existiert (noch) nicht — keine Log-Zeile, kein Ausweichen in den Hauptbaum.",
             pfad,
         )
         return None
@@ -388,16 +482,13 @@ def kontext_aktuell_k(
     enden = [
         z
         for z in lese(repo, ticket, hauptbaum=hauptbaum)
-        if z.get("typ") == "session_ende"
-        and (nach is None or _sortier_zeit(z).timestamp() > nach)
+        if z.get("typ") == "session_ende" and (nach is None or _sortier_zeit(z).timestamp() > nach)
     ]
     spitzen = _spitzen(enden[-1:])
     return _k(spitzen[0]) if spitzen else None
 
 
-def letzter_session_start(
-    repo: Path, ticket: str | int, *, hauptbaum: Path | None = None
-) -> float | None:
+def letzter_session_start(repo: Path, ticket: str | int, *, hauptbaum: Path | None = None) -> float | None:
     """Unix-Zeit der jüngsten ``session_start``-Zeile — „Ticket beginnt neu“ (#432).
 
     Zählt Starter- und Hook-Zeilen gleich. ``None`` = keine Zeile mit lesbarer Zeit.
@@ -405,8 +496,7 @@ def letzter_session_start(
     zeiten = [
         zeitpunkt.timestamp()
         for z in lese(repo, ticket, hauptbaum=hauptbaum)
-        if z.get("typ") == "session_start"
-        and (zeitpunkt := _zeitpunkt(z.get("ts"))) is not None
+        if z.get("typ") == "session_start" and (zeitpunkt := _zeitpunkt(z.get("ts"))) is not None
     ]
     return max(zeiten) if zeiten else None
 
@@ -418,9 +508,7 @@ def _dauer(zeile: dict[str, Any]) -> int:
         return 0
 
 
-def zusammenfassung(
-    repo: Path, ticket: str | int, *, hauptbaum: Path | None = None
-) -> dict[str, Any]:
+def zusammenfassung(repo: Path, ticket: str | int, *, hauptbaum: Path | None = None) -> dict[str, Any]:
     """Kennzahlen eines Tickets für Tabelle und Lernstoff (``hauptbaum`` wie bei :func:`lese`)."""
     zeilen = lese(repo, ticket, hauptbaum=hauptbaum)
     enden = _juengste_je_session(z for z in zeilen if z.get("typ") == "session_ende")
@@ -587,29 +675,19 @@ def umfang_art(text: str) -> str:
 
 def _faustregeln(zeilen: list[dict[str, Any]], grenze: float) -> list[str]:
     regeln = ["Faustregeln für den Schnitt:"]
-    faktoren = [
-        z["ist_k"] / z["schaetzung_k"]
-        for z in zeilen
-        if ist_schaetzung(z["schaetzung_k"]) and z["ist_k"]
-    ]
+    faktoren = [z["ist_k"] / z["schaetzung_k"] for z in zeilen if ist_schaetzung(z["schaetzung_k"]) and z["ist_k"]]
     if faktoren:
         mittel = _komma(sum(faktoren) / len(faktoren))
         regeln.append(
-            f"- Schätzungen lagen im Mittel bei Faktor {mittel} — Schätzung × {mittel} "
-            f"muss unter {grenze:g}k bleiben."
+            f"- Schätzungen lagen im Mittel bei Faktor {mittel} — Schätzung × {mittel} muss unter {grenze:g}k bleiben."
         )
     je_art: dict[str, list[int]] = {}
     for z in zeilen:
         if z["sessions"] >= 1:
             art = umfang_art(f"{z['umfang'] or ''} {z['title'] or ''}")
             je_art.setdefault(art, []).append(z["sessions"])
-    for art, anzahl in sorted(
-        je_art.items(), key=lambda paar: (-sum(paar[1]) / len(paar[1]), paar[0])
-    ):
-        regeln.append(
-            f"- {art} brauchte im Mittel {_komma(sum(anzahl) / len(anzahl))} Sessions "
-            f"(n={len(anzahl)})"
-        )
+    for art, anzahl in sorted(je_art.items(), key=lambda paar: (-sum(paar[1]) / len(paar[1]), paar[0])):
+        regeln.append(f"- {art} brauchte im Mittel {_komma(sum(anzahl) / len(anzahl))} Sessions (n={len(anzahl)})")
     staffel = [z["ticket"] for z in zeilen if z["staffel"] > 1]
     if staffel:
         regeln.append(
@@ -647,15 +725,12 @@ def lernstoff(repo: Path, letzte: int = 30, grenze_k: float | None = None) -> st
         schaetzung = z["schaetzung_k"]
         hat_schaetzung = ist_schaetzung(schaetzung)
         soll = f"{schaetzung:g}k" if hat_schaetzung else "ohne Schätzung"
-        faktor = (
-            f" (Faktor {_komma(z['ist_k'] / schaetzung)})" if hat_schaetzung and z["ist_k"] else ""
-        )
+        faktor = f" (Faktor {_komma(z['ist_k'] / schaetzung)})" if hat_schaetzung and z["ist_k"] else ""
         ist = f"{z['ist_k']:g}k" if z["ist_k"] else "?"
         umfang = str(z["umfang"] or "").replace("\n", " ")[:110]
         zeilen.append(
             f"- #{z['ticket']}: {soll} geschätzt → {ist} ist{faktor}, "
-            f"{z['sessions']} Session(s), {z['subagenten']} Subagent(en)"
-            + (f" · {umfang}" if umfang else "")
+            f"{z['sessions']} Session(s), {z['subagenten']} Subagent(en)" + (f" · {umfang}" if umfang else "")
         )
         schwer = str(z["schwierigkeiten"] or "").replace("\n", " ")[:110]
         if schwer:

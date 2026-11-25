@@ -34,6 +34,7 @@ import sys
 import tempfile
 import time
 import uuid
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -44,12 +45,17 @@ if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
 from to_spawn import (
     anleitung,
+    arbeitsstand,
+    bau_log,
+    befugnis,
     capo,
     config,
     context_mode,
     gh,
+    konsole,
     nest,
     probesitz,
+    prozessbaum,
     sessions_datei,
     sitzung_env,
     speicher,
@@ -59,8 +65,9 @@ from to_spawn import (
     terminal_maus,
     umzug,
     vertrauen,
-)  # noqa: E402
-from to_spawn.manifest import manifest_ordner  # noqa: E402
+    werkzeug,
+)
+from to_spawn.manifest import manifest_ordner
 from to_spawn.waechter_lauf import transkript_ordner
 
 # Windows-Konsole ist cp1252 — Umlaute/Pfeile im Prompt brauchen UTF-8.
@@ -76,8 +83,28 @@ _ECHTER_LAUF = False
 #: Git-Wurzel des aktuellen Ordners — nie der Ort dieses Skripts (liegt im Skill, #205).
 REPO = Path(os.environ["TO_SPAWN_REPO"]).resolve() if os.environ.get("TO_SPAWN_REPO") else config.repo_wurzel()
 MANIFEST_DIR = manifest_ordner(REPO)
-HOME = Path.home()
-CLAUDE_DIR = HOME / ".claude"
+_START_HOME = Path.home()
+_START_CLAUDE_DIR = _START_HOME / ".claude"
+HOME = _START_HOME
+CLAUDE_DIR = _START_CLAUDE_DIR
+
+
+def _aktuelles_home() -> Path:
+    """Heimordner zur Laufzeit — folgt umgebogenem ``HOME``/``USERPROFILE`` (#232),
+    respektiert aber ein ausdrücklich gepatchtes Modul-Attribut ``HOME``."""
+    return HOME if HOME != _START_HOME else Path.home()
+
+
+def _aktuelles_claude_dir(home: Path | None = None) -> Path:
+    """Claude-Ordner zur Laufzeit (#232): Argument > gepatchtes Attribut > Laufzeit-HOME."""
+    if home is not None:
+        return home / ".claude"
+    if CLAUDE_DIR != _START_CLAUDE_DIR:
+        return CLAUDE_DIR
+    if HOME != _START_HOME:
+        return HOME / ".claude"
+    return context_mode.standard_claude_dir()
+
 
 # Pflicht-Skills: der globale Review-Stop-Hook (``~/.claude/hooks/review/stop.py``) fordert
 # „Skill review-dirigent ausführen“, der Dirigent ruft diese Skills per Skill-Werkzeug. Stehen
@@ -122,7 +149,7 @@ def staffel_hook_pfad(repo: Path = REPO) -> Path:
     return eigene if eigene.is_file() else STAFFEL_HOOK_SKILL
 
 
-#: Frage-Sperre (#321): Bau-Sessions fragen David nie (AskUserQuestion aus, Stop mit Frage → weiter).
+#: Frage-Sperre (#321): Bau-Sessions fragen den Menschen nie (AskUserQuestion aus, Stop mit Frage → weiter).
 #: Wortgleich mit dem Server-Template (setup_bau_server_push.sh): Claude Code legt identische Befehle
 #: zusammen, der Hook läuft auf dem Bau-Server so nur einmal. ``~`` lösen Git-Bash und Linux auf.
 FRAGE_SPERRE_BEFEHL = "node ~/.claude/hooks/smart-zone/staffel/frage-sperre.mjs"
@@ -154,12 +181,14 @@ def read_json(path: Path, default: dict | None = None) -> dict:
 # --- Manifest ---------------------------------------------------------------
 
 
-def load_default(ersatz: Path | None = None) -> dict:
-    """``docs/agents/manifests/_default.json`` des Repos; fehlt sie, ``ersatz`` (Probesitz, #214)."""
-    path = MANIFEST_DIR / "_default.json"
-    if not path.is_file() and ersatz is not None and ersatz.is_file():
-        log.warning("Default-Manifest fehlt im Repo — nehme %s.", ersatz)
-        path = ersatz
+#: Die eine Vorlage des Start-Texts (#274 P1): nur im Skill, nie im Ziel-Repo. Repo-Eigenes
+#: kommt über ``start_text.zusatz_datei`` als ``{REPO_ZUSATZ}`` dazu (:func:`repo_zusatz`).
+VORLAGE = Path(_SKILL) / "repo-scripts" / "_default.json"
+
+
+def load_default() -> dict:
+    """Skill-Vorlage ``repo-scripts/_default.json`` — eine Repo-Kopie gilt nicht (#274 P1)."""
+    path = VORLAGE
     if not path.is_file():
         log.error("Default-Manifest fehlt: %s", path)
         sys.exit(2)
@@ -168,6 +197,38 @@ def load_default(ersatz: Path | None = None) -> dict:
         log.error("Default-Manifest ohne prompt_template (JSON kaputt?): %s", path)
         sys.exit(2)
     return default
+
+
+#: Bau-Log-Ticket für :func:`start_warnung`; ``main`` setzt es nur außerhalb von ``--dry-run``
+#: (Probelauf ohne Seiteneffekte, #205). ``None`` → Warnung nur auf stderr.
+START_WARNUNG_TICKET: str | None = None
+
+
+def start_warnung(text: str) -> None:
+    """Warnung beim Start: stderr und Bau-Log-Laufdatei (Typ ``start_warnung``, #274 P1).
+
+    Das Fenster übermalt stderr, sobald Claude startet — im Bau-Log bleibt die Zeile lesbar."""
+    log.warning("%s", text)
+    if START_WARNUNG_TICKET is None:
+        return
+    try:
+        bau_log.schreibe(REPO, START_WARNUNG_TICKET, "start_warnung", text=text)
+    except OSError as exc:
+        log.warning("Bau-Log nicht beschreibbar (%s) — Warnung nur im Fenster.", exc)
+
+
+def regel_kopie_warnen() -> None:
+    """Liegt noch eine Repo-Kopie ``_default.json``, laut melden: sie wird nicht mehr gelesen (#274 P1)."""
+    kopie = MANIFEST_DIR / "_default.json"
+    if kopie.is_file():
+        try:
+            anzeige = kopie.relative_to(REPO)
+        except ValueError:
+            anzeige = kopie
+        start_warnung(
+            f"Regel-Kopie {anzeige} wird ignoriert; Repo-Teile nach start_text.zusatz_datei umziehen, "
+            "dann Datei löschen."
+        )
 
 
 def find_manifest(ticket: str) -> tuple[dict, dict] | None:
@@ -192,9 +253,9 @@ def ticket_from_gh(ticket: str) -> tuple[str, str | None]:
     proc = subprocess.run(
         [gh, "issue", "view", ticket, "--json", "title,body"],
         capture_output=True,
-        text=True,
-        encoding="utf-8",
+        **konsole.UNTERPROZESS_DATEN,
         check=False,
+        **prozessbaum.fensterlos(),
     )
     if proc.returncode != 0:
         log.error("gh issue view %s fehlgeschlagen: %s", ticket, proc.stderr.strip())
@@ -219,8 +280,9 @@ def repo_aus_origin(fallback: str = "", repo: Path | None = None) -> str:
             ["git", "remote", "get-url", "origin"],
             cwd=str(repo or REPO),
             capture_output=True,
-            text=True,
+            **konsole.UNTERPROZESS_TEXT,
             check=False,
+            **prozessbaum.fensterlos(),
         ).stdout.strip()
     except OSError:
         return fallback
@@ -260,7 +322,9 @@ GH_REPO = repo_aus_origin("") or os.environ.get("TO_SPAWN_GH_REPO", "").strip()
 
 
 def _gh_json(gh: str, *args: str) -> object | None:
-    proc = subprocess.run([gh, *args], capture_output=True, text=True, encoding="utf-8", check=False)
+    proc = subprocess.run(
+        [gh, *args], capture_output=True, **konsole.UNTERPROZESS_DATEN, check=False, **prozessbaum.fensterlos()
+    )
     if proc.returncode != 0:
         log.warning("gh %s: %s", " ".join(args[:3]), proc.stderr.strip()[:200])
         return None
@@ -270,16 +334,22 @@ def _gh_json(gh: str, *args: str) -> object | None:
         return None
 
 
+#: Sekunden zwischen zwei Blocker-Prüfungen (#432): die eine Stelle; ``--takt`` überschreibt, Untergrenze 5 s.
+TAKT_STANDARD_S = 30
+TAKT_MIN_S = 5
+
+
 def blocker_offen(ticket: str, *, nur_offene: bool = False) -> list[str]:
     """Gründe, warum #ticket noch nicht starten darf (leer = frei).
 
-    Zwei Prüfungen wie im Loop-Prompt: jeder Blocker muss CLOSED sein und
-    seinen Commit ``(#<Blocker>)`` auf ``origin/<Hauptzweig>`` haben — sonst baut die
-    Session auf einem Stand ohne die Blocker-Arbeit. Bei gh-/git-Fehlern gilt
-    „offen" (fail-closed), damit kein Loop vorzeitig losläuft.
+    Regel nur in ``gh.blocker_gruende`` (#267; dieselbe fragt die Session per
+    ``to_spawn.py blocker <N>``): jeder Blocker erledigt (zu oder ``staging:fertig``,
+    ``gh.blocker_erledigt``, #1527) und sein Commit ``(#<Blocker>)`` auf
+    ``origin/<Hauptzweig>``. Bei gh-/git-Fehlern gilt „offen" (fail-closed), damit kein
+    Loop vorzeitig losläuft.
 
-    ``nur_offene`` (``--sofort``, #906): nur nicht geschlossene Blocker zählen, die
-    Commit-Prüfung macht die Session selbst. gh fehlt oder Abfrage scheitert →
+    ``nur_offene`` (``--sofort``, #906): nur nicht erledigte Blocker zählen, die
+    Commit-Prüfung macht die Session selbst (über denselben Befehl). gh fehlt oder Abfrage scheitert →
     Warnung und frei (vor #906 prüfte ``--sofort`` gar nicht).
     """
     gh_bin = shutil.which("gh")
@@ -294,32 +364,31 @@ def blocker_offen(ticket: str, *, nur_offene: bool = False) -> list[str]:
             log.warning("Ticket #%s: Blocker-Abfrage fehlgeschlagen — Session startet (--sofort).", ticket)
             return []
         return ["Blocker-Abfrage fehlgeschlagen"]
-    gruende: list[str] = []
-    haupt = f"origin/{gh.hauptzweig(REPO)}"  # master/main/… je Repo (#257)
-    for d in deps:
-        nr = d.get("number")
-        if not gh.blocker_erledigt(d):  # zu oder staging:fertig (#1527)
-            gruende.append(f"#{nr} offen")
-            continue
-        if nur_offene:
-            continue
-        subprocess.run(["git", "fetch", "-q", "origin"], cwd=REPO, check=False)
-        found = subprocess.run(
-            ["git", "log", haupt, "--oneline", "--fixed-strings", f"--grep=(#{nr})"],
-            cwd=REPO,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            check=False,
-        ).stdout.strip()
-        if not found:
-            gruende.append(f"#{nr} zu, aber kein Commit „(#{nr})“ auf {haupt}")
-    return gruende
+    return gh.blocker_gruende(REPO, deps, mit_commit=not nur_offene)  # die eine Stelle (#267)
 
 
-def auf_blocker_warten(ticket: str, takt: int, *, nur_offene: bool = False, schlafen=time.sleep) -> None:
-    """Pollt alle ``takt`` Sekunden, bis #ticket frei ist. Kostet keine Token."""
+#: Mindestabstand (s) zwischen zwei Warte-Zeilen bei gleichen Gründen (#432, Herzschlag).
+WARTE_HERZSCHLAG_S = 600
+#: Obergrenze (s) des Abstands nach wiederholt fehlgeschlagener Abfrage (#432, Rate-Limit).
+TAKT_FEHLER_MAX_S = 300
+#: Gründe aus :func:`blocker_offen`, wenn die Abfrage selbst scheitert (Ticket bleibt blockiert).
+ABFRAGE_FEHLER = ("Blocker-Abfrage fehlgeschlagen", "gh fehlt")
+#: Die eine Warte-Zeile; ``to_spawn/aufpasser.py`` ``BLOCKER_WARTEN`` erkennt sie, Test prüft beides (#432).
+WARTE_ZEILE = "Ticket #%s wartet (%s) — nächste Prüfung in %d s, Meldung höchstens alle %d min [%s]"
+
+
+def auf_blocker_warten(
+    ticket: str, takt: int, *, nur_offene: bool = False, schlafen=time.sleep, uhr=time.monotonic
+) -> None:
+    """Pollt alle ``takt`` Sekunden, bis #ticket frei ist. Kostet keine Token.
+
+    Loggt nur bei geänderten Gründen oder nach ``WARTE_HERZSCHLAG_S`` (Aufpasser sieht die Zeile).
+    Scheitert die Abfrage, wächst der Abstand (takt, 2·takt, … höchstens ``TAKT_FEHLER_MAX_S``).
+    """
     runde = 0
+    fehler = 0
+    letzte: list[str] | None = None
+    letzte_zeit = 0.0
     while True:
         gruende = blocker_offen(ticket, nur_offene=nur_offene)
         if not gruende:
@@ -327,22 +396,28 @@ def auf_blocker_warten(ticket: str, takt: int, *, nur_offene: bool = False, schl
                 log.info("Ticket #%s ist frei — Session startet.", ticket)
             return
         runde += 1
-        log.info(
-            "Ticket #%s wartet (%s) — nächste Prüfung in %d min [%s]",
-            ticket,
-            "; ".join(gruende),
-            takt // 60,
-            datetime.now().strftime("%H:%M"),
-        )
-        schlafen(takt)
+        fehler = fehler + 1 if tuple(gruende) in {(g,) for g in ABFRAGE_FEHLER} else 0
+        abstand = min(max(takt, TAKT_FEHLER_MAX_S), takt * 2 ** (fehler - 1)) if fehler else takt
+        if gruende != letzte or uhr() - letzte_zeit >= WARTE_HERZSCHLAG_S:
+            log.info(
+                WARTE_ZEILE,
+                ticket,
+                "; ".join(gruende),
+                abstand,
+                WARTE_HERZSCHLAG_S // 60,
+                datetime.now().strftime("%H:%M"),
+            )
+            letzte, letzte_zeit = gruende, uhr()
+        schlafen(abstand)
 
 
 def warte_modus(args: argparse.Namespace) -> str | None:
     """Blocker-Warten vor dem Start (#906): ``"voll"``, ``"nur_offen"`` (``--sofort``) oder ``None``.
 
-    ``--umzug``, ``--resume`` und ``--probesitz`` setzen laufende Arbeit fort → kein Warten.
+    ``--umzug``, ``--resume``, ``--probesitz`` und Abschluss-Wiederanlauf (#282) setzen
+    laufende/fertige Arbeit fort → kein Warten.
     """
-    if args.umzug or args.resume or args.probesitz:
+    if args.umzug or args.resume or args.probesitz or getattr(args, "abschluss", False):
         return None
     return "nur_offen" if args.sofort else "voll"
 
@@ -351,34 +426,37 @@ def blocker_schranke(ticket: str, args: argparse.Namespace) -> None:
     """Die eine Stelle in main (#906): je nach ``warte_modus`` auf Blocker warten oder nicht."""
     modus = warte_modus(args)
     if modus is not None:
-        auf_blocker_warten(ticket, max(60, args.takt), nur_offene=modus == "nur_offen")
+        auf_blocker_warten(ticket, max(TAKT_MIN_S, args.takt), nur_offene=modus == "nur_offen")
 
 
 def auf_speicher_warten(
     konfig: dict,
     *,
     wer: str = "bau",
-    pruefen=speicher.platz_frei,
+    pruefen=speicher.platz_frei_hier,
     schlafen=time.sleep,
     takt_s: int = 60,
 ) -> int:
-    """Warten, bis ``speicher.platz_frei`` frei meldet; Rückgabe = Zahl der Wartezyklen (#257 F3)."""
+    """Warten, bis ``speicher.platz_frei_hier`` (eigene tmux-Sitzung, #409) frei meldet; Rückgabe = Zahl der Wartezyklen (#257 F3)."""
     return speicher.auf_platz_warten(konfig, wer=wer, pruefen=pruefen, schlafen=schlafen, takt_s=takt_s)
 
 
 # --- Skill-Katalog ----------------------------------------------------------
 
 
-def known_skill_names() -> set[str]:
-    names: set[str] = set(BUILTIN_SKILLS)
+def known_skill_names(*, repo: Path | None = None, claude_dir: Path | None = None) -> set[str]:
+    ziel_repo = repo if repo is not None else REPO
+    ziel_claude = claude_dir if claude_dir is not None else _aktuelles_claude_dir()
+    # Pflicht-Skills werden ohnehin erzwungen, auch ohne Datei auf dem Rechner (#478).
+    names: set[str] = set(BUILTIN_SKILLS) | set(PFLICHT_SKILLS)
 
-    registry = read_json(CLAUDE_DIR / "toolbox" / "registry.json", {})
+    registry = read_json(ziel_claude / "toolbox" / "registry.json", {})
     for entry in registry.get("entries") or []:
         if entry.get("type") in ("skill", "command") and entry.get("name"):
             names.add(entry["name"])
 
     # Namespaced Commands: ~/.claude/commands/<ns>/<name>.md → "<ns>:<name>"
-    commands_dir = CLAUDE_DIR / "commands"
+    commands_dir = ziel_claude / "commands"
     if commands_dir.is_dir():
         for md in commands_dir.glob("*.md"):
             names.add(md.stem)
@@ -387,7 +465,7 @@ def known_skill_names() -> set[str]:
 
     # Plugin-Skills: plugins/cache/<marketplace>/<plugin>/<version>/skills/<skill>/SKILL.md
     # und plugins/cache/<marketplace>/<plugin>/<version>/commands/<name>.md
-    cache = CLAUDE_DIR / "plugins" / "cache"
+    cache = ziel_claude / "plugins" / "cache"
     if cache.is_dir():
         for skill_md in cache.glob("*/*/*/skills/*/SKILL.md"):
             plugin = skill_md.parents[3].name
@@ -397,29 +475,64 @@ def known_skill_names() -> set[str]:
             names.add(f"{plugin}:{cmd_md.stem}")
 
     # Repo-Skills + Repo-Commands (.claude/commands/<name>.md → "<name>")
-    for skill_md in (REPO / ".claude" / "skills").glob("*/SKILL.md"):
+    for skill_md in (ziel_repo / ".claude" / "skills").glob("*/SKILL.md"):
         names.add(skill_md.parent.name)
-    for md in (REPO / ".claude" / "commands").glob("*.md"):
+    for md in (ziel_repo / ".claude" / "commands").glob("*.md"):
         names.add(md.stem)
-    for md in (REPO / ".claude" / "commands").glob("*/*.md"):
+    for md in (ziel_repo / ".claude" / "commands").glob("*/*.md"):
         names.add(f"{md.parent.name}:{md.stem}")
-    for skill_md in (CLAUDE_DIR / "skills").glob("*/SKILL.md"):
+    for skill_md in (ziel_claude / "skills").glob("*/SKILL.md"):
         names.add(skill_md.parent.name)
 
     return names
 
 
+def skill_auswahl(
+    default: Mapping[str, Any],
+    entry: Mapping[str, Any],
+    konfig: Mapping[str, Any],
+    *,
+    known: set[str] | None = None,
+) -> tuple[list[str], dict[str, str]]:
+    """Whitelist und ``skillOverrides`` für die Bau-Session (#413).
+
+    Aktiv (``on``) sind ``core_skills`` aus der Vorlage, die Pflicht-Skills, die
+    Repo-Skills aus ``.to-spawn/config.json`` (``skills.pflicht``) und die Ticket-Skills
+    des Manifests. Gegen ``known`` geprüft und bei Fehlen gewarnt werden nur die vom Repo
+    bzw. Ticket angeforderten Skills (``skills.pflicht`` + ``entry["skills"]``) — fremde
+    Vorgaben aus der Skill-Vorlage erzeugen in einem fremden Repo keine Warnung.
+    """
+    repo_erwartet = config.repo_skills(konfig)
+    ticket_skills = [s.strip() for s in (entry.get("skills") or []) if isinstance(s, str) and s.strip()]
+    geprueft = list(dict.fromkeys(repo_erwartet + ticket_skills))
+    whitelist = list(
+        dict.fromkeys(list(default.get("core_skills", [])) + ticket_skills + repo_erwartet + list(PFLICHT_SKILLS))
+    )
+    bekannt = known if known is not None else known_skill_names()
+    for name in geprueft:
+        if name not in bekannt:
+            log.warning("Skill unbekannt, trotzdem 'on': %s", name)
+    overrides = {name: "off" for name in sorted(bekannt - set(whitelist))}
+    overrides.update({name: "on" for name in whitelist})
+    return whitelist, overrides
+
+
 # --- MCP-Katalog ------------------------------------------------------------
 
 
-def mcp_catalog() -> dict[str, dict]:
+def mcp_catalog(
+    *, repo: Path | None = None, home: Path | None = None, claude_dir: Path | None = None
+) -> dict[str, dict]:
     """Reihenfolge: ~/.claude.json (global + dieses Projekt) → Repo .mcp.json → toolbox/mcp-archive.json."""
+    ziel_repo = (repo if repo is not None else REPO).resolve()
+    ziel_home = home if home is not None else _aktuelles_home()
+    ziel_claude = claude_dir if claude_dir is not None else _aktuelles_claude_dir(home)
     catalog: dict[str, dict] = {}
-    claude_json = read_json(HOME / ".claude.json", {})
+    claude_json = read_json(ziel_home / ".claude.json", {})
     project_servers: dict[str, dict] = {}
     for key, project in (claude_json.get("projects") or {}).items():
         try:
-            same = Path(key).resolve() == REPO
+            same = Path(key).resolve() == ziel_repo
         except OSError:
             same = False
         if same:
@@ -427,8 +540,8 @@ def mcp_catalog() -> dict[str, dict]:
     sources = (
         (claude_json.get("mcpServers") or {}),
         project_servers,
-        (read_json(REPO / ".mcp.json", {}).get("mcpServers") or {}),
-        (read_json(CLAUDE_DIR / "toolbox" / "mcp-archive.json", {}).get("servers") or {}),
+        (read_json(ziel_repo / ".mcp.json", {}).get("mcpServers") or {}),
+        (read_json(ziel_claude / "toolbox" / "mcp-archive.json", {}).get("servers") or {}),
     )
     for servers in sources:
         for name, definition in servers.items():
@@ -451,6 +564,34 @@ def worktree_pfad(ticket: str) -> str:
     return config.worktree_pfad(ticket, REPO)
 
 
+def repo_zusatz(konfig: dict, *, repo: Path | None = None) -> str:
+    """Text der Repo-Zusatz-Datei (``start_text.zusatz_datei``, relativ zum Repo), sonst ``""``.
+
+    Die eine Stelle für alle Fehlerfälle (#274 P1): nicht konfiguriert → still ``""``;
+    Pfad führt aus dem Repo heraus (``../``, absolut, Symlink nach außen) oder Datei fehlt/
+    ist kein UTF-8 → :func:`start_warnung`, Start ohne Zusatz — nie ein Abbruch."""
+    rel = str((konfig.get("start_text") or {}).get("zusatz_datei") or "").strip()
+    if not rel:
+        return ""
+    wurzel = (repo if repo is not None else REPO).resolve()
+    pfad = (wurzel / rel).resolve()
+    if not pfad.is_relative_to(wurzel):
+        start_warnung(f"Repo-Zusatz {rel} liegt außerhalb des Repos — Start ohne Zusatz.")
+        return ""
+    try:
+        return pfad.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError) as exc:
+        start_warnung(f"Repo-Zusatz {rel} nicht lesbar ({exc}) — Start ohne Zusatz.")
+        return ""
+
+
+#: Platzhalter, die ein Repo-Zusatz nutzen darf (#274 P1). Alles andere (``{KONTEXT}``,
+#: JSON-Klammern …) bleibt im Zusatz wörtlich stehen — nichts wird zweimal eingesetzt.
+ZUSATZ_PLATZHALTER = ("{N}", "{S}", "{REPO}", "{WT}", "{HAUPTZWEIG}")
+#: Platzhalter-Stil der Start-Vorlage (#501): nur ``{GROSS_BUCHSTABEN}`` — JSON/Code-Klammern nie.
+_PLATZHALTER = re.compile(r"\{[A-Z][A-Z0-9_]*\}")
+
+
 def build_prompt(
     template: str,
     ticket: str,
@@ -458,26 +599,60 @@ def build_prompt(
     title: str,
     kontext: str,
     konfig: dict | None = None,
+    *,
+    repo: Path | None = None,
+    gh_repo: str | None = None,
 ) -> str:
     """Platzhalter der Vorlage füllen — auch die repo-neutralen (#257):
     ``{REPO}`` = owner/name, ``{HAUPTZWEIG}``, ``{CHECKPOINT_LABEL}`` aus der Konfig,
     ``{SESSION_KOPF}`` = Marke jedes Session-Kommentars aus ``capo.SESSION_KOPF`` (#402),
-    ``{MINDSET}``/``{ABLOESE_SOP}`` = feste Texte aus ``anleitung`` (#500)."""
-    konfig = konfig if konfig is not None else config.lade(REPO)
+    ``{MINDSET}``/``{ABLOESE_SOP}`` = feste Texte aus ``anleitung`` (#500),
+    ``{BEFUGNIS}`` = Befugnis-Abschnitt aus ``befugnis.start_text`` (#278),
+    ``{ENTSCHEIDUNGS_LINIE}`` = ``anleitung.entscheidungs_linie`` mit dem Hauptzweig (#376),
+    ``{ANNAHME_GRENZE}`` = ``capo.annahme_grenze`` (was die Checkpoint-Annahme deckt, #490),
+    ``{REPO_ZUSATZ}`` = Inhalt von ``start_text.zusatz_datei`` (#274 P1) — zuletzt eingesetzt, darin
+    nur :data:`ZUSATZ_PLATZHALTER` ersetzt; leer → Platzhalter samt Überschrift darüber entfällt.
+
+    Fehlt ``{ANNAHME_GRENZE}`` in der Vorlage, meldet :func:`start_warnung` das (#501); der Text
+    bleibt wie die Vorlage ihn will (Wegwerf-Vorlagen der Weg-Tests, #212).
+    ``ValueError``, wenn nach dem Füllen ein ``{GROSS}``-Platzhalter übrig bleibt (unbekannt oder
+    aus einem Wert ungefüllt), statt ihn roh in den Prompt zu geben (#501). Klammern aus Titel,
+    Kontext und Repo-Zusatz zählen nicht — das ist fremder Text, der wörtlich bleibt."""
+    ziel_repo = repo if repo is not None else REPO
+    ziel_gh = gh_repo if gh_repo is not None else GH_REPO
+    konfig = konfig if konfig is not None else config.lade(ziel_repo)
     label = str((konfig.get("regularien") or {}).get("checkpoint_label") or "checkpoint:human")
-    return (
-        template.replace("{WT}", worktree_pfad(ticket))
-        .replace("{N}", ticket)
-        .replace("{S}", spec)
-        .replace("{TITLE}", title)
-        .replace("{KONTEXT}", kontext)
-        .replace("{REPO}", GH_REPO)
-        .replace("{HAUPTZWEIG}", gh.hauptzweig(REPO))
-        .replace("{CHECKPOINT_LABEL}", label)
-        .replace("{SESSION_KOPF}", capo.SESSION_KOPF)
-        .replace("{MINDSET}", anleitung.MINDSET)
-        .replace("{ABLOESE_SOP}", anleitung.ABLOESE_SOP)
-    )
+    haupt = gh.hauptzweig(ziel_repo)
+    werte = {
+        "{WT}": config.worktree_pfad(ticket, ziel_repo) if repo is not None else worktree_pfad(ticket),
+        "{N}": ticket,
+        "{S}": spec,
+        "{TITLE}": title,
+        "{KONTEXT}": kontext,
+        "{REPO}": ziel_gh,
+        "{HAUPTZWEIG}": haupt,
+        "{CHECKPOINT_LABEL}": label,
+        "{SESSION_KOPF}": capo.SESSION_KOPF,
+        "{MINDSET}": anleitung.MINDSET,
+        "{ABLOESE_SOP}": anleitung.ABLOESE_SOP,
+        "{BEFUGNIS}": befugnis.start_text(ticket),
+        "{ENTSCHEIDUNGS_LINIE}": anleitung.entscheidungs_linie(haupt),
+        "{ANNAHME_GRENZE}": capo.annahme_grenze(ticket),
+    }
+    if "{ANNAHME_GRENZE}" not in template:
+        start_warnung("Start-Vorlage ohne {ANNAHME_GRENZE}: Annahme-Regel (#490) fehlt im Start-Text.")
+    zusatz = repo_zusatz(konfig, repo=ziel_repo)
+    if not zusatz:
+        template = re.sub(r"(?:#[^\n]*\n)?\{REPO_ZUSATZ\}\n*", "", template)
+    for platzhalter, wert in werte.items():
+        template = template.replace(platzhalter, wert)
+    fremd = set(_PLATZHALTER.findall(f"{title}\n{kontext}"))
+    rest = sorted({p for p in _PLATZHALTER.findall(template) if p != "{REPO_ZUSATZ}"} - fremd)
+    if rest:
+        raise ValueError(f"Start-Vorlage: Platzhalter {', '.join(rest)} nach dem Füllen übrig (unbekannt/ungefüllt).")
+    for platzhalter in ZUSATZ_PLATZHALTER:
+        zusatz = zusatz.replace(platzhalter, werte[platzhalter])
+    return template.replace("{REPO_ZUSATZ}", zusatz) if zusatz else template
 
 
 # --- Staffel ----------------------------------------------------------------
@@ -505,12 +680,27 @@ def hook_befehl(*teile: Path | str) -> str:
     return " ".join(shlex.quote(t.as_posix() if isinstance(t, Path) else t) for t in teile)
 
 
+def frage_sperre_befehl() -> str:
+    """Frage-Sperre-Befehl; Linux/macOS ``~`` (wortgleich mit Server-Template), Windows absolut.
+
+    Unter Windows vererbt Claude Code ``MSYS_NO_PATHCONV=1``: Git-Bash löst ``~`` zu ``/c/Users/…``
+    auf; ``node`` liest daraus einen Pfad unter ``C:/c/`` (#565). Daher dort der absolute Pfad mit ``/``.
+    """
+    if sys.platform != "win32":
+        return FRAGE_SPERRE_BEFEHL
+    ziel = Path.home() / FRAGE_SPERRE_BEFEHL.split(" ~/", 1)[1]
+    return hook_befehl("node", ziel)
+
+
 def staffel_aktiv(konfig: dict) -> bool:
     """Staffel-Neustart an der Smart-Zone-Grenze erlaubt? ``staffel.aktiv`` in der Repo-Konfig.
 
-    Aus (David, 24.09.2026): Neustarts mitten im Deploy-Gate brachen Tests ab und verloren
+    Aus (Vorgabe des Menschen, 24.09.2026): Neustarts mitten im Deploy-Gate brachen Tests ab und verloren
     Kontext. Die Smart Zone regelt dann allein der Ticket-Schnitt vorab; die Session baut
     ihr Ticket bis zum Ende durch.
+
+    Die Ablöse-Grenze kommt nie aus dieser Konfig: ``staffel.grenze_k`` ist nur der
+    Ticket-Schnitt (Beschreibung ``config.DEFAULTS["staffel"]``, #417).
     """
     return bool((konfig.get("staffel") or {}).get("aktiv", True))
 
@@ -524,7 +714,7 @@ def staffel_hooks(mit_staffel: bool = True) -> dict:
     ``PreToolUse``: ``AskUserQuestion`` → Frage-Sperre lehnt ab (#321); ``Bash`` → Spec-Sperre
     lehnt rohes ``gh issue close <Spec>`` ab und nennt ``to_spawn.py spec-schliessen`` (E2-4).
     """
-    frage_sperre = FRAGE_SPERRE_BEFEHL
+    frage_sperre = frage_sperre_befehl()
     staffel = hook_befehl(Path(sys.executable), staffel_hook_pfad(REPO))
     bau_log_stop = hook_befehl(Path(sys.executable), TO_SPAWN_CLI, "hook-stop")
     bau_log_sub = hook_befehl(Path(sys.executable), TO_SPAWN_CLI, "hook-subagent-stop")
@@ -577,9 +767,15 @@ def bau_log_umgebung(
     return umgebung
 
 
-def staffel_umgebung(ticket: str, staffel_datei: Path, runde: int, fingerabdruck: str = "") -> dict[str, str]:
+def staffel_umgebung(
+    ticket: str, staffel_datei: Path, runde: int, fingerabdruck: str = "", staffel_max: int = STAFFEL_MAX_DEFAULT
+) -> dict[str, str]:
+    """Umgebung des Staffel-Hooks; ``BAU_WORKTREE`` + ``BAU_STAFFEL_MAX`` für die Ablösung
+    ab eigenem Handoff ohne Aufsicht (#276)."""
     return {
         "BAU_TICKET": ticket,
+        "BAU_WORKTREE": str(Path(worktree_pfad(ticket)).expanduser()),
+        "BAU_STAFFEL_MAX": str(max(1, staffel_max)),
         "BAU_STAFFEL_DATEI": str(staffel_datei),
         "BAU_SESSION_START": str(time.time()),
         "BAU_HANDOFF_DIRS": os.pathsep.join(handoff_dirs(ticket)),
@@ -630,6 +826,28 @@ def auftrag_prompt(prompt: str, auftrag: str) -> str:
     )
 
 
+def wiederanlauf_prompt(prompt: str, hinweis: str, *, art: str = "") -> str:
+    """Wiederanlauf-Stand klar abgesetzt vor den Prompt (#282).
+
+    Ohne Hinweis bleibt der Prompt unverändert. Bei ``art == "abschluss"``: das Ticket ist
+    fertig gebaut — Schritt 1 (Blocker-Prüfung) und Neubau entfallen.
+    """
+    text = hinweis.strip()
+    if not text:
+        return prompt
+    # Keine Backticks/Code-Zäune (Windows-Notnagel shell=True, wie staffel_prompt).
+    if art == "abschluss":
+        return (
+            "## Wiederanlauf-Stand (Abschluss)\n"
+            f"{text}\n\n"
+            "Überspringe Schritt 1 (Blocker-Prüfung) und den Neubau: das Ticket ist "
+            "bereits gebaut. Hole ausschließlich die oben genannten Abschluss-Schritte "
+            "nach, belege sie und schließe die Session ab.\n\n"
+            f"---\n\n{prompt}"
+        )
+    return f"## Wiederanlauf-Stand\n{text}\n\n---\n\n{prompt}"
+
+
 def staffel_prompt(prompt: str, handoff: Path, runde: int) -> str:
     """Startkontext der Folge-Session: Handoff-Inhalt vor dem Originalauftrag."""
     try:
@@ -654,10 +872,12 @@ def staffel_prompt(prompt: str, handoff: Path, runde: int) -> str:
 
 
 def resume_prompt(ticket: str) -> str:
-    """Kurzer Weiter-Text, wenn der Aufpasser eine Session mit ``--resume`` fortsetzt."""
+    """Kurzer Weiter-Text, wenn der Aufpasser eine Session mit ``--resume`` fortsetzt (#236, #288)."""
     return (
         f"Aufpasser: Weiter mit Ticket #{ticket} genau dort, wo du warst. "
-        "Ticket offen? weiterbauen; nichts zu tun? ScheduleWakeup."
+        "Ticket noch offen? weiterbauen (bei offenem Blocker oder Checkpoint: ScheduleWakeup); "
+        "Ticket fertig gebaut oder geschlossen (nichts zu tun)? Loop mit stop: true beenden und "
+        "Session sofort mit /exit schließen — kein ScheduleWakeup."
     )
 
 
@@ -703,10 +923,9 @@ def _git_lauf(*args: str) -> subprocess.CompletedProcess[str]:
         ["git", *args],
         cwd=REPO,
         capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
+        **konsole.UNTERPROZESS_TEXT,
         check=False,
+        **prozessbaum.fensterlos(),
     )
 
 
@@ -806,7 +1025,12 @@ def main() -> int:
         action="store_true",
         help="nur auf offene Blocker warten, Commit-Prüfung macht die Session (#906)",
     )
-    parser.add_argument("--takt", type=int, default=600, help="Sekunden zwischen zwei Blocker-Prüfungen (600)")
+    parser.add_argument(
+        "--takt",
+        type=int,
+        default=TAKT_STANDARD_S,
+        help=f"Sekunden zwischen zwei Blocker-Prüfungen ({TAKT_STANDARD_S}, mindestens {TAKT_MIN_S})",
+    )
     parser.add_argument(
         "--staffel-max",
         type=int,
@@ -850,7 +1074,7 @@ def main() -> int:
     args = parser.parse_args()
     ticket = str(args.ticket)
     # GitHub-Slug verbindlich (#257 F5): kein GitHub-Origin → Exit 2 mit Grund, kein Rückfall.
-    global GH_REPO
+    global GH_REPO, START_WARNUNG_TICKET
     GH_REPO = gh_repo_ermitteln(REPO)
     if args.probesitz:
         args.sofort = True
@@ -860,17 +1084,28 @@ def main() -> int:
                 "Folge-Session) kann nicht grün werden.",
                 staffel_hook_pfad(REPO),
             )
+    # Arbeitsordner-Stand (#283): hier nur eine Hinweis-Zeile — nie Abbruch, nie Nachziehen
+    # (auch nicht bei --resume). Nachziehen/Abbruch macht allein der Erst-Start (to_spawn.py arbeitsstand).
+    if (stand_hinweis := arbeitsstand.hinweis(REPO)) is not None:
+        log.warning("%s", stand_hinweis)
+
     if not args.dry_run:  # Probelauf ohne Seiteneffekte (#205)
         config.sicherstellen(REPO)
+    konfig = config.lade(REPO)
+    runner = werkzeug.runner_von(konfig)
     # Fortsetzen nur mit vorhandenem Transkript (#236, F5): ohne die Datei startete
     # ``claude --resume`` eine frische Session — genau das darf der Aufpasser nie.
-    if args.resume and not args.dry_run:
+    # Bei ``agy`` liegen Gespräche nicht als Claude-JSONL unter ``~/.claude/projects``.
+    if args.resume and not args.dry_run and runner == "claude":
         transkript = transkript_ordner(Path.cwd()) / f"{args.resume}.jsonl"
         if not transkript.is_file():
             log.error("--resume %s: Transkript %s fehlt — kein Start.", args.resume, transkript)
             return 2
 
-    default = load_default(Path(_SKILL) / "repo-scripts" / "_default.json" if args.probesitz else None)
+    if not args.dry_run:  # Probelauf schreibt kein Bau-Log (#205)
+        START_WARNUNG_TICKET = ticket
+    regel_kopie_warnen()
+    default = load_default()
     found = None if args.probesitz else find_manifest(ticket)
     # Optionales Spec-Feld ``effort`` (low…max): gewinnt vor der Konfig; ``--effort`` wird immer gesetzt.
     spec_effort: str | None = None
@@ -892,31 +1127,42 @@ def main() -> int:
             return 2
         spec = spec_gh
 
-    prompt = (
-        probesitz.WEGWERF_PROMPT.format(ticket=ticket)
-        if args.probesitz
-        else build_prompt(default["prompt_template"], ticket, spec, title, build_kontext(entry), config.lade(REPO))
-    )
     auftrag = args.auftrag or os.environ.get("BAU_AUFTRAG", "")
-    if auftrag.strip():
-        # Vor dem Prompt, damit auch jede Staffel-Runde den Auftrag dieser Runde sieht (#285).
-        prompt = auftrag_prompt(prompt, auftrag)
-    erster_prompt = prompt
-    if args.umzug:
-        branch, _pfad, handoff_text = umzug_handoff_lesen(args.umzug)
-        erster_prompt = umzug_prompt(prompt, handoff_text, branch, ticket)
+    umzug_teile = umzug_handoff_lesen(args.umzug) if args.umzug else None
+
+    def start_texte(lage_hinweis: str = "", lage_art: str = "") -> tuple[str, str]:
+        """Die eine Stelle für den Start-Text (#281, #282): ``(Grund-Prompt, erster Prompt)`` aus
+        der Vorlage, wie sie JETZT auf der Platte liegt. ``main`` ruft sie beim Start (Vorlage
+        kaputt → sofort Exit 2, ``--print-prompt``) und erneut im Moment des Loslassens — ein
+        Fenster, das stundenlang auf Blocker wartet, startet so mit der Regel von jetzt."""
+        try:
+            grund = (
+                probesitz.WEGWERF_PROMPT.format(ticket=ticket)
+                if args.probesitz
+                else build_prompt(
+                    load_default()["prompt_template"], ticket, spec, title, build_kontext(entry), config.lade(REPO)
+                )
+            )
+        except ValueError as fehler:  # Platzhalter-Rest (#501): Vorlage kaputt → Exit 2 mit Grund
+            print(f"bau: {fehler}", file=sys.stderr)
+            raise SystemExit(2) from fehler
+        if auftrag.strip():
+            # Vor dem Prompt, damit auch jede Staffel-Runde den Auftrag dieser Runde sieht (#285).
+            grund = auftrag_prompt(grund, auftrag)
+        if lage_hinweis.strip():
+            grund = wiederanlauf_prompt(grund, lage_hinweis, art=lage_art)
+        if umzug_teile is not None:
+            branch, _pfad, handoff_text = umzug_teile
+            return grund, umzug_prompt(grund, handoff_text, branch, ticket)
+        return grund, grund
+
+    prompt, erster_prompt = start_texte()
     if args.print_prompt:
         print(erster_prompt)
         return 0
 
     # Skills
-    whitelist = list(dict.fromkeys(default.get("core_skills", []) + (entry.get("skills") or []) + PFLICHT_SKILLS))
-    known = known_skill_names()
-    for name in whitelist:
-        if name not in known:
-            log.warning("Skill unbekannt, trotzdem 'on': %s", name)
-    overrides = {name: "off" for name in sorted(known - set(whitelist))}
-    overrides.update({name: "on" for name in whitelist})
+    whitelist, overrides = skill_auswahl(default, entry, konfig)
 
     # MCPs
     mcp_wanted = list(dict.fromkeys(default.get("core_mcp", []) + (entry.get("mcp") or [])))
@@ -932,16 +1178,19 @@ def main() -> int:
             log.warning("MCP unauflösbar, übersprungen: %s", name)
     # Pflicht-MCP context-mode (#237): ``--strict-mcp-config`` sperrt das Plugin-MCP aus,
     # also steht es hier selbst in der mcp.json — kein Manifest kann es abwählen.
-    try:
-        mcp_servers.update(context_mode.server_definition(CLAUDE_DIR))
-    except context_mode.ContextModeFehlt as fehler:
-        log.error("%s", fehler)
-        return 2
+    # Gilt nur für ``claude``; ``agy`` nutzt weder ``--mcp-config`` noch das Claude-Plugin (#660).
+    if runner == "claude":
+        try:
+            mcp_servers.update(context_mode.server_definition(_aktuelles_claude_dir()))
+        except context_mode.ContextModeFehlt as fehler:
+            log.error("%s", fehler)
+            return 2
 
     # Temp-Dateien
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    # #136: auf der Platte (temp_ordner), nicht auf der RAM-Platte des System-Temps
-    out = Path(temp_ordner.umgebung().get("TMPDIR") or tempfile.gettempdir())
+    # #136/#177: markierter Ticket-Temp-Ordner auf der Platte (temp_ordner.anlegen)
+    temp_umg = temp_ordner.umgebung(args.ticket, repo=GH_REPO, von="bau")
+    out = Path(temp_umg.get("TMPDIR") or tempfile.gettempdir())
     basis = out / f"{GH_REPO.rsplit('/', 1)[-1]}-bau"
     basis.mkdir(parents=True, exist_ok=True)
     # mkdtemp statt ``<ticket>-<stamp>``: zwei Starts desselben Tickets in derselben Sekunde
@@ -950,66 +1199,54 @@ def main() -> int:
     settings_path = out / "settings.json"
     mcp_path = out / "mcp.json"
     staffel_datei = out / "staffel.json"
-    settings_path.write_text(
-        json.dumps(
-            session_settings(overrides, staffel_aktiv(config.lade(REPO))),
-            ensure_ascii=False,
-            indent=1,
-        ),
-        encoding="utf-8",
-    )
-    mcp_path.write_text(
-        json.dumps({"mcpServers": mcp_servers}, ensure_ascii=False, indent=1),
-        encoding="utf-8",
-    )
-    (out / "prompt.txt").write_text(prompt, encoding="utf-8")
+    if runner == "claude":
+        settings_path.write_text(
+            json.dumps(
+                session_settings(overrides, staffel_aktiv(konfig)),
+                ensure_ascii=False,
+                indent=1,
+            ),
+            encoding="utf-8",
+        )
+        mcp_path.write_text(
+            json.dumps({"mcpServers": mcp_servers}, ensure_ascii=False, indent=1),
+            encoding="utf-8",
+        )
 
-    # Vorrang: --model > Repo-Konfig ``modelle.ticket`` (#205) > _default.json.
-    konfig = config.lade(REPO)
-    model = args.model or konfig.get("modelle", {}).get("ticket") or default.get("model")
-    # Immer ausdrücklich setzen (David 2026-10-28): ohne Flag erbt die Session den globalen
+    # Vorrang: --model > Repo-Konfig ``modelle.ticket`` (#205) > Werkzeug-Vorgabe (#660).
+    model = werkzeug.modell_fuer(runner, konfig, cli_modell=args.model, default_modell=default.get("model"))
+    # Immer ausdrücklich setzen (für claude): ohne Flag erbt die Session den globalen
     # Standard, und ein einmal per /effort gespeichertes high frisst bei vielen Sessions das Abo.
     konfig_effort = konfig.get("effort") if isinstance(konfig.get("effort"), dict) else {}
     effort = spec_effort or konfig_effort.get("ticket") or "low"
     if effort not in {"low", "medium", "high", "xhigh", "max"}:
         log.warning("Ungültiger Effort %r in der Konfig — nehme low.", effort)
         effort = "low"
-    claude = starter.finde("claude")  # unter Test nur die Attrappe (#1406)
-    cmd = [
-        claude,
-        # Probesitz (#214): Print-Modus, die Session endet ohne Terminal von selbst. Ohne
-        # bypassPermissions (frisches Setup) verweigert ``-p`` jedes Werkzeug still — deshalb
-        # die nötigen Rechte ausdrücklich mitgeben. ``--allowedTools`` ist variadisch: das
-        # nächste Flag muss direkt folgen, sonst frisst es den Prompt am Ende.
-        *(["-p", "--allowedTools", *PROBESITZ_RECHTE] if args.probesitz else []),
-        "--settings",
-        str(settings_path),
-        "--mcp-config",
-        str(mcp_path),
-        "--strict-mcp-config",
-    ]
-    if not chrome:
-        cmd.append("--no-chrome")
-    if model:
-        cmd += ["--model", model]
-    cmd += ["--effort", effort]
-    if args.remote_control:
-        # respawn am PC (#501): kein tmux zum Nachtippen von ``/remote-control``.
-        cmd += ["--remote-control", f"bau {ticket}"]
-    # Feste Gesprächs-ID (#236): der Aufpasser liest sie aus dem Prozessbaum und setzt
-    # die Session nach einer Sicherung mit ``--resume`` fort.
-    if args.resume:
-        cmd += ["--resume", args.resume]
-        erster_prompt = resume_prompt(ticket)
-    else:
-        cmd += ["--session-id", str(uuid.uuid4())]
-    # ``mit_prompt``: trägt ``cmd`` als letztes Argument einen Prompt? (nicht bei --ohne-prompt)
+    # Unter Test nur die Attrappe (#1406); explizites ``starter.finde("claude")`` hält
+    # die bekannte Start-Stelle (#97) auch für statische Prüfungen sichtbar.
+    programm = starter.finde("claude") if runner == "claude" else starter.finde(runner)
+    cmd = werkzeug.startbefehl(
+        runner,
+        programm=programm,
+        modell=model,
+        prompt=None,
+        interaktiv=not args.probesitz,
+        effort=effort,
+        settings_pfad=settings_path if runner == "claude" else None,
+        mcp_pfad=mcp_path if runner == "claude" else None,
+        chrome=chrome,
+        probesitz=args.probesitz,
+        probesitz_rechte=PROBESITZ_RECHTE,
+        remote_control=f"bau {ticket}" if args.remote_control else None,
+        resume=args.resume,
+        session_id=str(uuid.uuid4()) if runner == "claude" and not args.resume else None,
+    )
+    # ``mit_prompt``: trägt ``cmd`` einen Prompt? (nicht bei --ohne-prompt)
     mit_prompt = not args.ohne_prompt
-    if mit_prompt:
-        cmd.append(erster_prompt)
 
     off_count = sum(1 for v in overrides.values() if v == "off")
     log.info("Ticket #%s · Spec #%s · %s", ticket, spec, title)
+    log.info("Werkzeug: %s", runner)
     log.info("Skills on (%d): %s", len(whitelist), ", ".join(whitelist))
     log.info("Skills off: %d", off_count)
     log.info("MCPs: %s", ", ".join(mcp_servers) or "—")
@@ -1026,23 +1263,25 @@ def main() -> int:
         praefix = nest.sandbox_start(konfig, worktree_pfad(ticket), REPO, trocken=True)
         if praefix is None:
             return 2
-        cmd = praefix + cmd
+        dry_cmd = list(cmd)
+        if mit_prompt:
+            werkzeug.prompt_setzen(dry_cmd, runner, "<prompt>", hat_prompt=False, interaktiv=not args.probesitz)
+        dry_cmd = praefix + dry_cmd
         print("\nBefehl:")
-        sichtbar = cmd[:-1] if mit_prompt else cmd
-        print(
-            " ".join(f'"{c}"' if " " in c or "\n" in c else c for c in sichtbar),
-            '"<prompt>"' if mit_prompt else "",
-        )
+        print(" ".join(f'"{c}"' if " " in c or "\n" in c or c == "<prompt>" else c for c in dry_cmd))
         return 0
     # Die eine Start-Stelle (#97): unter Sperre je Ticket prüfen, ob schon eine Session
     # läuft und ob das Ticket offen ist; unbekannt → kein Start (fail-closed).
     # ``--ohne-prompt`` ist der respawn-Start (#431): die alte Session läuft bis Schritt e
     # weiter und hält die Sperre — also Ablösung (höchstens eine je Ticket).
+    start: startstelle.Entscheidung | None = None
     if not args.probesitz:
         start = startstelle.betreten(ticket, GH_REPO, REPO, abloesung=args.ohne_prompt)
         if not start.erlaubt:
             print(start.grund, flush=True)
             return start.exit_code
+    # Fertig gebaut mit offenem Abschluss (#282): kein Blocker-Warten, kein Neubau.
+    args.abschluss = start is not None and start.art == "abschluss"
     global _ECHTER_LAUF
     _ECHTER_LAUF = True  # ab hier echter Lauf (Ticket-Ende stößt den Hausmeister an)
 
@@ -1053,6 +1292,15 @@ def main() -> int:
     # Platte (#1369): Start-Check des Hausmeisters, bei voller Platte warten (Takt ~15 min).
     speicher.auf_platte_warten(wer=f"bau {ticket}")
     auf_speicher_warten(konfig, wer=f"bau {ticket}")
+    # Start-Text erst jetzt, im Moment des Loslassens (#281): in der Wartezeit kann sich die
+    # Vorlage geändert haben — der Text vom eigenen Start wäre veraltet.
+    prompt, erster_prompt = start_texte()
+    if args.resume:
+        erster_prompt = resume_prompt(ticket)
+    (out / "prompt.txt").write_text(prompt, encoding="utf-8")
+    aktueller_prompt = erster_prompt if mit_prompt else ""
+    if mit_prompt:
+        werkzeug.prompt_setzen(cmd, runner, erster_prompt, hat_prompt=False, interaktiv=not args.probesitz)
     # Push-Sperre (#1445): Git-Hooks vor JEDEM Start (Erststart, --resume, --umzug),
     # unabhängig vom Sandbox-Modus; Quelle origin, nie der Arbeitsordner.
     nest.git_hooks_einrichten(REPO)
@@ -1062,9 +1310,9 @@ def main() -> int:
         return 2
     cmd = praefix + cmd
 
-    # Vertrauens-Dialog vorab bestätigen (#257): ohne Terminal-Antwort hinge die Session
-    # an „Do you trust the files in this folder?“ — Fehler nur als Warnung.
-    vertrauen.still_sicherstellen(Path(worktree_pfad(ticket)).expanduser(), REPO)
+    # Vertrauens-Dialog vorab bestätigen (#257): nur für Claude Code (``~/.claude.json``).
+    if runner == "claude":
+        vertrauen.still_sicherstellen(Path(worktree_pfad(ticket)).expanduser(), REPO)
 
     # Aus einer Claude-Session gestartet erben Kind-Sessions die Markierung
     # CLAUDE_CODE_CHILD_SESSION und speichern kein Transkript (kein Resume nach
@@ -1075,7 +1323,7 @@ def main() -> int:
     # Eine Session im Worktree darf nicht das Repo des Launchers erben (#205).
     os.environ.pop("TO_SPAWN_REPO", None)
     os.environ["CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"] = "1"
-    os.environ.update(temp_ordner.umgebung())  # #136: Temp auf die Platte, nie die RAM-Platte
+    os.environ.update(temp_umg)  # #136/#177: markierter Ticket-Temp auf der Platte, nie die RAM-Platte
     # Klick-Sperre nur für lokal gespawnte Sessions (Windows, Maus-Müll im Eingabefeld).
     terminal_maus.maus_ruhig()
 
@@ -1096,19 +1344,45 @@ def main() -> int:
     staffel_datei.unlink(missing_ok=True)
     runde = 1
     fingerabdruck = ""
+    handoff_aktuell: Path | None = None
     session_id_setzen(cmd, out, ticket=ticket, runde=runde)
     while True:
-        umgebung = staffel_umgebung(ticket, staffel_datei, runde, fingerabdruck)
+        umgebung = staffel_umgebung(ticket, staffel_datei, runde, fingerabdruck, args.staffel_max)
         umgebung.update(bau_log_umgebung(ticket, runde, float(umgebung["BAU_SESSION_START"]), effort, spec))
         os.environ.update(umgebung)
         # Ticket während Blocker-Wartezeit oder Vorrunde geschlossen → keine neue Runde (#97);
-        # Stand unbekannt → laut Exit 2, nie still wie „geschlossen“ (#191).
+        # Stand unbekannt → laut Exit 2, nie still wie „geschlossen“ (#191);
+        # Wiederanlauf-Lage je Runde frisch als Vorsatz-Block (#282).
+        weiter: startstelle.Entscheidung | None = None
         if not args.probesitz:
             weiter = startstelle.weiter_entscheidung(ticket, REPO)
             if not weiter.erlaubt:
                 print(weiter.grund, file=sys.stderr if weiter.exit_code else sys.stdout, flush=True)
                 return weiter.exit_code
-        (out / f"prompt-runde{runde}.txt").write_text(cmd[-1] if mit_prompt else "", encoding="utf-8")
+        lage_hinweis = weiter.hinweis if weiter is not None else ""
+        lage_art = weiter.art if weiter is not None else ""
+        if runde == 1:
+            if lage_hinweis:
+                runden_grund, runden_erster = start_texte(lage_hinweis, lage_art)
+                (out / "prompt.txt").write_text(runden_grund, encoding="utf-8")
+                if mit_prompt:
+                    if args.resume:
+                        aktueller_prompt = (
+                            f"{lage_hinweis}\n\n{resume_prompt(ticket)}"
+                            if lage_art == "abschluss"
+                            else resume_prompt(ticket)
+                        )
+                    else:
+                        aktueller_prompt = runden_erster
+                    werkzeug.prompt_setzen(
+                        cmd, runner, aktueller_prompt, hat_prompt=True, interaktiv=not args.probesitz
+                    )
+        elif handoff_aktuell is not None:
+            runden_grund = wiederanlauf_prompt(prompt, lage_hinweis, art=lage_art)
+            aktueller_prompt = staffel_prompt(runden_grund, handoff_aktuell, runde)
+            werkzeug.prompt_setzen(cmd, runner, aktueller_prompt, hat_prompt=mit_prompt, interaktiv=not args.probesitz)
+            mit_prompt = True
+        (out / f"prompt-runde{runde}.txt").write_text(aktueller_prompt, encoding="utf-8")
         code, umzug_daten = starte_session(cmd, umzug_datei)
         if umzug_daten is not None:
             # Kein Staffel-Neustart: die Session läuft jetzt auf dem Server weiter.
@@ -1145,14 +1419,13 @@ def main() -> int:
             return exit_code(code)
         runde += 1
         fingerabdruck = str(uebergabe.get("fingerabdruck") or "")
+        handoff_aktuell = handoff
         log.info(
             "Staffel-Runde %d · Handoff %s · Vorsession endete mit Exit %s",
             runde,
             handoff.name,
             code,
         )
-        prompt_setzen(cmd, staffel_prompt(prompt, handoff, runde), mit_prompt)
-        mit_prompt = True
         session_id_setzen(cmd, out, str(uuid.uuid4()), ticket=ticket, runde=runde)
 
 

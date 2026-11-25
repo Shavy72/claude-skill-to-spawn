@@ -47,9 +47,7 @@ def _skill_klon(tmp: Path) -> tuple[Path, Path, str]:
     shutil.copytree(
         SKILL,
         klon,
-        ignore=shutil.ignore_patterns(
-            ".git", "__pycache__", ".pytest_cache", ".ruff_cache", ".to-spawn"
-        ),
+        ignore=shutil.ignore_patterns(".git", "__pycache__", ".pytest_cache", ".ruff_cache", ".to-spawn"),
     )
     _git(tmp, "init", "-q", "--bare", "-b", "main", str(bare))
     _git(klon, "init", "-q", "-b", "main")
@@ -74,6 +72,8 @@ def _umgebung(tmp: Path) -> dict[str, str]:
             "TO_SPAWN_MASCHINE": str(tmp / "maschine.json"),
             # Installer nimmt das Python dieses Laufs, nie ein anderes aus dem PATH.
             "TO_SPAWN_PY": sys.executable,
+            # Wegwerf-Repo ohne echtes origin: Arbeitsordner-Stand (#283) hier nicht Thema.
+            "TO_SPAWN_TEST_ARBEITSSTAND_OK": "1",
         }
     )
     return env
@@ -87,9 +87,7 @@ def _installiere(art: str, klon: Path, skills: Path, env: dict[str, str]) -> Non
     else:
         befehl = [PWSH or "pwsh", "-NoProfile", "-File", str(klon / "install.ps1")]
         befehl += ["-Skills", str(skills), "-ClaudeMd", str(claude_md)]
-    lauf = subprocess.run(
-        befehl, env=env, capture_output=True, text=True, encoding="utf-8", check=False
-    )
+    lauf = subprocess.run(befehl, env=env, capture_output=True, text=True, encoding="utf-8", check=False)
     assert lauf.returncode == 0, lauf.stdout + lauf.stderr
 
 
@@ -103,9 +101,7 @@ def _app_repo(tmp: Path) -> Path:
     return app
 
 
-def _einrichten(
-    ziel: Path, app: Path, env: dict[str, str], *, pruefen: bool = False
-) -> tuple[int, str]:
+def _einrichten(ziel: Path, app: Path, env: dict[str, str], *, pruefen: bool = False) -> tuple[int, str]:
     befehl = [sys.executable, str(ziel / "to_spawn.py"), "einrichten"]
     lauf = subprocess.run(
         befehl + (["--pruefen"] if pruefen else []),
@@ -128,17 +124,13 @@ INSTALLER = [
     pytest.param("sh", marks=pytest.mark.braucht("bash")),
     pytest.param(
         "ps1",
-        marks=pytest.mark.skipif(
-            not PWSH, reason="pwsh fehlt — install.ps1 am PC prüfen"
-        ),
+        marks=pytest.mark.skipif(not PWSH, reason="pwsh fehlt — install.ps1 am PC prüfen"),
     ),
 ]
 
 
 @pytest.mark.parametrize("art", INSTALLER)
-def test_installer_stempelt_und_einrichten_vergleicht_mit_main(
-    art: str, tmp_path: Path
-) -> None:
+def test_installer_stempelt_und_einrichten_vergleicht_mit_main(art: str, tmp_path: Path) -> None:
     klon, bare, sha = _skill_klon(tmp_path)
     env = _umgebung(tmp_path)
     skills = tmp_path / "heim" / "skills"

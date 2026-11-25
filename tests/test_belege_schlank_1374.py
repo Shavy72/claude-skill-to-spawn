@@ -19,21 +19,13 @@ from test_nest_210 import _cli, _git, _neues_repo, _umgebung
 def _repo_mit_belegen(tmp_path: Path) -> Path:
     quelle = _neues_repo(tmp_path / "quelle")
     (quelle / "docs" / "verify-hard" / "alt").mkdir(parents=True)
-    (quelle / "docs" / "verify-hard" / "alt" / "beleg.md").write_text(
-        "alt\n", encoding="utf-8"
-    )
+    (quelle / "docs" / "verify-hard" / "alt" / "beleg.md").write_text("alt\n", encoding="utf-8")
     (quelle / "docs" / "verify-hard" / "alt" / "bild.webp").write_bytes(b"\x00" * 64)
-    (quelle / "docs" / "verify-hard" / "alt" / "prüfung größe.PNG").write_bytes(
-        b"\x89" * 64
-    )
+    (quelle / "docs" / "verify-hard" / "alt" / "prüfung größe.PNG").write_bytes(b"\x89" * 64)
     for endung in ("jpg", "jpeg", "gif"):
-        (quelle / "docs" / "verify-hard" / "alt" / f"weitere.{endung}").write_bytes(
-            b"\x02" * 8
-        )
+        (quelle / "docs" / "verify-hard" / "alt" / f"weitere.{endung}").write_bytes(b"\x02" * 8)
     (quelle / "docs" / "verify-hard" / "alt" / "assets").mkdir()
-    (quelle / "docs" / "verify-hard" / "alt" / "assets" / "roh.jpg").write_bytes(
-        b"\x03" * 8
-    )
+    (quelle / "docs" / "verify-hard" / "alt" / "assets" / "roh.jpg").write_bytes(b"\x03" * 8)
     (quelle / "docs" / "verify-hard" / "alt" / "probe.mp4").write_bytes(b"\x01" * 64)
     (quelle / "docs" / "anleitung.md").write_text("bleibt\n", encoding="utf-8")
     _git(quelle, "add", "-A")
@@ -67,9 +59,7 @@ def test_neuer_arbeitsordner_ohne_alte_belegbilder(tmp_path: Path) -> None:
     alt = wt / "docs" / "verify-hard" / "alt"
     assert (alt / "beleg.md").is_file(), "Text-Belege bleiben (Tests lesen sie)"
     assert (alt / "probe.mp4").is_file(), "Videos bleiben (Tests nutzen sie)"
-    assert (alt / "assets" / "roh.jpg").is_file(), (
-        "assets/-Bilder bleiben (Tests lesen sie)"
-    )
+    assert (alt / "assets" / "roh.jpg").is_file(), "assets/-Bilder bleiben (Tests lesen sie)"
     assert not (alt / "bild.webp").exists()
     assert not list(alt.glob("weitere.*")), "jpg/jpeg/gif ebenfalls ausgeblendet"
     assert not (alt / "prüfung größe.PNG").exists(), "Umlaut-Namen, Großschreibung"
@@ -119,9 +109,7 @@ def test_repo_ohne_belegordner_unveraendert(tmp_path: Path) -> None:
     assert _git(wt, "status", "--short", "--", ".", ":!.to-spawn") == ""
 
 
-def test_fehler_beim_fuellen_raeumt_halben_ordner_weg(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_fehler_beim_fuellen_raeumt_halben_ordner_weg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Prüfpanel #1374: scheitert das Füllen, darf kein leerer Ordner stehen bleiben.
 
     Sonst kehrt der nächste Aufruf bei ``worktree.exists()`` früh zurück und die
@@ -154,9 +142,7 @@ def test_vorhandener_ticket_zweig_ohne_alte_belege(tmp_path: Path) -> None:
     assert _git(wt, "status", "--short", "--", ".", ":!.to-spawn") == ""
 
 
-def test_fehler_beim_fuellen_laesst_vorhandenen_zweig_stehen(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_fehler_beim_fuellen_laesst_vorhandenen_zweig_stehen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Gegenprobe zum Aufräumen: ein schon vorhandener Ticket-Zweig trägt Arbeit, nie löschen."""
     from to_spawn import nest
 
@@ -171,14 +157,10 @@ def test_fehler_beim_fuellen_laesst_vorhandenen_zweig_stehen(
     with pytest.raises(nest.NestFehler):
         nest.worktree_anlegen(wt, haupt, "79")
     assert not wt.exists()
-    assert _git(haupt, "branch", "--list", "ticket-79") != "", (
-        "vorhandener Zweig bleibt"
-    )
+    assert _git(haupt, "branch", "--list", "ticket-79") != "", "vorhandener Zweig bleibt"
 
 
-def test_halber_ordner_geht_ueber_den_hausmeister(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_halber_ordner_geht_ueber_den_hausmeister(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Aufseher 20.11.: Lösch-Wissen nur im Hausmeister; seine Log-Zeile belegt den Weg."""
     import json
 
@@ -197,9 +179,7 @@ def test_halber_ordner_geht_ueber_den_hausmeister(
         nest.worktree_anlegen(wt, haupt, "81")
     assert not wt.exists()
     zeilen = [json.loads(z) for z in log_datei.read_text(encoding="utf-8").splitlines()]
-    assert [(z["art"], z["ticket"], z["trocken"]) for z in zeilen] == [
-        ("gelöscht", 81, False)
-    ]
+    assert [(z["art"], z["ticket"], z["trocken"]) for z in zeilen] == [("gelöscht", 81, False)]
     assert "halb angelegt" in zeilen[0]["grund"]
     assert _git(haupt, "branch", "--list", "ticket-81") == "", "neuer Zweig muss weg"
 
@@ -233,9 +213,7 @@ def test_halber_ordner_echter_git_fehler_bleibt_mit_fehlerzeile(
     )
 
 
-def test_oserror_beim_fuellen_raeumt_halben_ordner_weg(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_oserror_beim_fuellen_raeumt_halben_ordner_weg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Prüfpanel: auch ein Fehler außer ``NestFehler`` (z. B. OSError) räumt auf."""
     from to_spawn import nest
 

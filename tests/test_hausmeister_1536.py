@@ -33,13 +33,6 @@ ALT_TAGE = 30
 GEHEIM = "TOKEN=geheim-1536-wert"
 
 
-@pytest.fixture(autouse=True)
-def eigenes_tmux(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Eigener tmux-Server je Test: die echten Sitzungen des Bau-Servers zählen nicht."""
-    monkeypatch.delenv("TMUX", raising=False)
-    monkeypatch.setenv("TMUX_TMPDIR", str(tmp_path))
-
-
 def _altern(welt: Welt) -> None:
     """Die Uhr springt :data:`ALT_TAGE` Tage weiter (Dateien bleiben, wie sie sind)."""
     welt.jetzt += ALT_TAGE * TAG
@@ -104,13 +97,15 @@ def test_soll2_ohne_git_bleibt_auch_alt(welt: Welt) -> None:
 
 
 def test_soll2_verwaister_worktree_alt_und_ticket_zu_bleibt(welt: Welt) -> None:
+    # #163: alte verwaiste Worktrees ohne Git mit geschlossenem Ticket, ohne Prozess und
+    # ohne Geheimnis-Verdacht werden seit #163 geräumt (vorher Out of Scope #1536).
     ordner = _ordner(welt, "wt/wt-1602", ("arbeit.txt",))
     (ordner / ".git").write_text(f"gitdir: {welt.tmp / 'gibt-es-nicht' / 'worktrees' / 'wt-1602'}\n", encoding="utf-8")
     _altern(welt)
     welt.ticket(1602, "CLOSED", 48)
     r = welt.aufraeumen(ordner, loeschen=True)
-    assert r.art == "bleibt" and r.fuer_david and "kein eigener Git-Ordner" in r.grund, r.grund
-    assert (ordner / "arbeit.txt").is_file()
+    assert r.art == "gelöscht" and not r.fehler, r.grund
+    assert not ordner.exists()
 
 
 def test_soll2_git_ohne_nummer_bleibt_auch_alt(welt: Welt) -> None:
@@ -190,9 +185,9 @@ def test_sicher_offenes_ticket_bleibt_auch_alt(welt: Welt) -> None:
     r = welt.aufraeumen(wt, loeschen=True)
     assert r.art == "bleibt" and "offen" in r.grund, r.grund
     assert wt.is_dir()
-    # Fix-Runde 1: ohne Git bleibt der Ordner schon vor der Ticket-Abfrage.
+    # #163: Ordner ohne Git mit Ticket-Nummer prüft das Ticket — offen ⇒ bleibt.
     r = welt.aufraeumen(ohne_git, loeschen=True)
-    assert r.art == "bleibt" and r.fuer_david, r.grund
+    assert r.art == "bleibt" and "offen" in r.grund, r.grund
     assert ohne_git.is_dir()
 
 
@@ -407,9 +402,7 @@ def _daten_ordner(welt: Welt, nr: int, dateien: tuple[str, ...]) -> Path:
     ],
 )
 def test_fix2_echte_datei_im_daten_ordner_haelt_den_ordner(welt: Welt, datei: str) -> None:
-    wt = _daten_ordner(
-        welt, 1632, ("data/content_studio/uploads/_characters/6/.thumb_ab12_480.webp", datei)
-    )
+    wt = _daten_ordner(welt, 1632, ("data/content_studio/uploads/_characters/6/.thumb_ab12_480.webp", datei))
     r = welt.aufraeumen(wt, loeschen=True)
     assert r.art == "bleibt" and datei in r.grund, r.grund
     assert (wt / datei).is_file()
