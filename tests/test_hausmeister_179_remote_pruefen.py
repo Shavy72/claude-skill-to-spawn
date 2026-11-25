@@ -57,9 +57,7 @@ def test_hausmeister_gefaelschter_ref_mit_geheimnis_im_commit_bleibt(welt: Welt)
     assert "TOKEN=geheim-179" not in welt.im_bare("log", "--all", "-p")
 
 
-def test_hausmeister_fremd_ordner_mit_gefaelschtem_hauptzweig_ref_bleibt(
-    welt: Welt, repos: Repos
-) -> None:
+def test_hausmeister_fremd_ordner_mit_gefaelschtem_hauptzweig_ref_bleibt(welt: Welt, repos: Repos) -> None:
     """Auch im ``_fremd_fertig``-Weg darf ein gefälschter lokaler ``origin/main``-Ref
     keinen ungesicherten lokalen Commit als „im Hauptzweig“ gelten lassen."""
     repos.repo(SKILL)

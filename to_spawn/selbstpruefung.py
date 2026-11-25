@@ -187,7 +187,9 @@ def _direktlinks_aus_auftrag(pfad: Path) -> tuple[dict[str, str], list[dict[str,
                     {
                         "ticket": aktuell_nr,
                         "titel": f"Ticket #{aktuell_nr} — {aktuell_titel}",
-                        "schritte": [f"Klick-Schrittfolge für Ticket #{aktuell_nr} ({aktuell_titel}) auf Staging prüfen"],
+                        "schritte": [
+                            f"Klick-Schrittfolge für Ticket #{aktuell_nr} ({aktuell_titel}) auf Staging prüfen"
+                        ],
                     }
                 )
             continue
@@ -222,9 +224,7 @@ def _manifest_fallback(repo: Path, spec: int) -> list[dict[str, Any]]:
     return folgen
 
 
-def _sammle_folgen(
-    repo: Path, spec: int, rundschau_datei: Path | None
-) -> tuple[list[dict[str, Any]], str, str]:
+def _sammle_folgen(repo: Path, spec: int, rundschau_datei: Path | None) -> tuple[list[dict[str, Any]], str, str]:
     """Klick-Schrittfolgen aus Rundschau-Deck (bevorzugt), Rundschau-Auftrag oder Manifest."""
     agenten = agenten_ordner(repo)
     auftrag_md = agenten / f"rundschau_auftrag_{spec}.md"
@@ -282,7 +282,9 @@ def auftrag_text(
         f"- **Browser**: {BROWSER_HINWEIS}",
     ]
     if zugang_datei:
-        zeilen.append(f"- **Staging-Zugangsdatei (falls Basic-Auth nötig)**: `{zugang_datei}` (Passwörter nie in Belege oder JSON schreiben)")
+        zeilen.append(
+            f"- **Staging-Zugangsdatei (falls Basic-Auth nötig)**: `{zugang_datei}` (Passwörter nie in Belege oder JSON schreiben)"
+        )
     if rundschau_rel:
         zeilen.append(f"- **Rundschau-Deck**: `{rundschau_rel}`")
     if rundschau_auftrag_rel:
@@ -304,7 +306,7 @@ def auftrag_text(
             "- Falls ein Schritt zwingend Eingaben/Anlegen erfordert: ausschließlich klar markierte",
             "  **Dummy-Daten** verwenden (Präfix `SELBSTPRUEFUNG-DUMMY-`) und diese am Ende des Schritts",
             "  vollständig wieder **löschen**.",
-            "- Prüfe am Schluss, dass keine Testdaten auf Staging zurückbleiben (`\"testdaten_bereinigt\": true`).",
+            '- Prüfe am Schluss, dass keine Testdaten auf Staging zurückbleiben (`"testdaten_bereinigt": true`).',
             "- Passwörter oder Zugangsdaten gehören niemals in `ergebnis.json` oder in Beleg-Texte.",
             "",
             "## Klick-Schrittfolgen",
@@ -350,7 +352,7 @@ def auftrag_text(
             "## Ergebnisformat",
             "",
             f"Schreibe das Ergebnis als gültiges JSON nach `{ergebnis_rel}`.",
-            "Erlaubte Werte für `ergebnis` sind ausschließlich `\"passt\"` und `\"passt nicht\"`.",
+            'Erlaubte Werte für `ergebnis` sind ausschließlich `"passt"` und `"passt nicht"`.',
             "Jeder Schritt braucht einen nicht leeren `beleg` (Bildpfad oder konkrete Ausgabe).",
             "",
             "```json",
@@ -609,7 +611,9 @@ def sammeln(repo: Path, spec: int) -> int:
                 raise Fehler(f"{sperre} kaputt ({fehler}) — 'selbstpruefung planen {spec}' neu starten") from fehler
             if isinstance(lauf, dict) and "auftrag" not in lauf and _sperre_aktiv(sperre):
                 freigeben = False
-                sys.stdout.write(f"Selbstprüfung Spec #{spec}: planen läuft noch (Sperre {sperre}) — später erneut sammeln.\n")
+                sys.stdout.write(
+                    f"Selbstprüfung Spec #{spec}: planen läuft noch (Sperre {sperre}) — später erneut sammeln.\n"
+                )
                 return 4
         if not ergebnis.is_file():
             sys.stdout.write(
@@ -738,9 +742,7 @@ def paket_abschnitt(daten: dict[str, Any]) -> list[str]:
             extra = f" — {hinweis}" if hinweis else ""
             zeilen.append(f"  - **{ort} · Schritt „{schritt}“**: passt nicht · Beleg: `{beleg}`{extra}")
     else:
-        zeilen.append(
-            f"- ✅ {passt} von {gesamt} Klick-Schritten auf Staging bestanden (0 passt nicht · {meta_text})."
-        )
+        zeilen.append(f"- ✅ {passt} von {gesamt} Klick-Schritten auf Staging bestanden (0 passt nicht · {meta_text}).")
     if daten.get("testdaten_bereinigt") is False:
         zeilen.append("- ⚠️ Testdaten laut Ergebnis nicht vollständig bereinigt — Staging prüfen!")
     zeilen.append("")

@@ -35,9 +35,7 @@ _LINKS = [
 ]
 
 
-def _lauf(
-    skript: str, *args: str, env: dict[str, str] | None = None
-) -> subprocess.CompletedProcess[str]:
+def _lauf(skript: str, *args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(SKRIPTE / skript), *args],
         capture_output=True,
@@ -75,12 +73,8 @@ def repo(tmp_path: Path) -> Path:
         },
     }
     (r / "docs" / "agents" / "manifests").mkdir(parents=True)
-    (r / "docs" / "agents" / "manifests" / f"spec-{SPEC}.json").write_text(
-        json.dumps(manifest), encoding="utf-8"
-    )
-    bau_log.schreibe(
-        r, 10, "entscheidung", frage="Trennzeichen", wahl="Semikolon", grund="Excel-Standard"
-    )
+    (r / "docs" / "agents" / "manifests" / f"spec-{SPEC}.json").write_text(json.dumps(manifest), encoding="utf-8")
+    bau_log.schreibe(r, 10, "entscheidung", frage="Trennzeichen", wahl="Semikolon", grund="Excel-Standard")
     fid = briefkasten.einwerfen("11", "Dateiname?", "export.csv", 3, [], hauptbaum=r)
     briefkasten.antworten("11", fid, "export.csv", ["Lastenheft A51"], "kurz und klar", hauptbaum=r)
     return r
@@ -212,9 +206,7 @@ def test_rundschau_deck_klickschritte_und_inhalt(tmp_path: Path) -> None:
     assert any("#11" in m and "Klick-Schritte" in m for m in maengel), maengel
 
 
-def test_ablegen_prueft_bild_klickschritte_repo_pfad_und_speichert_inhalt(
-    repo: Path, tmp_path: Path
-) -> None:
+def test_ablegen_prueft_bild_klickschritte_repo_pfad_und_speichert_inhalt(repo: Path, tmp_path: Path) -> None:
     bild = repo.parent / "shot.png"
     bild.write_bytes(_png())
     deck_pfad = repo / "docs" / "agents" / f"rundschau_{SPEC}.html"
@@ -333,9 +325,7 @@ def test_ablegen_prueft_bild_klickschritte_repo_pfad_und_speichert_inhalt(
                     {
                         "ticket": "10",
                         "titel": "Ticket #10 — Filter",
-                        "schritte": [
-                            {"schritt": "Stage öffnen", "ergebnis": "passt", "beleg": "HTTP 200"}
-                        ],
+                        "schritte": [{"schritt": "Stage öffnen", "ergebnis": "passt", "beleg": "HTTP 200"}],
                     }
                 ],
             }
@@ -393,12 +383,8 @@ def test_abschluss_anweisung_eine_quelle_und_rundschau_auftrag() -> None:
     assert "abschluss_paket.py rundschau-auftrag {S}" in quelle
     assert "docs/agents/rundschau_{S}.html" in quelle
     # Beide Prompts formatieren weiter sauber mit ihren Platzhaltern.
-    takt_text = waechter_takt.PROMPT.format(
-        S=367, REPO="o/r", SKILL="/skill", LISTE="- x", NOTIZ="(leer)"
-    )
-    wache_text = wache.PROMPT.format(
-        S=367, REPO="o/r", DATUM="2026-11-25", TAKT=1800, SKILL="/skill"
-    )
+    takt_text = waechter_takt.PROMPT.format(S=367, REPO="o/r", SKILL="/skill", LISTE="- x", NOTIZ="(leer)")
+    wache_text = wache.PROMPT.format(S=367, REPO="o/r", DATUM="2026-11-25", TAKT=1800, SKILL="/skill")
     assert "abschluss_paket.py rundschau-auftrag 367" in takt_text
     assert "abschluss_paket.py rundschau-auftrag 367" in wache_text
 

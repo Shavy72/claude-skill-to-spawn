@@ -160,9 +160,7 @@ def _auf_altstand(welt: dict[str, Path], erneut_alt: bool = False) -> None:
     """Zustand wie vor der Kennung: nur ``N|Regel|closed_at`` (+ optional ``erneut|N|Regel``)."""
     datei = next(welt["zustand"].glob("*_900.json"))
     zustand = json.loads(datei.read_text(encoding="utf-8"))
-    erledigt = [
-        s for s in zustand["erledigt"] if not s.startswith(("geoeffnet|", "erneut|"))
-    ]
+    erledigt = [s for s in zustand["erledigt"] if not s.startswith(("geoeffnet|", "erneut|"))]
     if erneut_alt:
         erledigt.append("erneut|901|vps_ungleich_origin")
     zustand["erledigt"] = erledigt
@@ -189,9 +187,7 @@ def test_altmerker_dann_neuer_text_oeffnet_einmal_275(
     _auf_altstand(welt)
     erster = _capo(welt)
     assert _gh_zustand(welt)["issues"]["901"]["state"] == "closed", _text(erster)
-    _commit(
-        welt["repo"], "fix: Seite nachgebessert (#901)", {"web/seite.py": "x = 2\n"}
-    )
+    _commit(welt["repo"], "fix: Seite nachgebessert (#901)", {"web/seite.py": "x = 2\n"})
     _gh_setzen(welt, "901", state="closed", closed_at=_iso(timedelta(seconds=-10)))
     zweiter = _capo(welt)
     assert _gh_zustand(welt)["issues"]["901"]["state"] == "open", _text(zweiter)
@@ -221,9 +217,7 @@ def test_neuer_vps_kopf_ohne_commit_oeffnet_nicht_neu_275(
     """Neuer Deploy ohne den fehlenden Commit: derselbe Verstoß, nur einmal melden."""
     _einmal_geoeffnet(welt, monkeypatch)
     vorher = _git(welt["repo"], "rev-parse", "HEAD~1")
-    deploy = _git(
-        welt["repo"], "commit-tree", f"{vorher}^{{tree}}", "-p", vorher, "-m", "deploy"
-    )
+    deploy = _git(welt["repo"], "commit-tree", f"{vorher}^{{tree}}", "-p", vorher, "-m", "deploy")
     for name, wert in _ssh_fake(welt, deploy).items():
         monkeypatch.setenv(name, wert)
     ergebnis = _capo(welt)

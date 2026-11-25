@@ -51,9 +51,7 @@ def _commit(repo: Path, nachricht: str) -> None:
     _git(repo, "commit", "-q", "-m", nachricht)
 
 
-def _lauf(
-    skript: str, *args: str, env: dict[str, str] | None = None
-) -> subprocess.CompletedProcess[str]:
+def _lauf(skript: str, *args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(SKRIPTE / skript), *args],
         capture_output=True,
@@ -227,14 +225,10 @@ def _repo_anlegen(tmp_path: Path, *, mit_beleg_902: bool) -> Path:
         "$ python -m pytest tests/test_export.py -q\n8 passed in 0.4s\n", encoding="utf-8"
     )
     if mit_beleg_902:
-        (vh / "902.md").write_text(
-            "# Belegseite #902\n**ABNAHME: ABGENOMMEN**\nKlickweg geprüft.\n", encoding="utf-8"
-        )
+        (vh / "902.md").write_text("# Belegseite #902\n**ABNAHME: ABGENOMMEN**\nKlickweg geprüft.\n", encoding="utf-8")
     _commit(r, "feat: Export und Status (#901, #902)")
 
-    bau_log.schreibe(
-        r, 901, "entscheidung", frage="Trennzeichen", wahl="Semikolon", grund="Excel-Standard"
-    )
+    bau_log.schreibe(r, 901, "entscheidung", frage="Trennzeichen", wahl="Semikolon", grund="Excel-Standard")
     fid = briefkasten.einwerfen("902", "Status-Text?", "ok", 3, [], hauptbaum=r)
     briefkasten.antworten("902", fid, "ok", ["Lastenheft A57"], "kurz", hauptbaum=r)
     return r
@@ -285,9 +279,7 @@ def test_fehlender_beleg_meldet_luecke_folge_ticket_und_verweigert_ablegen(tmp_p
     stub, zustand_pfad = _gh_stub_anlegen(tmp_path)
     env = _env(tmp_path, stub)
 
-    geplant = _lauf(
-        "thermo_lauf.py", "live-bereit", "plan", str(SPEC), "--repo", str(repo), "--kopf", "HEAD", env=env
-    )
+    geplant = _lauf("thermo_lauf.py", "live-bereit", "plan", str(SPEC), "--repo", str(repo), "--kopf", "HEAD", env=env)
     assert geplant.returncode == 0, geplant.stdout + geplant.stderr
     ordner = Path(json.loads(geplant.stdout)["befunde_ordner"])
     # Selbst wenn ein unaufmerksamer Helfer „ok: true“ behauptet, erkennt die Prüfung den fehlenden Beleg für #902.
@@ -296,8 +288,15 @@ def test_fehlender_beleg_meldet_luecke_folge_ticket_und_verweigert_ablegen(tmp_p
         {
             "teil": "live_bereit",
             "fragen": {
-                "entscheidungen": {"ok": True, "beleg": "TRENNER = ';' in web/export.py:1; STATUS = 'ok' in web/status.py:1"},
-                "live_daten": {"ok": True, "aendert_live_daten": False, "beleg": "Nur statische Export-/Status-Module, keine Migration."},
+                "entscheidungen": {
+                    "ok": True,
+                    "beleg": "TRENNER = ';' in web/export.py:1; STATUS = 'ok' in web/status.py:1",
+                },
+                "live_daten": {
+                    "ok": True,
+                    "aendert_live_daten": False,
+                    "beleg": "Nur statische Export-/Status-Module, keine Migration.",
+                },
                 "abnahme_belege": {"ok": True, "beleg": "Beleg 901_gruen.txt gesehen"},
             },
             "luecken": [],
@@ -373,9 +372,7 @@ def test_live_bereit_gruen_erlaubt_ablegen_und_eine_zeile_im_abschluss_paket(tmp
     repo = _repo_anlegen(tmp_path, mit_beleg_902=True)
     env = _env(tmp_path)
 
-    geplant = _lauf(
-        "thermo_lauf.py", "live-bereit", "plan", str(SPEC), "--repo", str(repo), "--kopf", "HEAD", env=env
-    )
+    geplant = _lauf("thermo_lauf.py", "live-bereit", "plan", str(SPEC), "--repo", str(repo), "--kopf", "HEAD", env=env)
     assert geplant.returncode == 0, geplant.stdout + geplant.stderr
     ordner = Path(json.loads(geplant.stdout)["befunde_ordner"])
     _schreibe_antwort(
@@ -383,7 +380,10 @@ def test_live_bereit_gruen_erlaubt_ablegen_und_eine_zeile_im_abschluss_paket(tmp
         {
             "teil": "live_bereit",
             "fragen": {
-                "entscheidungen": {"ok": True, "beleg": "TRENNER = ';' in web/export.py:1; STATUS = 'ok' in web/status.py:1"},
+                "entscheidungen": {
+                    "ok": True,
+                    "beleg": "TRENNER = ';' in web/export.py:1; STATUS = 'ok' in web/status.py:1",
+                },
                 "live_daten": {"ok": True, "aendert_live_daten": False, "beleg": "Keine Live-Daten-Änderung im Diff."},
                 "abnahme_belege": {"ok": True, "beleg": "#901 (901_gruen.txt, 8 passed), #902 (902.md, ABGENOMMEN)."},
             },
@@ -391,7 +391,9 @@ def test_live_bereit_gruen_erlaubt_ablegen_und_eine_zeile_im_abschluss_paket(tmp
         },
     )
 
-    gesammelt = _lauf("thermo_lauf.py", "live-bereit", "sammeln", str(SPEC), "--repo", str(repo), "--ohne-github", env=env)
+    gesammelt = _lauf(
+        "thermo_lauf.py", "live-bereit", "sammeln", str(SPEC), "--repo", str(repo), "--ohne-github", env=env
+    )
     assert gesammelt.returncode == 0, gesammelt.stdout + gesammelt.stderr
     assert "BEREIT" in gesammelt.stdout
     marker = repo / "docs" / "agents" / f"live_bereit_{SPEC}.md"
@@ -444,9 +446,7 @@ def test_live_bereit_luecken_entscheidung_und_live_daten_und_erneut_planbar(tmp_
     stub, zustand_pfad = _gh_stub_anlegen(tmp_path)
     env = _env(tmp_path, stub)
 
-    geplant = _lauf(
-        "thermo_lauf.py", "live-bereit", "plan", str(SPEC), "--repo", str(repo), "--kopf", "HEAD", env=env
-    )
+    geplant = _lauf("thermo_lauf.py", "live-bereit", "plan", str(SPEC), "--repo", str(repo), "--kopf", "HEAD", env=env)
     assert geplant.returncode == 0, geplant.stdout + geplant.stderr
     ordner = Path(json.loads(geplant.stdout)["befunde_ordner"])
     antwort = {
@@ -508,9 +508,7 @@ def test_live_bereit_luecken_entscheidung_und_live_daten_und_erneut_planbar(tmp_
     vh = repo / "docs" / "verify-hard"
     (vh / "910_gruen.txt").write_text("3 passed in 0.1s\n", encoding="utf-8")
     (vh / "911_gruen.txt").write_text("2 passed in 0.1s\n", encoding="utf-8")
-    neu_plan = _lauf(
-        "thermo_lauf.py", "live-bereit", "plan", str(SPEC), "--repo", str(repo), "--kopf", "HEAD", env=env
-    )
+    neu_plan = _lauf("thermo_lauf.py", "live-bereit", "plan", str(SPEC), "--repo", str(repo), "--kopf", "HEAD", env=env)
     assert neu_plan.returncode == 0, neu_plan.stdout + neu_plan.stderr
     _schreibe_antwort(
         ordner,
@@ -518,7 +516,11 @@ def test_live_bereit_luecken_entscheidung_und_live_daten_und_erneut_planbar(tmp_
             "teil": "live_bereit",
             "fragen": {
                 "entscheidungen": {"ok": True, "beleg": "Semikolon umgesetzt (#910)"},
-                "live_daten": {"ok": True, "aendert_live_daten": True, "beleg": "Backup + Rückweg in scripts/backup.sh (#911)"},
+                "live_daten": {
+                    "ok": True,
+                    "aendert_live_daten": True,
+                    "beleg": "Backup + Rückweg in scripts/backup.sh (#911)",
+                },
                 "abnahme_belege": {"ok": True, "beleg": "Alle Tickets #901, #902, #910, #911 grün"},
             },
             "luecken": [],

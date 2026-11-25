@@ -37,9 +37,7 @@ def _limit_mit_reset(in_sekunden: float) -> str:
 
 def _limit_ohne_uhrzeit() -> str:
     zeile = copy.deepcopy(LIMIT_ZEILE)
-    zeile["message"]["content"] = [
-        {"type": "text", "text": "You've hit your session limit"}
-    ]
+    zeile["message"]["content"] = [{"type": "text", "text": "You've hit your session limit"}]
     return json.dumps(zeile, ensure_ascii=False)
 
 

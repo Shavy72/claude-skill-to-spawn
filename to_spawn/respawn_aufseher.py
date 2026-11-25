@@ -77,18 +77,14 @@ def aufseher_abloesen(
     try:
         w.tippen(
             ziel,
-            respawn._handoff_auftrag(
-                str(handoff.relative_to(wurzel)), str(start.relative_to(wurzel))
-            ),
+            respawn._handoff_auftrag(str(handoff.relative_to(wurzel)), str(start.relative_to(wurzel))),
         )
     except respawn.TmuxFehler as fehler:
         log.warning("%s: Handoff-Auftrag an %s nicht getippt: %s", kopf, ziel, fehler)
         return AufseherErgebnis(respawn.EXIT_NICHT_BEWIESEN, f"{kopf}: tmux — {fehler}")
     log.info("%s: Handoff-Auftrag an %s getippt.", kopf, ziel)
     try:
-        gefunden, _start, prompt = respawn._warte_dateien(
-            w, handoff, start, seit, schluessel, warte_max
-        )
+        gefunden, _start, prompt = respawn._warte_dateien(w, handoff, start, seit, schluessel, warte_max)
     except respawn._Abbruch as abbruch:
         try:
             w.tippen(ziel, WEITER_AUFTRAG_AUFSEHER)

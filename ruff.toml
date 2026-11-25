@@ -1,0 +1,3 @@
+# Einheitliche Formatierung für das Skill-Repo (#190): verhindert Rausch-Diffs durch
+# unterschiedliche Zeilenlängen zwischen Maschinen und Auto-Format-Hooks.
+line-length = 120

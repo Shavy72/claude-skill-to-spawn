@@ -269,9 +269,7 @@ def _wache_startbefehl(tmp_path_factory: pytest.TempPathFactory) -> str:
     [("130", 1), ("2", 1), ("143", 1), ("0", 1), ("1,0", 2), ("kill", 4)],
     ids=["strg-c", "konfig-fehler", "sigterm", "normal", "traceback-dann-ok", "absturz-immer"],
 )
-def test_wache_neustart_nur_nach_absturz(
-    tmp_path: Path, _wache_startbefehl: str, plan: str, laeufe: int
-) -> None:
+def test_wache_neustart_nur_nach_absturz(tmp_path: Path, _wache_startbefehl: str, plan: str, laeufe: int) -> None:
     """Pflicht 2: gewollter Abbruch → kein Neustart; Absturz → Neustart, höchstens 3-mal."""
     attrappe = tmp_path / "plan" / "wache.py"
     attrappe.parent.mkdir()
@@ -435,8 +433,7 @@ def test_warte_datei_wird_in_einem_zug_ersetzt(tmp_path: Path, monkeypatch: pyte
 def _warteliste(datei: Path, hinzu: str, weg: str, trocken: int = 0) -> None:
     """Ruft ``warteliste_aendern`` aus ``spawn_srv.sh`` direkt auf (Block zwischen den Markern)."""
     block = (
-        "eval \"$(sed -n '/^# >>> warteliste/,/^# <<< warteliste/p' \"$SKRIPT\")\"; "
-        'warteliste_aendern "$HINZU" "$WEG"'
+        'eval "$(sed -n \'/^# >>> warteliste/,/^# <<< warteliste/p\' "$SKRIPT")"; warteliste_aendern "$HINZU" "$WEG"'
     )
     umgebung = dict(
         os.environ,

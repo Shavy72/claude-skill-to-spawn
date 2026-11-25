@@ -14,17 +14,9 @@ from pathlib import Path
 
 import pytest
 
-SKRIPT = (
-    Path(__file__).resolve().parent.parent
-    / "probe"
-    / "gemeinsam"
-    / "skripte"
-    / "ausrollen.py"
-)
+SKRIPT = Path(__file__).resolve().parent.parent / "probe" / "gemeinsam" / "skripte" / "ausrollen.py"
 
-pytestmark = pytest.mark.skipif(
-    not Path("/proc/self/cwd").exists(), reason="braucht /proc"
-)
+pytestmark = pytest.mark.skipif(not Path("/proc/self/cwd").exists(), reason="braucht /proc")
 
 
 def _git(ort: Path, *args: str) -> None:
@@ -62,9 +54,7 @@ def test_staging_aufraeumen_trifft_alle_worktrees_aber_keine_fremden(
     fremd.mkdir()
     prozesse = []
     try:
-        eigener = _schlaefer(
-            (wt2 / "staging").mkdir() or wt2 / "staging"
-        )  # verwaist, anderer Worktree
+        eigener = _schlaefer((wt2 / "staging").mkdir() or wt2 / "staging")  # verwaist, anderer Worktree
         # PID-Datei zeigt auf einen Prozess, der NICHT in einem Worktree-Staging läuft
         fremder = _schlaefer(fremd)
         (wt3 / "staging").mkdir()
@@ -82,9 +72,7 @@ def test_staging_aufraeumen_trifft_alle_worktrees_aber_keine_fremden(
         deadline = time.monotonic() + 5
         while _lebt(eigener) and time.monotonic() < deadline:
             time.sleep(0.1)
-        assert not _lebt(eigener), (
-            "Staging-Prozess aus fremdem Worktree des Repos blieb stehen"
-        )
+        assert not _lebt(eigener), "Staging-Prozess aus fremdem Worktree des Repos blieb stehen"
         assert not (wt2 / "staging").exists()
         assert _lebt(fremder), "Fremder Prozess darf nie beendet werden"
     finally:

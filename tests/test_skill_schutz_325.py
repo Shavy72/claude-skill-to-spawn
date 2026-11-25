@@ -32,9 +32,7 @@ def _hook(home: Path, eingabe: str) -> subprocess.CompletedProcess[str]:
 
 
 def _json(werkzeug: str, cwd: Path, **tool_input: str) -> str:
-    return json.dumps(
-        {"tool_name": werkzeug, "tool_input": tool_input, "cwd": str(cwd)}
-    )
+    return json.dumps({"tool_name": werkzeug, "tool_input": tool_input, "cwd": str(cwd)})
 
 
 @pytest.fixture()
@@ -57,16 +55,12 @@ def test_edit_relativ_aus_skill_ordner_wird_verweigert(home: Path) -> None:
 
 
 def test_edit_mit_tilde_wird_verweigert(home: Path) -> None:
-    ergebnis = _hook(
-        home, _json("MultiEdit", home, file_path="~/.claude/skills/to-spawn/x.py")
-    )
+    ergebnis = _hook(home, _json("MultiEdit", home, file_path="~/.claude/skills/to-spawn/x.py"))
     assert ergebnis.returncode == 2, ergebnis.stderr
 
 
 def test_write_ausserhalb_ist_erlaubt(home: Path) -> None:
-    ergebnis = _hook(
-        home, _json("Write", home, file_path=str(home / "repo" / "datei.py"))
-    )
+    ergebnis = _hook(home, _json("Write", home, file_path=str(home / "repo" / "datei.py")))
     assert ergebnis.returncode == 0, ergebnis.stderr
 
 
@@ -78,9 +72,7 @@ def test_bash_sed_i_in_skills_wird_verweigert(home: Path) -> None:
 
 
 def test_bash_skill_aufruf_mit_umleitung_nach_aussen_ist_erlaubt(home: Path) -> None:
-    befehl = (
-        "python3 ~/.claude/skills/to-spawn/to_spawn.py eintrag --ticket 1 > /tmp/log"
-    )
+    befehl = "python3 ~/.claude/skills/to-spawn/to_spawn.py eintrag --ticket 1 > /tmp/log"
     ergebnis = _hook(home, _json("Bash", home, command=befehl))
     assert ergebnis.returncode == 0, ergebnis.stderr
 
@@ -126,6 +118,7 @@ def test_path_replace_im_python_code_bleibt_verweigert(home: Path) -> None:
     ergebnis = _hook(home, _json("Bash", home, command=befehl))
     assert ergebnis.returncode == 2, ergebnis.stderr
 
+
 # --- #470: Text ist kein Befehl (Heredoc-Rumpf, mehrzeilige Zeichenkette) ---
 
 
@@ -157,6 +150,8 @@ def test_heredoc_als_code_fuer_shell_bleibt_verweigert(home: Path) -> None:
 def test_zeichenkette_als_code_fuer_shell_bleibt_verweigert(home: Path) -> None:
     befehl = 'sh -c "echo hi\nrm ~/.claude/skills/x"'
     assert _bash(home, befehl) == 2
+
+
 @pytest.mark.parametrize(
     "befehl",
     [
@@ -179,12 +174,12 @@ def test_scheinbarer_text_ist_befehl_bleibt_verweigert(home: Path, befehl: str) 
 @pytest.mark.parametrize(
     "befehl",
     [
-        "python3 -c 'print(1)\nopen(\"~/.claude/skills/x\",\"w\")'",
-        'python3 -c "print(1)\nopen(\'~/.claude/skills/x\',\'w\')"',
-        'python -c "import os; os.remove(\'~/.claude/skills/x\')"',
-        "python3 -uc 'print(1)\nopen(\"~/.claude/skills/x\",\"w\")'",
-        "python3 -c'print(1)\nopen(\"~/.claude/skills/x\",\"w\")'",
-        "cd ~/.claude/skills/to-spawn && python3 -c 'print(1)\nopen(\"x\",\"w\")'",
+        'python3 -c \'print(1)\nopen("~/.claude/skills/x","w")\'',
+        "python3 -c \"print(1)\nopen('~/.claude/skills/x','w')\"",
+        "python -c \"import os; os.remove('~/.claude/skills/x')\"",
+        'python3 -uc \'print(1)\nopen("~/.claude/skills/x","w")\'',
+        'python3 -c\'print(1)\nopen("~/.claude/skills/x","w")\'',
+        'cd ~/.claude/skills/to-spawn && python3 -c \'print(1)\nopen("x","w")\'',
         "python3 - <<EOF\nprint(1)\nEOF\nrm ~/.claude/skills/x",
         'python3 <<EOF\nopen("~/.claude/skills/x","w")\nEOF',
     ],
@@ -256,7 +251,7 @@ def test_harmlose_ersetzung_oder_einfache_anfuehrung_erlaubt(home: Path, befehl:
         "cat <<EOF\nit's $(rm ~/.claude/skills/x) don't\nEOF",
         "cat <<EOF\n# $(rm ~/.claude/skills/x)\nEOF",
         "cat <<EOF\n$\\\n(rm ~/.claude/skills/x)\nEOF",
-        "cat <<EOF\n$(python3 -c 'print(1)\nopen(\"~/.claude/skills/x\",\"w\")')\nEOF",
+        'cat <<EOF\n$(python3 -c \'print(1)\nopen("~/.claude/skills/x","w")\')\nEOF',
         "cat <<EOF\n$(echo hi > ~/.claude/skills/x)\nEOF",
         "cat <<EOF\nit's $(rm ~/.claude/skills/x) don't",
         'echo "a\n$(cat <<EOF\nit\'s $(rm ~/.claude/skills/x)\nEOF\n)"',

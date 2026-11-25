@@ -200,8 +200,16 @@ def live_tuer_prozess(tmp_path: Path) -> Iterator[tuple[subprocess.Popen[bytes],
     proxy = f'"{Path(sys.executable).as_posix()}" "{schlaf.as_posix()}"'
     prozess = subprocess.Popen(
         [
-            str(ssh), "-F", "none", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20",
-            "-o", f"ProxyCommand={proxy}", "beispiel-host",
+            str(ssh),
+            "-F",
+            "none",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=20",
+            "-o",
+            f"ProxyCommand={proxy}",
+            "beispiel-host",
             f"bash /opt/beispiel/scripts/server_tuer.sh live {marke}",
         ],
         stdin=subprocess.DEVNULL,
@@ -267,7 +275,9 @@ def test_programm_name_unter_linux_unveraendert(roh: str, erwartet: str) -> None
     assert prozessbaum.programm_name(roh, windows=False) == erwartet
 
 
-@pytest.mark.skipif(not WINDOWS, reason="Windows-Pfade zerlegt nur Windows so; Linux deckt test_programm_name_unter_linux_unveraendert")
+@pytest.mark.skipif(
+    not WINDOWS, reason="Windows-Pfade zerlegt nur Windows so; Linux deckt test_programm_name_unter_linux_unveraendert"
+)
 def test_alle_namensvergleiche_im_aufpasser_kennen_windows_namen() -> None:
     from to_spawn import aufpasser
 

@@ -202,9 +202,7 @@ def rot_signatur(kennungen: Sequence[str]) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
-def _ticket_text(
-    *, sha: str, exit_code: int, kennungen: Sequence[str], zeit: str, signatur: str
-) -> str:
+def _ticket_text(*, sha: str, exit_code: int, kennungen: Sequence[str], zeit: str, signatur: str) -> str:
     liste = "\n".join(f"- `{k}`" for k in kennungen) or "- (keine Einzelkennung ermittelt)"
     return (
         f"Skill-Installation wegen roter Test-Suite abgebrochen (alter Stand blieb unverändert).\n\n"
@@ -389,10 +387,7 @@ def ci_pruefen(
             zustand=l_zustand,
             quelle="github_actions",
             exit_code=1,
-            grund=(
-                f"GitHub-Actions-Lauf {label} für Stand {kurz}: "
-                f"{_lauf_text(CI_LINUX_JOB, l_detail, l_url)}"
-            ),
+            grund=(f"GitHub-Actions-Lauf {label} für Stand {kurz}: {_lauf_text(CI_LINUX_JOB, l_detail, l_url)}"),
             rote_kennungen=[f"ci:{CI_LINUX_JOB}:{l_detail}"],
             lauf_url=l_url,
         )
@@ -417,10 +412,7 @@ def ci_pruefen(
                 zustand=w_zustand,
                 quelle="github_actions",
                 exit_code=1,
-                grund=(
-                    f"GitHub-Actions-Lauf {label} für Stand {kurz}: "
-                    f"{_lauf_text(CI_WINDOWS_JOB, w_detail, w_url)}"
-                ),
+                grund=(f"GitHub-Actions-Lauf {label} für Stand {kurz}: {_lauf_text(CI_WINDOWS_JOB, w_detail, w_url)}"),
                 rote_kennungen=[f"ci:{CI_WINDOWS_JOB}:{w_detail}"],
                 lauf_url=w_url,
             )

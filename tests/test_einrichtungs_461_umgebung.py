@@ -37,9 +37,7 @@ def _claude_proc(ordner: Path, anzahl: int) -> Path:
     return ordner
 
 
-def test_probelauf_folgt_der_attrappe_nicht_dem_echten_rechner(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_probelauf_folgt_der_attrappe_nicht_dem_echten_rechner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from test_einrichtungs_ticket_410 import _spawn_srv_weg
 
     # (a) Fixture-Attrappe (leeres /proc): Probelauf grün.

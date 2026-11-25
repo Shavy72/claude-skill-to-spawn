@@ -20,9 +20,7 @@ SKRIPTE = Path(__file__).resolve().parent.parent / "skripte"
 
 def _lade_bau(monkeypatch: pytest.MonkeyPatch, repo: Path) -> types.ModuleType:
     monkeypatch.setenv("TO_SPAWN_REPO", str(repo))
-    spec = importlib.util.spec_from_file_location(
-        "bau_431_ohne_prompt", SKRIPTE / "bau.py"
-    )
+    spec = importlib.util.spec_from_file_location("bau_431_ohne_prompt", SKRIPTE / "bau.py")
     assert spec is not None and spec.loader is not None
     modul = importlib.util.module_from_spec(spec)
     sys.modules["bau_431_ohne_prompt"] = modul
@@ -46,9 +44,7 @@ def bau(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
         "load_default",
         lambda *_a, **_k: {"prompt_template": "TEMPLATE {ticket}"},
     )
-    monkeypatch.setattr(
-        modul, "find_manifest", lambda _t: ({"spec": "9"}, {"title": "Titel"})
-    )
+    monkeypatch.setattr(modul, "find_manifest", lambda _t: ({"spec": "9"}, {"title": "Titel"}))
     monkeypatch.setattr(modul, "build_prompt", lambda *_a, **_k: "GRUND-PROMPT")
     monkeypatch.setattr(modul, "known_skill_names", lambda: set())
     monkeypatch.setattr(modul, "mcp_catalog", dict)
@@ -56,9 +52,7 @@ def bau(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     monkeypatch.setattr(modul.nest, "sandbox_start", lambda *_a, **_k: [])
     monkeypatch.setattr(modul, "auf_speicher_warten", lambda *_a, **_k: None)
     monkeypatch.setattr(modul.vertrauen, "still_sicherstellen", lambda *_a, **_k: None)
-    monkeypatch.setattr(
-        modul, "umzug_anfragen_aufraeumen", lambda _t: tmp_path / "anfrage.json"
-    )
+    monkeypatch.setattr(modul, "umzug_anfragen_aufraeumen", lambda _t: tmp_path / "anfrage.json")
     return modul
 
 
@@ -112,9 +106,7 @@ def test_staffel_ohne_prompt_runde1_leer_ab_runde2_mit_prompt(
     def fake_start(cmd: list[str], umzug_datei: Path) -> tuple[int, dict | None]:
         befehle.append(list(cmd))
         for datei in umzug_datei.parent.glob("prompt-runde*.txt"):
-            prompt_dateien[int(datei.stem.removeprefix("prompt-runde"))] = (
-                datei.read_text(encoding="utf-8")
-            )
+            prompt_dateien[int(datei.stem.removeprefix("prompt-runde"))] = datei.read_text(encoding="utf-8")
         return 0, None
 
     monkeypatch.setattr(bau, "starte_session", fake_start)

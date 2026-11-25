@@ -32,9 +32,7 @@ def _git(cwd: Path, *args: str) -> str:
     ).stdout.strip()
 
 
-def _skill_klon_mit_zweig(
-    basis: Path, name: str, zweig: str
-) -> tuple[Path, Path]:
+def _skill_klon_mit_zweig(basis: Path, name: str, zweig: str) -> tuple[Path, Path]:
     """Legt bare-``origin`` + Klon + Worktree mit einem ungesicherten Commit auf ``zweig`` an."""
     origin = basis / f"{name}-origin.git"
     _git(basis, "init", "-q", "--bare", "-b", "main", str(origin))
@@ -74,16 +72,12 @@ def _installierter_skill(tmp_path: Path, klon: Path | None) -> Path:
             "klon": str(klon),
             "dirty": "nein",
         }
-        (installiert / skill_stand.STEMPEL).write_text(
-            json.dumps(daten, indent=2) + "\n", encoding="utf-8"
-        )
+        (installiert / skill_stand.STEMPEL).write_text(json.dumps(daten, indent=2) + "\n", encoding="utf-8")
     return installiert
 
 
 @pytest.fixture
-def ohne_standard_klon(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> dict[str, Path]:
+def ohne_standard_klon(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     """Isolierte Umgebung ohne ``~/claude-skill-to-spawn`` und ohne Env-Übersteuerung der Zweig-Repos."""
     heim = tmp_path / "heim"
     heim.mkdir()

@@ -109,7 +109,7 @@ braucht_npm = pytest.mark.skipif(shutil.which("npm") is None, reason="npm nicht 
 @braucht_npm
 def test_node_adapter_auswahl_greift_fuer_blatt_aenderung(tmp_path: Path) -> None:
     ort = _node_repo(tmp_path / "node_ok", mit_vitest=True)
-    (ort / "src" / "format.js").write_text('export const euro = (x) => `${x.toFixed(2)} EUR`;\n', encoding="utf-8")
+    (ort / "src" / "format.js").write_text("export const euro = (x) => `${x.toFixed(2)} EUR`;\n", encoding="utf-8")
     _git_run(ort, "commit", "-qam", "refaktoriert format")
 
     urteil = pruef.pruefen(ort, "base", "HEAD")

@@ -240,9 +240,7 @@ def test_installer_rufen_ticket_repo_nachziehen_auf() -> None:
 # --- (3) Aufpasser-Log nennt je Takt die Gründe fürs Bleiben gezählt -----------------
 
 
-def test_aufpasser_log_nennt_bleib_gruende_gezaehlt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_aufpasser_log_nennt_bleib_gruende_gezaehlt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     ergebnisse = [
         hausmeister.Ergebnis(tmp_path / "wt-1", "gelöscht", "Ticket #1 zu", 1),
         hausmeister.Ergebnis(tmp_path / "wt-12", "bleibt", "Ticket #12 noch offen", 12),

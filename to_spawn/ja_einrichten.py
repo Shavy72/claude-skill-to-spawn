@@ -34,9 +34,7 @@ def _ist_sperre(hook: object) -> bool:
     return isinstance(hook, dict) and briefkasten.ist_sperre_befehl(hook.get("command"))
 
 
-def sperre_eintragen(
-    claude_dir: Path, python: str, cli: Path = CLI, zeit: str | None = None
-) -> bool:
+def sperre_eintragen(claude_dir: Path, python: str, cli: Path = CLI, zeit: str | None = None) -> bool:
     """Hook eintragen. True = geschrieben, False = stand schon drin."""
     datei = claude_dir / "settings.json"
     daten: dict = {}
@@ -75,10 +73,7 @@ def sperre_eintragen(
                     datei,
                     nr,
                 )
-    befehl = " ".join(
-        shlex.quote(t)
-        for t in (Path(python).as_posix(), cli.as_posix(), briefkasten.JA_SPERRE_HOOK)
-    )
+    befehl = " ".join(shlex.quote(t) for t in (Path(python).as_posix(), cli.as_posix(), briefkasten.JA_SPERRE_HOOK))
     neuer_block = {"matcher": MATCHER, "hooks": [{"type": "command", "command": befehl}]}
     vorher = json.dumps(blocks)
     # Genau ein Eintrag der Sperre: jeder bestehende (auch toter oder auf den Klon zeigende) wird entfernt,
@@ -107,9 +102,7 @@ def sperre_eintragen(
         stempel = zeit or datetime.now().strftime("%Y%m%d-%H%M%S")
         shutil.copy2(datei, datei.with_name(f"settings.json.bak-{stempel}"))
     tmp = datei.with_name("settings.json.neu")
-    tmp.write_text(
-        json.dumps(daten, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
+    tmp.write_text(json.dumps(daten, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     os.replace(tmp, datei)
     return True
 

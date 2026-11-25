@@ -24,11 +24,7 @@ log = logging.getLogger("to_spawn.hindernis")
 
 def _pfad() -> Path:
     roh = os.environ.get("TO_SPAWN_HINDERNIS_LOG")
-    return (
-        Path(roh).expanduser()
-        if roh
-        else Path.home() / ".claude" / "to-spawn" / "hindernisse.jsonl"
-    )
+    return Path(roh).expanduser() if roh else Path.home() / ".claude" / "to-spawn" / "hindernisse.jsonl"
 
 
 def _wer() -> str:

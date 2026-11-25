@@ -63,9 +63,7 @@ BEFEHLE: tuple[tuple[str, ...], ...] = (
     ("builder", "prune", "-a", "-f", "--filter", MINDEST_ALTER),
 )
 
-Ausgang = Literal[
-    "freigegeben", "fehler", "nicht_faellig", "staging_baut", "kein_server"
-]
+Ausgang = Literal["freigegeben", "fehler", "nicht_faellig", "staging_baut", "kein_server"]
 _FREI = re.compile(r"Total(?: reclaimed space)?:\s*(\S+)", re.IGNORECASE)
 
 
@@ -173,9 +171,7 @@ def _letzter_lauf(stand: Path) -> float | None:
     except FileNotFoundError:
         return None
     except (OSError, UnicodeDecodeError) as fehler:
-        log.warning(
-            "Docker-Reste: %s unlesbar (%s) — gilt als nie gelaufen", stand, fehler
-        )
+        log.warning("Docker-Reste: %s unlesbar (%s) — gilt als nie gelaufen", stand, fehler)
         return None
     for roh in reversed(zeilen):
         try:

@@ -101,11 +101,7 @@ class Welt:
     def zeilen(self) -> list[dict]:
         if not self.log.is_file():
             return []
-        return [
-            json.loads(z)
-            for z in self.log.read_text(encoding="utf-8").splitlines()
-            if z.strip()
-        ]
+        return [json.loads(z) for z in self.log.read_text(encoding="utf-8").splitlines() if z.strip()]
 
     def im_bare(self, *args: str) -> str:
         return git(self.bare, *args)
@@ -119,9 +115,7 @@ def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Welt:
     heim = tmp_path / "heim"
     (heim / "wt").mkdir(parents=True)
     bare = tmp_path / "remote.git"
-    subprocess.run(
-        ["git", "init", "-q", "--bare", "-b", "master", str(bare)], check=True
-    )
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "master", str(bare)], check=True)
     gitconfig = tmp_path / "gitconfig"
     gitconfig.write_text(
         f"[user]\n\tname = Test\n\temail = t@example.org\n[init]\n\tdefaultBranch = master\n"
@@ -327,10 +321,7 @@ def test_loeschen_nur_im_hausmeister() -> None:
         if rel not in ausnahmen and any(m in text for m in muster):
             treffer.append(rel)
     assert not treffer, f"Löschen außerhalb des Hausmeisters: {treffer}"
-    assert any(
-        m in (SKILL / "to_spawn" / "hausmeister.py").read_text(encoding="utf-8")
-        for m in muster
-    )
+    assert any(m in (SKILL / "to_spawn" / "hausmeister.py").read_text(encoding="utf-8") for m in muster)
 
 
 def test_zweig_loeschen_nur_im_hausmeister() -> None:
@@ -589,9 +580,7 @@ def test_s6_cwd_unlesbar_bleibt(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> 
 
 
 # S7
-def test_s7_sichern_liefert_none_bleibt(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_s7_sichern_liefert_none_bleibt(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     wt = welt.worktree(44, schmutzig=True)
     welt.ticket(44, "CLOSED", 48)
     monkeypatch.setattr(aufpasser, "sichern", lambda *a, **kw: None)
@@ -600,9 +589,7 @@ def test_s7_sichern_liefert_none_bleibt(
     assert (wt / "geaendert.txt").is_file()
 
 
-def test_s7_neue_datei_nach_sicherung_bleibt(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_s7_neue_datei_nach_sicherung_bleibt(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     wt = welt.worktree(45, schmutzig=True)
     welt.ticket(45, "CLOSED", 48)
     echt = aufpasser.sichern
@@ -684,9 +671,7 @@ def test_s8_cli_exit_nur_bei_fehler_ungleich_null(welt: Welt) -> None:
 
 
 # S9
-def test_s9_log_nicht_schreibbar_bleibt(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_s9_log_nicht_schreibbar_bleibt(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     wt = welt.worktree(54)
     welt.ticket(54, "CLOSED", 48)
     (welt.tmp / "keinordner").write_text("", encoding="utf-8")
@@ -720,9 +705,7 @@ def test_c4_sauberer_baum_ungepushter_head_wird_gesichert(welt: Welt) -> None:
 
 
 @pytest.mark.parametrize("datei", ["mein_zugang.txt", "zugang/a.txt", "x.pem", "x.key"])
-def test_c4_geheimnis_muster_bleibt_und_nie_in_sicherung(
-    welt: Welt, datei: str
-) -> None:
+def test_c4_geheimnis_muster_bleibt_und_nie_in_sicherung(welt: Welt, datei: str) -> None:
     wt = welt.worktree(56)
     (wt / datei).parent.mkdir(exist_ok=True)
     (wt / datei).write_text("geheim\n", encoding="utf-8")

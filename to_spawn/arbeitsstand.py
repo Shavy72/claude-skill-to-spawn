@@ -125,9 +125,7 @@ def _sperr_datei(repo: Path) -> Path | None:
     if code != 0 or not ort:
         return None
     pfad = Path(ort)
-    return (
-        pfad if pfad.is_absolute() else repo / pfad
-    ) / "to-spawn-arbeitsstand.sperre"
+    return (pfad if pfad.is_absolute() else repo / pfad) / "to-spawn-arbeitsstand.sperre"
 
 
 def hinweis(repo: Path) -> str | None:
@@ -148,9 +146,7 @@ def sicherstellen(repo: Path, *, nachziehen: bool = True) -> Stand:
         return Stand(AKTUELL, "Stand-Check im Test übersprungen", 0)
     datei = _sperr_datei(repo)
     if datei is None:
-        return Stand(
-            ABBRUCH, f"Stand nicht prüfbar: {repo} ist kein git-Arbeitsordner."
-        )
+        return Stand(ABBRUCH, f"Stand nicht prüfbar: {repo} ist kein git-Arbeitsordner.")
     warten = SPERRE_WARTEN_S if nachziehen else SPERRE_WARTEN_PRUEFEN_S
     try:
         with sperre.halte(datei, warten=warten) as gehalten:
@@ -162,9 +158,7 @@ def sicherstellen(repo: Path, *, nachziehen: bool = True) -> Stand:
                 )
             return _pruefen_und_nachziehen(repo, nachziehen)
     except OSError as fehler:
-        return Stand(
-            ABBRUCH, f"Stand nicht prüfbar: Sperre {datei} nicht nutzbar ({fehler})."
-        )
+        return Stand(ABBRUCH, f"Stand nicht prüfbar: Sperre {datei} nicht nutzbar ({fehler}).")
 
 
 def _fetch_alter(repo: Path) -> str:
@@ -225,18 +219,12 @@ def _pruefen_und_nachziehen(repo: Path, nachziehen: bool) -> Stand:
         return Stand(VERALTET, f"{vorn}. Tun: {nachzieh_befehl}", hinter)
     code, aus = _git(repo, "merge", "--ff-only", "--no-autostash", "--quiet", ziel)
     if code != 0:
-        return Stand(
-            ABBRUCH, _merge_abbruch(repo, ziel, vorn, nachzieh_befehl, aus), hinter
-        )
+        return Stand(ABBRUCH, _merge_abbruch(repo, ziel, vorn, nachzieh_befehl, aus), hinter)
     log.info("%s — %d Commits nachgezogen.", vorn, hinter)
-    return Stand(
-        NACHGEZOGEN, f"Arbeitsordner {hinter} Commits auf {ziel} nachgezogen", hinter
-    )
+    return Stand(NACHGEZOGEN, f"Arbeitsordner {hinter} Commits auf {ziel} nachgezogen", hinter)
 
 
-def _merge_abbruch(
-    repo: Path, ziel: str, vorn: str, nachzieh_befehl: str, meldung: str
-) -> str:
+def _merge_abbruch(repo: Path, ziel: str, vorn: str, nachzieh_befehl: str, meldung: str) -> str:
     """Abbruch-Text nach gescheitertem ``merge --ff-only``: Grund aus Historie bzw. git-Meldung."""
     code, voraus = _git(repo, "rev-list", "--count", f"{ziel}..HEAD")
     if code == 0 and voraus.isdigit() and int(voraus) > 0:
@@ -245,13 +233,9 @@ def _merge_abbruch(
             "klären (nicht rebasen/stashen im geteilten Ordner), dann erneut starten."
         )
     # git listet betroffene Dateien eingerückt (Tab) — unabhängig von der Sprache der Meldung.
-    dateien = [
-        z.strip() for z in meldung.splitlines() if z.startswith("	") and z.strip()
-    ]
+    dateien = [z.strip() for z in meldung.splitlines() if z.startswith("	") and z.strip()]
     if dateien:
-        liste = ", ".join(dateien[:5]) + (
-            f" (+{len(dateien) - 5} weitere)" if len(dateien) > 5 else ""
-        )
+        liste = ", ".join(dateien[:5]) + (f" (+{len(dateien) - 5} weitere)" if len(dateien) > 5 else "")
         return (
             f"{vorn} — nicht vorspulbar: Nachziehen würde lokal geänderte oder unversionierte "
             f"Dateien überschreiben: {liste}. Tun: diese Dateien sichern (committen oder "

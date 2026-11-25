@@ -78,14 +78,10 @@ def test_sichert_uebergabe_log_und_muster_nur_bei_aenderung(
     ]
     assert len(erg.kopiert) == 3
     assert us.sichern().kopiert == []  # unverändert → nichts neu geschrieben
-    (welt["repo"] / ".claude-handoff-loop.md").write_text(
-        "Übergabe 2\n", encoding="utf-8"
-    )
+    (welt["repo"] / ".claude-handoff-loop.md").write_text("Übergabe 2\n", encoding="utf-8")
     zweit = us.sichern()
     assert [p.name for p in zweit.kopiert] == [".claude-handoff-loop.md"]
-    assert (erg.ziel / "leit__claude-handoff-loop.md").read_text(
-        encoding="utf-8"
-    ) == "Übergabe 2\n"
+    assert (erg.ziel / "leit__claude-handoff-loop.md").read_text(encoding="utf-8") == "Übergabe 2\n"
 
 
 def test_ausdrueckliche_datei_wird_mitgesichert(welt: dict[str, Path]) -> None:
@@ -93,19 +89,12 @@ def test_ausdrueckliche_datei_wird_mitgesichert(welt: dict[str, Path]) -> None:
     handoff.parent.mkdir(parents=True)
     handoff.write_text("Aufseher\n", encoding="utf-8")
     erg = us.sichern([handoff])
-    assert (
-        erg.ziel is not None
-        and (erg.ziel / "handoffs__HANDOFF_x_waechter_7.md").is_file()
-    )
+    assert erg.ziel is not None and (erg.ziel / "handoffs__HANDOFF_x_waechter_7.md").is_file()
 
 
-def test_ziel_im_skill_repo_wird_verweigert(
-    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_ziel_im_skill_repo_wird_verweigert(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(us, "_skill_wurzel", lambda: welt["tmp"] / "skill")
-    monkeypatch.setenv(
-        us.UMGEBUNG_ZIEL, str(welt["tmp"] / "skill" / "docs" / "sicherung")
-    )
+    monkeypatch.setenv(us.UMGEBUNG_ZIEL, str(welt["tmp"] / "skill" / "docs" / "sicherung"))
     erg = us.sichern()
     assert erg.ziel is None and erg.kopiert == []
     assert not (welt["tmp"] / "skill").exists()
@@ -132,9 +121,7 @@ def test_ziel_in_oeffentlichem_klon_wird_verweigert_privater_tresor_nicht(
     assert not us.ist_oeffentlich(tresor / "to-spawn" / "sicherung")
 
 
-def test_vorgabe_ziel_nie_im_oeffentlichen_repo(
-    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_vorgabe_ziel_nie_im_oeffentlichen_repo(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
     """Rot, sobald eine Vorgabe (ohne Konfig) ins Skill-Repo zeigt."""
     monkeypatch.delenv(us.UMGEBUNG_ZIEL)
     ohne_tresor = us.ziel_ordner()
@@ -149,9 +136,7 @@ def test_vorgabe_ziel_nie_im_oeffentlichen_repo(
         assert not ziel.resolve().is_relative_to(WURZEL)
 
 
-def test_zweige_hochladen_nie_ticket_oder_hauptzweig(
-    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_zweige_hochladen_nie_ticket_oder_hauptzweig(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
     tmp = welt["tmp"]
     origin = tmp / "origin.git"
     _git(tmp, "init", "-q", "--bare", "-b", "main", str(origin))
@@ -176,9 +161,7 @@ def test_zweige_hochladen_nie_ticket_oder_hauptzweig(
     assert erg.hochgeladen == ["skill:l5/arbeit"], erg.fehler
     entfernt = _git(origin, "for-each-ref", "--format=%(refname:short)", "refs/heads")
     assert sorted(entfernt.split()) == ["l5/arbeit", "main"]
-    assert (
-        _git(origin, "rev-list", "--count", "main") == "1"
-    )  # main lokal nicht hochgeladen
+    assert _git(origin, "rev-list", "--count", "main") == "1"  # main lokal nicht hochgeladen
     assert us.sichern().hochgeladen == []  # nichts Neues → kein zweiter Push
 
 
@@ -266,9 +249,7 @@ def test_juengster_main_stand_erkennt_squash_merge(tmp_path: Path) -> None:
     assert not us.stand_veraltet(aktuell, stand)
 
 
-def test_zweig_repo_pfad_mit_leerzeichen(
-    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_zweig_repo_pfad_mit_leerzeichen(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
     """Repo-Pfad mit Leerzeichen (z. B. Windows-Benutzerordner) wird in ``UMGEBUNG_ZWEIG_REPOS`` nicht zerschnitten."""
     basis = welt["tmp"] / "mein ordner"
     basis.mkdir()

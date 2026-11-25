@@ -68,15 +68,11 @@ def _gh_labels(w: Welt, monkeypatch: pytest.MonkeyPatch, daten: dict[str, list[s
 # --- 1. Ursache von „Fenster gleich wieder weg“ lesbar im Log -----------------
 
 
-def test_288_aufseher_start_fehlgeschlagen_grund_lesbar_im_log(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_288_aufseher_start_fehlgeschlagen_grund_lesbar_im_log(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     """Abnahme 1 (Aufseher-Fenster): scheitert der Start, stehen Fehlertext, Exit-Code
     und Log-Pfad aus ``wache_log`` lesbar im Aufpasser-Log und im Spec-Kommentar."""
     monkeypatch.setenv("GH_STUB_UNTER", f"{SPEC}:9002")
-    (welt.repo / ".to-spawn" / "config.json").write_text(
-        '{"speicher": {"staffel_s": 0}}', encoding="utf-8"
-    )
+    (welt.repo / ".to-spawn" / "config.json").write_text('{"speicher": {"staffel_s": 0}}', encoding="utf-8")
     # Platzhalter hält die tmux-Sitzung, während das Aufseher-Fenster fehlt.
     tmux("new-window", "-d", "-t", f"={SITZUNG}", "-n", "platzhalter", "-c", str(welt.repo), "sleep 3600")
     tmux("kill-window", "-t", f"={SITZUNG}:wache {SPEC}")
@@ -87,9 +83,7 @@ def test_288_aufseher_start_fehlgeschlagen_grund_lesbar_im_log(
     log_datei = aufpasser.wache_log(welt.repo, SPEC)
     assert log_datei.is_file()
     fehler_zeilen = [
-        z
-        for z in welt.log().splitlines()
-        if "Aufseher-Fenster: Start fehlgeschlagen (Fenster gleich wieder weg)" in z
+        z for z in welt.log().splitlines() if "Aufseher-Fenster: Start fehlgeschlagen (Fenster gleich wieder weg)" in z
     ]
     assert len(fehler_zeilen) == 1, welt.log()
     assert "Manifest spec-9001.json fehlt" in fehler_zeilen[0]
@@ -103,9 +97,7 @@ def test_288_aufseher_start_fehlgeschlagen_grund_lesbar_im_log(
     assert "Exit 2" in treffer[0]
 
 
-def test_288_bau_start_fehlgeschlagen_liest_nur_neue_log_zeilen(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_288_bau_start_fehlgeschlagen_liest_nur_neue_log_zeilen(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     """Abnahme 1 (Bau-Fenster): alte Zeilen im Fenster-Log werden übersprungen; nur
     der Grund des aktuellen Fehlschlags landet im Aufpasser-Log und Kommentar."""
     monkeypatch.setenv("GH_STUB_UNTER", f"{SPEC}:9002")
@@ -115,14 +107,12 @@ def test_288_bau_start_fehlgeschlagen_liest_nur_neue_log_zeilen(
 
     vorlage = (
         f"sh -c 'echo NEUER_FEHLER_9002 >> {log_datei}; "
-        f"echo \"2026-11-25T12:00:00 bau.py #9002 Exit 2\" >> {log_datei}; exit 2'"
+        f'echo "2026-11-25T12:00:00 bau.py #9002 Exit 2" >> {log_datei}; exit 2\''
     )
     assert welt.lauf("--bau-vorlage", vorlage) == 0
 
     fehler_zeilen = [
-        z
-        for z in welt.log().splitlines()
-        if "#9002: Start fehlgeschlagen (Fenster gleich wieder weg)" in z
+        z for z in welt.log().splitlines() if "#9002: Start fehlgeschlagen (Fenster gleich wieder weg)" in z
     ]
     assert len(fehler_zeilen) == 1, welt.log()
     assert "NEUER_FEHLER_9002" in fehler_zeilen[0]
@@ -202,9 +192,7 @@ def test_288_aufseher_anderer_rechner_kein_zweitstart_und_eine_zeile(
     assert f"wache-{SPEC}" not in (welt.stand().get("starts") or {})
 
     zeilen = [
-        z
-        for z in welt.log().splitlines()
-        if f"spec {SPEC}:" in z and "Aufseher" in z and "kein zweiter Start" in z
+        z for z in welt.log().splitlines() if f"spec {SPEC}:" in z and "Aufseher" in z and "kein zweiter Start" in z
     ]
     assert len(zeilen) == 1, welt.log()
     assert erwartet_teil in zeilen[0], zeilen[0]

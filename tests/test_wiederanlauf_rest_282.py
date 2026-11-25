@@ -243,9 +243,7 @@ def test_abschluss_meldet_einmal_bis_das_fenster_sich_bewegt(tmp_path: Path, mon
         ('Behauptung "Klickweg entfällt" ist falsch\n', False),
     ],
 )
-def test_entfaellt_nur_mit_erlaubter_fortsetzung(
-    tmp_path: Path, text: str, entfaellt: bool
-) -> None:
+def test_entfaellt_nur_mit_erlaubter_fortsetzung(tmp_path: Path, text: str, entfaellt: bool) -> None:
     (tmp_path / "7.md").write_text(text, encoding="utf-8")
     assert belege.auswerten(tmp_path, "7").klickweg_entfaellt is entfaellt
 

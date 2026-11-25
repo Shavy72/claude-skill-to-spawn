@@ -1172,7 +1172,9 @@ def test_staging_log_fehlt_auf_server_ist_lesbar_und_meldet_verstoss(
     _commit(repo, "feat: Seite (#901)", {"web/seite.py": "x = 1\n"})
     _ssh_zaehler(
         monkeypatch,
-        lambda b: subprocess.CompletedProcess(b, 1, stdout="", stderr="tail: cannot open 'x': No such file or directory"),
+        lambda b: subprocess.CompletedProcess(
+            b, 1, stdout="", stderr="tail: cannot open 'x': No such file or directory"
+        ),
     )
     eigene = capo_mod.ticket_commits(capo_mod.alle_commits(repo, "HEAD"), 901)
     vps = {

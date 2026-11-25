@@ -130,9 +130,7 @@ EINORDNUNG = [
 
 
 @pytest.mark.parametrize(("name", "beschreibung", "erwartet"), EINORDNUNG)
-def test_einordnung_je_kategorie(
-    repo: Path, heim: Path, name: str, beschreibung: str, erwartet: str
-) -> None:
+def test_einordnung_je_kategorie(repo: Path, heim: Path, name: str, beschreibung: str, erwartet: str) -> None:
     _skill(heim / ".claude" / "skills" / name, name, beschreibung)
     inv = _erstelle(repo, heim)
     w = _werkzeug(inv, name)
@@ -284,9 +282,7 @@ def test_env_werte_landen_nie_in_ausgabe_oder_datei(repo: Path, heim: Path, tmp_
     assert "GEMINI_API_KEY" in inv.als_dict()["projekt"]["env_schluessel"]
 
 
-def test_setup_zeilen_mit_fehlgrund_nur_fuer_fehlendes(
-    repo: Path, heim: Path, tmp_path: Path
-) -> None:
+def test_setup_zeilen_mit_fehlgrund_nur_fuer_fehlendes(repo: Path, heim: Path, tmp_path: Path) -> None:
     pfad = _pfad_mit(tmp_path, "ffmpeg")
     inv = _erstelle(repo, heim, environ={"PATH": pfad})
     zeilen = {z.name: z for z in inv.setup_zeilen}
@@ -308,9 +304,7 @@ def test_keine_setup_zeile_wenn_alles_da(repo: Path, heim: Path, tmp_path: Path)
     assert inv.setup_zeilen == []
 
 
-def test_codex_zaehlt_als_da_mit_befehl_und_schluessel(
-    repo: Path, heim: Path, tmp_path: Path
-) -> None:
+def test_codex_zaehlt_als_da_mit_befehl_und_schluessel(repo: Path, heim: Path, tmp_path: Path) -> None:
     # #209 F6: früher reichte der Befehl allein; jetzt braucht codex zusätzlich
     # OPENAI_API_KEY oder ~/.codex/auth.json (Gegenprobe: test_f6_codex_…).
     pfad = _pfad_mit(tmp_path, "codex")
@@ -345,9 +339,7 @@ def _cli(repo: Path, heim: Path, *args: str) -> subprocess.CompletedProcess[str]
     )
 
 
-def test_abwahl_bleibt_beim_zweiten_lauf_und_anwahl_hebt_auf(
-    repo: Path, heim: Path, tmp_path: Path
-) -> None:
+def test_abwahl_bleibt_beim_zweiten_lauf_und_anwahl_hebt_auf(repo: Path, heim: Path, tmp_path: Path) -> None:
     for name in ("mp-tdd", "graphify", "ffmpeg-production"):
         _skill(heim / ".claude" / "skills" / name, name, "irgendwas")
     ziel = tmp_path / "aus" / "werkzeuge.json"
@@ -497,9 +489,7 @@ def test_f1_kaputte_werkzeuge_json_exit_4_und_bleibt_unberuehrt(
     assert ziel.read_text(encoding="utf-8") == inhalt
 
 
-def test_f1_abwahl_ausserhalb_des_katalogs_bleibt_erhalten(
-    repo: Path, heim: Path, tmp_path: Path
-) -> None:
+def test_f1_abwahl_ausserhalb_des_katalogs_bleibt_erhalten(repo: Path, heim: Path, tmp_path: Path) -> None:
     _skill(heim / ".claude" / "skills" / "mp-tdd", "mp-tdd", "Test")
     ziel = tmp_path / "werkzeuge.json"
     ziel.write_text(json.dumps({"abgewaehlt": ["weg-skill", "mp-tdd"]}), encoding="utf-8")
@@ -567,9 +557,7 @@ def test_f3_projekt_skills_und_agenten_aus_dem_repo(repo: Path, heim: Path) -> N
 # --- F4: Historie fehlt / leer ------------------------------------------------------------
 
 
-def test_f4_historie_fehlt_warnung_und_toter_winkel(
-    repo: Path, heim: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_f4_historie_fehlt_warnung_und_toter_winkel(repo: Path, heim: Path, caplog: pytest.LogCaptureFixture) -> None:
     ordner = heim / ".claude" / "projects" / _slug(repo)
     with caplog.at_level("WARNING", logger="to_spawn.inventur"):
         inv = _erstelle(repo, heim)
@@ -667,9 +655,7 @@ def test_f6_codex_befehl_allein_reicht_nicht(repo: Path, heim: Path, tmp_path: P
 # --- F7: Historie wird gestreamt ----------------------------------------------------------
 
 
-def test_f7_historie_zeilenweise_ohne_read_text(
-    repo: Path, heim: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f7_historie_zeilenweise_ohne_read_text(repo: Path, heim: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     ordner = heim / ".claude" / "projects" / _slug(repo)
     ordner.mkdir(parents=True)
     (ordner / "s.jsonl").write_text(_tool_use("Skill", {"skill": "x"}) + "\n", "utf-8")
@@ -712,10 +698,7 @@ EINORDNUNG_F8 = [
     ("grill-me", "A relentless interview to sharpen a plan or design.", "zweitmeinung"),
     (
         "grill-with-docs",
-        (
-            "A relentless interview to sharpen a plan or design, which also creates docs "
-            "(ADR's and glossary) as we go."
-        ),
+        ("A relentless interview to sharpen a plan or design, which also creates docs (ADR's and glossary) as we go."),
         "zweitmeinung",
     ),
     (
@@ -741,10 +724,7 @@ EINORDNUNG_F8 = [
     ),
     (
         "fable-1080",
-        (
-            "PFLICHT-Protokoll auf Fable 5 bei Dev-Tasks: Fable plant+reviewt, "
-            "executor-opus/-sonnet bauen."
-        ),
+        ("PFLICHT-Protokoll auf Fable 5 bei Dev-Tasks: Fable plant+reviewt, executor-opus/-sonnet bauen."),
         "steuerung",
     ),
     (
@@ -757,10 +737,7 @@ EINORDNUNG_F8 = [
     ),
     (
         "writing-for-agents",
-        (
-            "Writing documents for agents. Use when creating or editing skills, or modifying "
-            "AGENTS.md or CLAUDE.md."
-        ),
+        ("Writing documents for agents. Use when creating or editing skills, or modifying AGENTS.md or CLAUDE.md."),
         "kontext",
     ),
     ("prototype", "Build a throwaway prototype to answer a design question.", "bauen"),
@@ -769,9 +746,7 @@ EINORDNUNG_F8 = [
 
 
 @pytest.mark.parametrize(("name", "beschreibung", "erwartet"), EINORDNUNG_F8)
-def test_f8_einordnung_echte_faelle(
-    repo: Path, heim: Path, name: str, beschreibung: str, erwartet: str
-) -> None:
+def test_f8_einordnung_echte_faelle(repo: Path, heim: Path, name: str, beschreibung: str, erwartet: str) -> None:
     _skill(heim / ".claude" / "skills" / name, name, beschreibung)
     inv = _erstelle(repo, heim)
     w = _werkzeug(inv, name)

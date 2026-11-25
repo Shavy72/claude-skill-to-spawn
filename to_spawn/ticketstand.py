@@ -124,7 +124,9 @@ def tabelle(spec: int, zeilen: list[Zeile], uhr: str) -> str:
     zaehler: dict[str, int] = {}
     for z in zeilen:
         zaehler[z.zustand] = zaehler.get(z.zustand, 0) + 1
-    rest = " · ".join(f"{zaehler[k]} {k}" for k in (FERTIG_GEBAUT, LAEUFT, WARTET, BLOCKIERT, CHECKPOINT) if zaehler.get(k))
+    rest = " · ".join(
+        f"{zaehler[k]} {k}" for k in (FERTIG_GEBAUT, LAEUFT, WARTET, BLOCKIERT, CHECKPOINT) if zaehler.get(k)
+    )
     kopf = (
         f"**Ticketstand Spec #{spec}: {fertig} von {len(zeilen)} fertig**"
         + (f" · {rest}" if rest else "")

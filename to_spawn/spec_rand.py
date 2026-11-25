@@ -108,16 +108,13 @@ def anhaengen(
     elif trocken:
         return Ergebnis(
             0,
-            [f"[trocken] #{n} an Spec #{s} — würde:"]
-            + [f"  {x.text}" for x in schritte],
+            [f"[trocken] #{n} an Spec #{s} — würde:"] + [f"  {x.text}" for x in schritte],
         )
     else:
         zeilen = []
         for schritt in schritte:
             if not schritt.ausfuehren():
-                zeilen.append(
-                    f"FEHLER: {schritt.text} gescheitert — erneut aufrufen, Erledigtes wird übersprungen."
-                )
+                zeilen.append(f"FEHLER: {schritt.text} gescheitert — erneut aufrufen, Erledigtes wird übersprungen.")
                 return Ergebnis(EXIT_FEHLER, zeilen)
             zeilen.append(f"ok  {schritt.text}")
     if not pruefen:
@@ -147,9 +144,7 @@ def _planen(
         raise _Abbruch("gh fehlt — GitHub-CLI installieren, `gh auth status` prüfen")
     slug = gh.repo_aus_origin(repo)
     if not slug:
-        raise _Abbruch(
-            "kein GitHub-Repo erkannt (origin fehlt oder zeigt nicht auf github.com)"
-        )
+        raise _Abbruch("kein GitHub-Repo erkannt (origin fehlt oder zeigt nicht auf github.com)")
     if n == s or n in blocker:
         raise _Abbruch(f"#{n} kann nicht an sich selbst hängen")
     label = manifest.checkpoint_label(konfig)
@@ -163,9 +158,7 @@ def _planen(
 
     spec_daten = hole_issue(s)
     if not _offen(spec_daten):
-        raise _Abbruch(
-            f"Spec #{s} ist geschlossen — kein Nachtrag an eine fertige Spec"
-        )
+        raise _Abbruch(f"Spec #{s} ist geschlossen — kein Nachtrag an eine fertige Spec")
     ticket_daten = hole_issue(n)
 
     datei = manifest.manifest_pfad(repo, s)
@@ -175,9 +168,7 @@ def _planen(
         daten = {"spec": int(s) if s.isdigit() else s, "tickets": {}}
     except (OSError, ValueError) as fehler:
         raise _Abbruch(f"Manifest {datei.name} unlesbar ({fehler})") from fehler
-    neu = _eintrag(
-        daten["tickets"].get(n), ticket_daten, n, schaetzung_k, umfang, dateien
-    )
+    neu = _eintrag(daten["tickets"].get(n), ticket_daten, n, schaetzung_k, umfang, dateien)
     if fehler_eintrag := manifest.pruefe_eintrag(n, neu, konfig):
         raise _Abbruch("; ".join(fehler_eintrag))
 
@@ -193,21 +184,13 @@ def _planen(
     for b in blocker:
         b_daten = hole_issue(b)
         if label in _labels(b_daten):
-            raise _Abbruch(
-                f"#{b} ist Abnahme-Ticket ({label}) — es gehört ans Kettenende, nicht davor"
-            )
+            raise _Abbruch(f"#{b} ist Abnahme-Ticket ({label}) — es gehört ans Kettenende, nicht davor")
         if b not in native:
             schritte.append(_kante(repo, slug, n, b, b_daten["id"]))
 
     # Offenes Einrichtungs-Ticket der Spec (#410): jedes andere offene Ticket wartet darauf.
     t0 = manifest.einrichtungs_ticket(daten)
-    if (
-        t0
-        and t0 != n
-        and t0 not in blocker
-        and t0 not in native
-        and _offen(ticket_daten)
-    ):
+    if t0 and t0 != n and t0 not in blocker and t0 not in native and _offen(ticket_daten):
         t0_daten = hole_issue(t0)
         if _offen(t0_daten):
             schritte.append(_kante(repo, slug, n, t0, t0_daten["id"]))
@@ -226,9 +209,7 @@ def _planen(
         hole_issue=hole_issue,
         hole_kanten=hole_kanten,
     ):
-        schritte.append(
-            _kante(repo, slug, abn, n, ticket_daten["id"], abnahme=True)
-        )
+        schritte.append(_kante(repo, slug, abn, n, ticket_daten["id"], abnahme=True))
 
     if daten["tickets"].get(n) != neu:
 
@@ -243,11 +224,7 @@ def _planen(
             return True
 
         felder = ", ".join(f"{k}={v}" for k, v in neu.items() if k != "title")
-        schritte.append(
-            _Schritt(
-                f"Manifest {datei.name}: #{n} eintragen ({felder})", manifest_schreiben
-            )
-        )
+        schritte.append(_Schritt(f"Manifest {datei.name}: #{n} eintragen ({felder})", manifest_schreiben))
 
     code, ausgabe = gh.lauf(
         [
@@ -301,9 +278,7 @@ def _abnahme_ziele(
     ist_abnahme = label in _labels(ticket_daten)
     if ist_abnahme:
         if abnahmen:
-            raise _Abbruch(
-                f"#{n} ist selbst Abnahme-Ticket ({label}) — --abnahme nicht angeben"
-            )
+            raise _Abbruch(f"#{n} ist selbst Abnahme-Ticket ({label}) — --abnahme nicht angeben")
         return []
 
     tickets: dict[str, Any] = daten["tickets"]
@@ -311,18 +286,14 @@ def _abnahme_ziele(
         eindeutige = list(dict.fromkeys(a for a in abnahmen if a))
         if any(a.lower() == ABNAHME_KEINE for a in eindeutige):
             if len(eindeutige) > 1:
-                raise _Abbruch(
-                    f"--abnahme {ABNAHME_KEINE} nicht mit Ticket-Nummern mischen"
-                )
+                raise _Abbruch(f"--abnahme {ABNAHME_KEINE} nicht mit Ticket-Nummern mischen")
             return []
         ziele: list[str] = []
         for a in eindeutige:
             if a == n:
                 raise _Abbruch(f"#{n} kann nicht seine eigene Abnahme sein")
             if a not in tickets:
-                raise _Abbruch(
-                    f"Abnahme-Ticket #{a} steht nicht im Manifest spec-{s}.json"
-                )
+                raise _Abbruch(f"Abnahme-Ticket #{a} steht nicht im Manifest spec-{s}.json")
             a_daten = hole_issue(a)
             if label not in _labels(a_daten):
                 raise _Abbruch(f"#{a} ist kein Abnahme-Ticket ({label})")
@@ -370,17 +341,11 @@ def _abnahme_ziele(
     anker = _vorgaenger(n_direkt)
 
     abgedeckt = [cp for cp in offene_abnahmen if n in cp_kette[cp]]
-    passend = [
-        cp
-        for cp in offene_abnahmen
-        if n not in cp_kette[cp] and bool(anker & cp_kette[cp])
-    ]
+    passend = [cp for cp in offene_abnahmen if n not in cp_kette[cp] and bool(anker & cp_kette[cp])]
     beruehrt = sorted(set(abgedeckt) | set(passend), key=manifest.ticket_schluessel)
     if len(passend) > 1 or (passend and len(beruehrt) > 1):
         liste = ", ".join(f"#{c}" for c in beruehrt)
-        raise _Abbruch(
-            f"#{n} berührt mehrere Abnahme-Ketten ({liste}) — mit --abnahme festlegen"
-        )
+        raise _Abbruch(f"#{n} berührt mehrere Abnahme-Ketten ({liste}) — mit --abnahme festlegen")
     if len(passend) == 1:
         cp = passend[0]
         return [cp] if n not in hole_kanten(cp) else []
@@ -414,17 +379,13 @@ def _eintrag(
     if schaetzung_k is not None:
         if schaetzung_k <= 0:
             raise _Abbruch("--schaetzung muss über 0 liegen (Tausend Token)")
-        eintrag["schaetzung_k"] = (
-            int(schaetzung_k) if float(schaetzung_k).is_integer() else schaetzung_k
-        )
+        eintrag["schaetzung_k"] = int(schaetzung_k) if float(schaetzung_k).is_integer() else schaetzung_k
     if umfang is not None and umfang.strip():
         eintrag["umfang"] = umfang.strip()
     if dateien:
         eintrag["files"] = [d.strip() for d in dateien if d.strip()]
     if "schaetzung_k" not in eintrag or "umfang" not in eintrag:
-        raise _Abbruch(
-            f"#{n} steht noch nicht im Manifest — --schaetzung und --umfang angeben"
-        )
+        raise _Abbruch(f"#{n} steht noch nicht im Manifest — --schaetzung und --umfang angeben")
     return eintrag
 
 
@@ -436,15 +397,11 @@ def _issue(repo: Path, slug: str, nummer: str) -> dict[str, Any]:
     """
     daten = gh.json_lauf(["api", f"repos/{slug}/issues/{nummer}"], cwd=repo)
     if not isinstance(daten, dict) or not isinstance(daten.get("id"), int):
-        raise _Abbruch(
-            f"#{nummer} in {slug} nicht lesbar (fehlt, kein Zugriff oder gh-Fehler)"
-        )
+        raise _Abbruch(f"#{nummer} in {slug} nicht lesbar (fehlt, kein Zugriff oder gh-Fehler)")
     heimat = str(daten.get("repository_url") or "").rstrip("/")
     if not heimat.lower().endswith(f"/repos/{slug.lower()}"):
         fremd = heimat.rsplit("/repos/", 1)[-1] or "unbekannt"
-        raise _Abbruch(
-            f"#{nummer} liegt nicht in {slug}, sondern in {fremd} — falsches Repo"
-        )
+        raise _Abbruch(f"#{nummer} liegt nicht in {slug}, sondern in {fremd} — falsches Repo")
     if "pull_request" in daten:
         raise _Abbruch(f"#{nummer} ist ein Pull-Request, kein Issue")
     return daten
@@ -456,9 +413,7 @@ def _offen(daten: dict[str, Any]) -> bool:
 
 
 def _labels(daten: dict[str, Any]) -> set[str]:
-    return {
-        str(x.get("name")) for x in daten.get("labels") or [] if isinstance(x, dict)
-    }
+    return {str(x.get("name")) for x in daten.get("labels") or [] if isinstance(x, dict)}
 
 
 def _kanten(repo: Path, slug: str, nummer: str) -> set[str]:
@@ -468,9 +423,7 @@ def _kanten(repo: Path, slug: str, nummer: str) -> set[str]:
     return {str(k.get("number")) for k in kanten if isinstance(k, dict)}
 
 
-def _kante(
-    repo: Path, slug: str, wartet: str, auf: str, auf_id: int, *, abnahme: bool = False
-) -> _Schritt:
+def _kante(repo: Path, slug: str, wartet: str, auf: str, auf_id: int, *, abnahme: bool = False) -> _Schritt:
     art = "Abnahme-Kante" if abnahme else "Kante"
     pfad = f"repos/{slug}/issues/{wartet}/dependencies/blocked_by"
     return _Schritt(
@@ -480,11 +433,7 @@ def _kante(
 
 
 def _post(repo: Path, pfad: str, feld: str, wert: int) -> bool:
-    code, ausgabe = gh.lauf(
-        ["api", "-X", "POST", pfad, "-F", f"{feld}={wert}"], cwd=repo
-    )
+    code, ausgabe = gh.lauf(["api", "-X", "POST", pfad, "-F", f"{feld}={wert}"], cwd=repo)
     if code != 0:
-        log.warning(
-            "gh api POST %s gescheitert (Code %s): %s", pfad, code, ausgabe[:200]
-        )
+        log.warning("gh api POST %s gescheitert (Code %s): %s", pfad, code, ausgabe[:200])
     return code == 0

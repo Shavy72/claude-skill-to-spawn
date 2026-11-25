@@ -68,9 +68,7 @@ _VOID = {"meta", "img", "br", "hr", "input", "link"}
 
 def skill_da() -> bool:
     """Ist der Skill ``rundschau`` da? (``TO_SPAWN_RUNDSCHAU_SKILL`` überschreibt den Pfad, für Tests.)"""
-    pfad = os.environ.get("TO_SPAWN_RUNDSCHAU_SKILL") or str(
-        Path.home() / ".claude/skills/rundschau/SKILL.md"
-    )
+    pfad = os.environ.get("TO_SPAWN_RUNDSCHAU_SKILL") or str(Path.home() / ".claude/skills/rundschau/SKILL.md")
     return Path(pfad).is_file()
 
 
@@ -117,16 +115,12 @@ def bild_masse(d: bytes) -> tuple[int, int] | None:
         if d[:4] == b"RIFF" and d[8:12] == b"WEBP":
             art = d[12:16]
             if art == b"VP8 ":
-                return struct.unpack("<HH", d[26:30])[0] & 0x3FFF, struct.unpack(
-                    "<HH", d[26:30]
-                )[1] & 0x3FFF
+                return struct.unpack("<HH", d[26:30])[0] & 0x3FFF, struct.unpack("<HH", d[26:30])[1] & 0x3FFF
             if art == b"VP8L":
                 b = struct.unpack("<I", d[21:25])[0]
                 return (b & 0x3FFF) + 1, ((b >> 14) & 0x3FFF) + 1
             if art == b"VP8X":
-                return int.from_bytes(d[24:27], "little") + 1, int.from_bytes(
-                    d[27:30], "little"
-                ) + 1
+                return int.from_bytes(d[24:27], "little") + 1, int.from_bytes(d[27:30], "little") + 1
         if d.startswith(b"\xff\xd8"):
             i = 2
             while i + 9 < len(d):
@@ -204,27 +198,19 @@ def _bild_uri(quelle: str) -> str:
 
 def _folie(teil: int, f: dict[str, Any], *, bild_pflicht: bool) -> str:
     if bild_pflicht and not f.get("bild"):
-        raise ValueError(
-            f"Folie „{f.get('titel', '?')}“ braucht ein Bild (Teil {teil})"
-        )
+        raise ValueError(f"Folie „{f.get('titel', '?')}“ braucht ein Bild (Teil {teil})")
     art = f' data-art="{html.escape(f["art"])}"' if f.get("art") else ""
     ticket_nr = str(f.get("ticket") or "").strip().lstrip("#")
     ticket_attr = f' data-ticket="{html.escape(ticket_nr)}"' if ticket_nr else ""
-    rubrik = f.get("rubrik") or (
-        "Neu" if teil == 1 else "Offen" if f.get("art") == "offenes" else "Details"
-    )
+    rubrik = f.get("rubrik") or ("Neu" if teil == 1 else "Offen" if f.get("art") == "offenes" else "Details")
     bild = (
-        f'<figure><img alt="{html.escape(f["titel"])}" src="{_bild_uri(f["bild"])}"></figure>'
-        if f.get("bild")
-        else ""
+        f'<figure><img alt="{html.escape(f["titel"])}" src="{_bild_uri(f["bild"])}"></figure>' if f.get("bild") else ""
     )
     punkte = "".join(f"<li>{html.escape(p)}</li>" for p in f.get("punkte", [])[:3])
     liste = f'<ul class="punkte">{punkte}</ul>' if punkte else ""
     schritte = [str(s).strip() for s in (f.get("klickschritte") or []) if str(s).strip()]
     klick = (
-        '<ol class="klickschritte">'
-        + "".join(f"<li>{html.escape(s)}</li>" for s in schritte)
-        + "</ol>"
+        '<ol class="klickschritte">' + "".join(f"<li>{html.escape(s)}</li>" for s in schritte) + "</ol>"
         if schritte
         else ""
     )
@@ -236,9 +222,7 @@ def _folie(teil: int, f: dict[str, Any], *, bild_pflicht: bool) -> str:
 
 
 def _umbruch(text: str) -> list[str]:
-    return textwrap.wrap(
-        text, UMBRUCH, break_long_words=False, break_on_hyphens=False
-    ) or [""]
+    return textwrap.wrap(text, UMBRUCH, break_long_words=False, break_on_hyphens=False) or [""]
 
 
 def _grafik(eintraege: list[dict[str, str]]) -> str:
@@ -265,11 +249,7 @@ def _grafik(eintraege: list[dict[str, str]]) -> str:
             zeilen = [(f"#{ticket} · {zeit_text(e.get('ts', ''))}", "zeit")]
             zeilen += [(z, "frage") for z in _umbruch(frage)]
             zeilen += [(z, "wahl") for z in _umbruch("→ " + wahl)] if wahl else []
-            zeilen += (
-                [(z, "warum") for z in _umbruch("Warum: " + e["warum"])]
-                if e.get("warum")
-                else []
-            )
+            zeilen += [(z, "warum") for z in _umbruch("Warum: " + e["warum"])] if e.get("warum") else []
             if i in ue:
                 zeilen.append((f"überholt durch #{ue[i]}", "marke"))
             texte = "".join(
@@ -353,9 +333,7 @@ def erzeuge(texte: dict[str, Any], eintraege: list[dict[str, str]]) -> str:
         f'<span class="rubrik">Rundschau</span><h2>{html.escape(titel)}</h2><p class="kern">{html.escape(datum)}</p></section>'
     )
     teil1 = [_folie(1, f, bild_pflicht=True) for f in texte["teil1"]]
-    teil2 = [
-        _folie(2, f, bild_pflicht=f.get("art") != "offenes") for f in texte["teil2"]
-    ]
+    teil2 = [_folie(2, f, bild_pflicht=f.get("art") != "offenes") for f in texte["teil2"]]
     schluss = (
         f'<section class="folie" data-teil="3" data-art="entscheidungen" data-label="{TEIL_NAMEN["3"]}">'
         f'<span class="rubrik">Bau-Verlauf</span><h2>Entscheidungen</h2>{_grafik(eintraege)}</section>'
@@ -428,9 +406,7 @@ class _Leser(HTMLParser):
         for sel, regel in _CSS_REGEL.findall(css):
             if _versteckt(regel):
                 self._versteckte_klassen |= {
-                    k.strip()[1:]
-                    for k in sel.split(",")
-                    if re.fullmatch(r"\s*\.[\w-]+\s*", k)
+                    k.strip()[1:] for k in sel.split(",") if re.fullmatch(r"\s*\.[\w-]+\s*", k)
                 }
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
@@ -501,12 +477,7 @@ class _Leser(HTMLParser):
                 f["viz"].append(self._viz)
         elif self._viz is not None and tag in _FORMEN and _sichtbare_form(tag, a):
             self._viz["formen"] += 1
-        if (
-            tag == "g"
-            and "entscheidung" in klassen
-            and self._zs
-            and not versteckt_jetzt
-        ):
+        if tag == "g" and "entscheidung" in klassen and self._zs and not versteckt_jetzt:
             self._grp = {
                 "ticket": a.get("data-ticket", ""),
                 "ts": a.get("data-ts", ""),
@@ -575,9 +546,7 @@ def _norm(s: str) -> str:
 
 def _hat_bild(f: dict[str, Any]) -> bool:
     """Sichtbare Folie mit echtem Bild oder sichtbarer ``svg.viz``-Grafik."""
-    return not f["versteckt"] and (
-        any(_uri_echt(s) for s in f["bilder"]) or any(v["formen"] for v in f["viz"])
-    )
+    return not f["versteckt"] and (any(_uri_echt(s) for s in f["bilder"]) or any(v["formen"] for v in f["viz"]))
 
 
 def klickschritte(text: str) -> list[dict[str, Any]]:
@@ -611,17 +580,11 @@ def inhalt(text: str) -> dict[str, Any]:
     leser = _Leser()
     leser.feed(text)
     return {
-        "bilder": sum(
-            1 for f in leser.folien if f["teil"] in ("1", "2") and _hat_bild(f)
-        ),
+        "bilder": sum(1 for f in leser.folien if f["teil"] in ("1", "2") and _hat_bild(f)),
         "klickschritte": sum(
-            f["klickschritte"]
-            for f in leser.folien
-            if f["teil"] in ("1", "2") and not f["versteckt"]
+            f["klickschritte"] for f in leser.folien if f["teil"] in ("1", "2") and not f["versteckt"]
         ),
-        "entscheidungen": any(
-            f["teil"] == "3" and not f["versteckt"] for f in leser.folien
-        ),
+        "entscheidungen": any(f["teil"] == "3" and not f["versteckt"] for f in leser.folien),
     }
 
 
@@ -653,18 +616,10 @@ def pruefe(
         if n not in teile:
             maengel.append(f'Teil {n} fehlt (keine Folie mit data-teil="{n}").')
     if not maengel and teile != sorted(teile):
-        maengel.append(
-            "Reihenfolge falsch: erwartet Teil 1, dann Teil 2, am Schluss Teil 3 (Entscheidungen)."
-        )
-    if "1" in teile and all(
-        f["art"] == "titel" or f["versteckt"] for f in leser.folien if f["teil"] == "1"
-    ):
-        maengel.append(
-            "Teil 1 hat nur die Titel-Folie: mindestens eine Neu-Folie fehlt."
-        )
-    if "2" in teile and not any(
-        f["art"] == "offenes" for f in leser.folien if f["teil"] == "2"
-    ):
+        maengel.append("Reihenfolge falsch: erwartet Teil 1, dann Teil 2, am Schluss Teil 3 (Entscheidungen).")
+    if "1" in teile and all(f["art"] == "titel" or f["versteckt"] for f in leser.folien if f["teil"] == "1"):
+        maengel.append("Teil 1 hat nur die Titel-Folie: mindestens eine Neu-Folie fehlt.")
+    if "2" in teile and not any(f["art"] == "offenes" for f in leser.folien if f["teil"] == "2"):
         maengel.append('Teil 2: Folie „Offenes“ fehlt (data-art="offenes").')
     for f in leser.folien:
         if f["teil"] not in ("1", "2"):
@@ -673,9 +628,7 @@ def pruefe(
         if not f["h2"]:
             maengel.append(f"Folie „{name}“ (Teil {f['teil']}) ohne Überschrift.")
         if f["art"] not in ("offenes", "titel"):
-            bild = any(_uri_echt(s) for s in f["bilder"]) or any(
-                v["formen"] for v in f["viz"]
-            )
+            bild = any(_uri_echt(s) for s in f["bilder"]) or any(v["formen"] for v in f["viz"])
             if not bild:
                 maengel.append(
                     f"Folie „{name}“ (Teil {f['teil']}): Bild fehlt, ist leer oder kleiner als "
@@ -733,31 +686,23 @@ def _pruefe_grafik(folie: dict[str, Any], eintraege: list[dict[str, str]]) -> li
         )
     gruppen = list(folie["gruppen"])
     if not gruppen:
-        return [
-            "Teil 3: keine sichtbare Entscheidungs-Grafik (`g.entscheidung` in `svg.zeitstrahl`) gefunden."
-        ]
+        return ["Teil 3: keine sichtbare Entscheidungs-Grafik (`g.entscheidung` in `svg.zeitstrahl`) gefunden."]
     maengel: list[str] = []
     sollen = ueberholt_map(eintraege)
     for i, e in enumerate(eintraege):
         t, ts = e.get("ticket", ""), e.get("ts", "")
         if not ts or not t:
-            maengel.append(
-                f"Entscheidung #{t}: Daten haben keinen {'Zeitpunkt' if t else 'Ticket'}."
-            )
+            maengel.append(f"Entscheidung #{t}: Daten haben keinen {'Zeitpunkt' if t else 'Ticket'}.")
             continue
         kand = [g for g in gruppen if (g["ticket"], g["ts"]) == (t, ts)]
         if not kand:
-            maengel.append(
-                f"Entscheidung #{t} ({ts}) fehlt in der Grafik oder hat dort kein Ticket/keinen Zeitpunkt."
-            )
+            maengel.append(f"Entscheidung #{t} ({ts}) fehlt in der Grafik oder hat dort kein Ticket/keinen Zeitpunkt.")
             continue
         g = next((g for g in kand if not _text_ok(g, e)), kand[0])
         gruppen.remove(g)
         fehlt = _text_ok(g, e)
         if fehlt:
             maengel.append(f"Entscheidung #{t}: Beschriftung ohne {', '.join(fehlt)}.")
-        if i in sollen and f"überholt durch #{sollen[i]}" not in _norm(
-            " ".join(g["text"])
-        ):
+        if i in sollen and f"überholt durch #{sollen[i]}" not in _norm(" ".join(g["text"])):
             maengel.append(f"Entscheidung #{t}: „überholt durch #{sollen[i]}“ fehlt.")
     return maengel

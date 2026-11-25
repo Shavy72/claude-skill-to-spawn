@@ -13,19 +13,13 @@ from conftest import attrappe
 
 def _args(bau, takt: int | None = None) -> argparse.Namespace:
     t = bau.TAKT_STANDARD_S if takt is None else takt
-    return argparse.Namespace(
-        umzug=None, resume=False, probesitz=False, sofort=False, takt=t
-    )
+    return argparse.Namespace(umzug=None, resume=False, probesitz=False, sofort=False, takt=t)
 
 
-def test_blocker_frei_nach_15s_startet_binnen_35s(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_blocker_frei_nach_15s_startet_binnen_35s(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     bau = _lade_bau(tmp_path, monkeypatch)
     uhr = [0.0]
-    monkeypatch.setattr(
-        bau, "blocker_offen", lambda *_a, **_k: ["#5 offen"] if uhr[0] < 15 else []
-    )
+    monkeypatch.setattr(bau, "blocker_offen", lambda *_a, **_k: ["#5 offen"] if uhr[0] < 15 else [])
     orig = bau.auf_blocker_warten
 
     def schlafen(s: float) -> None:
@@ -43,16 +37,12 @@ def test_blocker_frei_nach_15s_startet_binnen_35s(
 def test_takt_untergrenze_5s(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     bau = _lade_bau(tmp_path, monkeypatch)
     gesehen: list[int] = []
-    monkeypatch.setattr(
-        bau, "auf_blocker_warten", lambda _t, takt, **_k: gesehen.append(takt)
-    )
+    monkeypatch.setattr(bau, "auf_blocker_warten", lambda _t, takt, **_k: gesehen.append(takt))
     bau.blocker_schranke("432", _args(bau, 1))
     assert gesehen == [5]
 
 
-def test_kein_fetch_solange_blocker_offen(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_kein_fetch_solange_blocker_offen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     bau = _lade_bau(tmp_path, monkeypatch)
     _fake_gh(tmp_path, monkeypatch, [_dep(5, "closed"), _dep(6, "open")])
     aufrufe: list[list[str]] = []
@@ -67,9 +57,7 @@ def test_kein_fetch_solange_blocker_offen(
     assert aufrufe == []
 
 
-def test_abfrage_fehler_bleibt_blockiert(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_abfrage_fehler_bleibt_blockiert(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     bau = _lade_bau(tmp_path, monkeypatch)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)

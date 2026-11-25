@@ -27,10 +27,7 @@ SKILL = Path(__file__).resolve().parent.parent
 SKRIPTE = SKILL / "skripte"
 CLI = SKILL / "to_spawn.py"
 TRANSKRIPT_204 = (
-    Path(__file__).resolve().parent
-    / "hilfen"
-    / "transkript_204"
-    / "97a30ed9-6786-4987-b0ba-3197343cfec6.jsonl"
+    Path(__file__).resolve().parent / "hilfen" / "transkript_204" / "97a30ed9-6786-4987-b0ba-3197343cfec6.jsonl"
 )
 
 sys.path.insert(0, str(SKILL))
@@ -45,9 +42,7 @@ def _transkript_schreiben(
 ) -> Path:
     """Schreibt ein minimales Claude-Transkript mit (input, cache_read, cache_creation) je Zug."""
     pfad.parent.mkdir(parents=True, exist_ok=True)
-    zeilen: list[dict[str, object]] = [
-        {"type": "user", "isSidechain": False, "timestamp": "2026-11-24T00:38:00Z"}
-    ]
+    zeilen: list[dict[str, object]] = [{"type": "user", "isSidechain": False, "timestamp": "2026-11-24T00:38:00Z"}]
     if sidechain_davor is not None:
         inp, read, create = sidechain_davor
         zeilen.append(
@@ -169,11 +164,7 @@ def _claude_heim(tmp_path: Path) -> Path:
 
 
 def _start_last_env(heim: Path) -> dict[str, str]:
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if k not in {"TO_SPAWN_REPO", "TO_SPAWN_GH_REPO", "CLAUDE_CONFIG_DIR"}
-    }
+    env = {k: v for k, v in os.environ.items() if k not in {"TO_SPAWN_REPO", "TO_SPAWN_GH_REPO", "CLAUDE_CONFIG_DIR"}}
     env["HOME"] = str(heim)
     env["USERPROFILE"] = str(heim)
     env["TO_SPAWN_GH_REPO"] = "probe/leihliste"

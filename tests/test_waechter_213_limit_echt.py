@@ -44,18 +44,14 @@ def _normale_assistant_zeile() -> dict[str, Any]:
     for feld in ("error", "isApiErrorMessage", "apiErrorStatus", "quotaLimits"):
         zeile.pop(feld, None)
     zeile["message"]["model"] = "claude-opus-5"
-    zeile["message"]["content"] = [
-        {"type": "text", "text": "Tests grün, ich committe jetzt."}
-    ]
+    zeile["message"]["content"] = [{"type": "text", "text": "Tests grün, ich committe jetzt."}]
     return zeile
 
 
 def _drossel_429_ohne_limit_text() -> dict[str, Any]:
     """Gleiche Datei-Form, 429 + ``rate_limit``, aber kurze API-Drosselung."""
     zeile = copy.deepcopy(_echte())
-    zeile["message"]["content"] = [
-        {"type": "text", "text": "API Error: 429 Rate limit reached for requests"}
-    ]
+    zeile["message"]["content"] = [{"type": "text", "text": "API Error: 429 Rate limit reached for requests"}]
     return zeile
 
 
@@ -87,12 +83,7 @@ def test_aufsicht_erkennt_nachtraeglich_angehaengte_echte_zeile(
     """Transkript läuft schon (normale Zeilen), dann hängt Claude Code die echte
     Limit-Zeile an — die Aufsicht muss den Wechsel auslösen, und zwar genau einmal."""
     datei = tmp_path / "transkript.jsonl"
-    vorher = (
-        json.dumps(_normale_assistant_zeile())
-        + "\n"
-        + json.dumps(_drossel_429_ohne_limit_text())
-        + "\n"
-    )
+    vorher = json.dumps(_normale_assistant_zeile()) + "\n" + json.dumps(_drossel_429_ohne_limit_text()) + "\n"
     datei.write_text(vorher, encoding="utf-8")
     funde: list[str] = []
     gemeldet = threading.Event()

@@ -83,9 +83,7 @@ def _stub_main(args: list[str]) -> int:
 
     def kurz(nummer: int) -> dict[str, Any]:
         daten = issues[str(nummer)]
-        return {
-            k: daten[k] for k in ("id", "number", "title", "state", "repository_url")
-        }
+        return {k: daten[k] for k in ("id", "number", "title", "state", "repository_url")}
 
     if args[:2] == ["issue", "view"]:
         daten = issues.get(args[2])
@@ -116,9 +114,7 @@ def _stub_main(args: list[str]) -> int:
         if treffer := re.fullmatch(r"repos/[^/]+/[^/]+/issues/(\d+)/sub_issues", ziel):
             assert name == "sub_issue_id"
             welt["unter"].setdefault(treffer.group(1), []).append(int(quelle))
-        elif treffer := re.fullmatch(
-            r"repos/[^/]+/[^/]+/issues/(\d+)/dependencies/blocked_by", ziel
-        ):
+        elif treffer := re.fullmatch(r"repos/[^/]+/[^/]+/issues/(\d+)/dependencies/blocked_by", ziel):
             assert name == "issue_id"
             welt["kanten"].setdefault(treffer.group(1), []).append(int(quelle))
         else:
@@ -141,9 +137,7 @@ def _stub_main(args: list[str]) -> int:
         else:
             print(json.dumps([kurz(n) for n in liste]))
         return 0
-    if treffer := re.fullmatch(
-        r"repos/[^/]+/[^/]+/issues/(\d+)/dependencies/blocked_by", ziel
-    ):
+    if treffer := re.fullmatch(r"repos/[^/]+/[^/]+/issues/(\d+)/dependencies/blocked_by", ziel):
         print(json.dumps([kurz(n) for n in welt["kanten"].get(treffer.group(1), [])]))
         return 0
     print(f"Stub kennt den Pfad nicht: {ziel}", file=sys.stderr)
@@ -157,9 +151,7 @@ def _git(repo: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=str(repo), check=True, capture_output=True)
 
 
-def _aufbau(
-    tmp_path: Path, welt: dict[str, Any] | None = None
-) -> tuple[Path, Path, dict[str, str]]:
+def _aufbau(tmp_path: Path, welt: dict[str, Any] | None = None) -> tuple[Path, Path, dict[str, str]]:
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init")
@@ -175,9 +167,7 @@ def _aufbau(
         },
     }
     (ordner / f"spec-{SPEC}.json").write_text(
-        json.dumps(
-            {"spec": SPEC, "feature": "wegwerf", "tickets": tickets}, ensure_ascii=False
-        ),
+        json.dumps({"spec": SPEC, "feature": "wegwerf", "tickets": tickets}, ensure_ascii=False),
         encoding="utf-8",
     )
     weltdatei = tmp_path / "welt.json"
@@ -197,9 +187,7 @@ def _aufbau(
     return repo, weltdatei, umgebung
 
 
-def _anhaengen(
-    repo: Path, umgebung: dict[str, str], *extra: str
-) -> subprocess.CompletedProcess[str]:
+def _anhaengen(repo: Path, umgebung: dict[str, str], *extra: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(CLI), "anhaengen", str(SPEC), str(NEU), *extra],
         check=False,
@@ -238,19 +226,14 @@ def test_anhaengen_setzt_kanten_manifest_und_unter_issue(tmp_path: Path) -> None
     assert lauf.returncode == 0, lauf.stdout + lauf.stderr
     welt = _welt(weltdatei)
     neu_id = 3_000_000_000 + NEU
-    assert (
-        f"repos/{SLUG}/issues/{SPEC}/sub_issues -F sub_issue_id={neu_id}"
-        in welt["posts"]
-    )
+    assert f"repos/{SLUG}/issues/{SPEC}/sub_issues -F sub_issue_id={neu_id}" in welt["posts"]
     assert NEU in welt["unter"][str(SPEC)]
     assert welt["kanten"][str(NEU)] == [901]
     # Kante vor das Abnahme-Ticket: checkpoint:human wartet jetzt auch auf den Nachtrag.
     assert NEU in welt["kanten"][str(CHECKPOINT)]
     # Unter-Issue zuletzt: erst damit sieht der Aufpasser das Ticket.
     assert "sub_issues" in welt["posts"][-1]
-    eintrag = json.loads(_manifest(repo).read_text(encoding="utf-8"))["tickets"][
-        str(NEU)
-    ]
+    eintrag = json.loads(_manifest(repo).read_text(encoding="utf-8"))["tickets"][str(NEU)]
     assert eintrag == {
         "title": "Nachtrag: Rand",
         "schaetzung_k": 40,

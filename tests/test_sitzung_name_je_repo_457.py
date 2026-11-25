@@ -126,9 +126,7 @@ def _repo_aufbau(
     return repo, umgebung
 
 
-def _spawn(
-    repo: Path, umgebung: dict[str, str], *extra: str
-) -> subprocess.CompletedProcess[str]:
+def _spawn(repo: Path, umgebung: dict[str, str], *extra: str) -> subprocess.CompletedProcess[str]:
     from to_spawn import bash_wahl
 
     return bash_wahl.lauf(
@@ -217,9 +215,7 @@ def test_zwei_repos_gleiche_spec_bekommen_getrennte_sessions(tmp_path: Path, soc
 
 
 @pytest.mark.braucht("bash", "posix")
-def test_bestehende_eigene_alte_session_wird_weiter_gefunden_auch_bei_https_ssh(
-    tmp_path: Path, socket: str
-) -> None:
+def test_bestehende_eigene_alte_session_wird_weiter_gefunden_auch_bei_https_ssh(tmp_path: Path, socket: str) -> None:
     """Alte Session ``spec-<S>`` desselben Repos (HTTPS vs SSH) wird weiter gefunden."""
     repo, env = _repo_aufbau(tmp_path / "eigen", socket, origin="https://github.com/test/wegwerf.git")
     klon_ssh = _git_ordner(tmp_path / "klon-ssh", "git@github.com:Test/Wegwerf.git")
@@ -251,9 +247,7 @@ def test_fremde_alte_session_blockiert_anderes_repo_nicht(tmp_path: Path, socket
 
 
 @pytest.mark.braucht("bash", "posix")
-def test_kollision_gleicher_kurzname_anderes_repo_verweigert_echten_start(
-    tmp_path: Path, socket: str
-) -> None:
+def test_kollision_gleicher_kurzname_anderes_repo_verweigert_echten_start(tmp_path: Path, socket: str) -> None:
     """Zwei verschiedene Repos mit gleichem Kurznamen (``fremd/wegwerf`` vs ``test/wegwerf``):
     echter Start OHNE ``--dry-run`` bricht mit Exit 9 ab, fremde Session bleibt unberührt.
     Im Gegensatz zu ``--dry-run`` würde ein kaputter Schutz hier wirklich ein Fenster anlegen!"""

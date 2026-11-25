@@ -60,13 +60,8 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return arbeit
 
 
-def _checkpoints(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *nummern: str
-) -> None:
-    daten = {
-        t: {"labels": ["checkpoint:human" if t in nummern else "enhancement"]}
-        for t in TICKETS
-    }
+def _checkpoints(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *nummern: str) -> None:
+    daten = {t: {"labels": ["checkpoint:human" if t in nummern else "enhancement"]} for t in TICKETS}
     datei = tmp_path / "gh_daten.json"
     datei.write_text(json.dumps(daten, ensure_ascii=False), encoding="utf-8")
     monkeypatch.setenv("GH_STUB_DATEN", str(datei))
@@ -93,17 +88,12 @@ def test_checkpoint_vor_anderen_tickets_weigert_sich(
     _checkpoints(tmp_path, monkeypatch, "901")
     ergebnis = _pruefen(repo)
     assert ergebnis.returncode != 0, ergebnis.stdout + ergebnis.stderr
-    assert (
-        "Checkpoint-Ticket #901 steht mitten in der Kette: blockiert #902, #903"
-        in ergebnis.stdout
-    )
+    assert "Checkpoint-Ticket #901 steht mitten in der Kette: blockiert #902, #903" in ergebnis.stdout
     assert "Abnahme gehört ans Kettenende" in ergebnis.stdout
     assert "Frage in den Grill vor den Spawn ziehen" in ergebnis.stdout
 
 
-def test_checkpoint_am_kettenende_geht_durch(
-    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_checkpoint_am_kettenende_geht_durch(repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """#903 ist Checkpoint, von #901 und #902 blockiert, blockiert selbst keins → Exit 0."""
     monkeypatch.setenv("GH_STUB_BLOCKER", "902:901,903:901,903:902")
     _checkpoints(tmp_path, monkeypatch, "903")
@@ -120,8 +110,5 @@ def test_zwei_checkpoints_einer_mittig_weigert_sich(
     _checkpoints(tmp_path, monkeypatch, "901", "903")
     ergebnis = _pruefen(repo)
     assert ergebnis.returncode != 0, ergebnis.stdout + ergebnis.stderr
-    assert (
-        "Checkpoint-Ticket #901 steht mitten in der Kette: blockiert #902"
-        in ergebnis.stdout
-    )
+    assert "Checkpoint-Ticket #901 steht mitten in der Kette: blockiert #902" in ergebnis.stdout
     assert "Checkpoint-Ticket #903 steht mitten in der Kette" not in ergebnis.stdout

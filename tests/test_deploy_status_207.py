@@ -42,9 +42,7 @@ def _ts(vor_min: float = 0) -> str:
     return zeit.isoformat(timespec="seconds")
 
 
-def _zeile(
-    phase: str, sek: int, marker: str = "", lauf: str = "100-1", **extra: Any
-) -> str:
+def _zeile(phase: str, sek: int, marker: str = "", lauf: str = "100-1", **extra: Any) -> str:
     daten: dict[str, Any] = {
         "ts": extra.pop("ts", _ts()),
         "lauf": lauf,
@@ -84,9 +82,7 @@ def _laeuft(lauf: str = "100-1", vor_min: float = 0) -> tuple[str, ...]:
     )
 
 
-def _cli(
-    repo: Path, *args: str, env: dict[str, str] | None = None
-) -> subprocess.CompletedProcess[str]:
+def _cli(repo: Path, *args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(CLI), "deploy-status", *args],
         cwd=str(repo),
@@ -104,11 +100,7 @@ def _log_zeilen(repo: Path, ticket: str = TICKET) -> list[dict[str, Any]]:
     datei = repo / ".to-spawn" / "bau_log" / f"{ticket}.jsonl"
     if not datei.is_file():
         return []
-    return [
-        json.loads(z)
-        for z in datei.read_text(encoding="utf-8").splitlines()
-        if z.strip()
-    ]
+    return [json.loads(z) for z in datei.read_text(encoding="utf-8").splitlines() if z.strip()]
 
 
 def test_laufender_deploy_meldet_exit_3_und_die_phase(repo: Path) -> None:
@@ -220,9 +212,7 @@ def test_neuer_lauf_schreibt_seine_phasen_neu(repo: Path) -> None:
     assert laeufe == ["100-1"] * 3 + ["200-2"] * 3
 
 
-def test_datei_aus_umgebung_und_ohne_ticket_nur_anzeigen(
-    repo: Path, tmp_path: Path
-) -> None:
+def test_datei_aus_umgebung_und_ohne_ticket_nur_anzeigen(repo: Path, tmp_path: Path) -> None:
     anderswo = tmp_path / "woanders.jsonl"
     anderswo.write_text("".join(z + "\n" for z in _laeuft()), encoding="utf-8")
     ergebnis = _cli(repo, env={"DEPLOY_STATUS_DATEI": str(anderswo)})
@@ -282,9 +272,7 @@ def test_vorgabe_grenze_ist_60_minuten(repo: Path) -> None:
     assert _cli(repo, "--ticket", TICKET).returncode == 4
 
 
-def test_datei_im_fremden_repo_bestimmt_bau_log_und_ticket(
-    repo: Path, tmp_path: Path
-) -> None:
+def test_datei_im_fremden_repo_bestimmt_bau_log_und_ticket(repo: Path, tmp_path: Path) -> None:
     """--datei zeigt ins Worktree ``wt-555``; Aufruf aus einem anderen Repo."""
     wt = tmp_path / "wt-555"
     wt.mkdir()
@@ -307,11 +295,7 @@ def test_bau_ticket_aus_der_umgebung(repo: Path) -> None:
 def test_kaputte_bytes_werden_ersetzt_statt_abbruch(repo: Path) -> None:
     datei = repo / ".deploy_status.jsonl"
     start, vor, pytest_zeile = _laeuft()
-    datei.write_bytes(
-        (start + "\n").encode()
-        + b"\xff\xfe kaputt\n"
-        + (vor + "\n" + pytest_zeile + "\n").encode()
-    )
+    datei.write_bytes((start + "\n").encode() + b"\xff\xfe kaputt\n" + (vor + "\n" + pytest_zeile + "\n").encode())
     ergebnis = _cli(repo, "--ticket", TICKET)
     assert ergebnis.returncode == 3, ergebnis.stdout + ergebnis.stderr
     assert [z["phase"] for z in _log_zeilen(repo)] == ["start", "pre-flight", "pytest"]
@@ -346,9 +330,7 @@ def test_prozess_lebt_nutzt_prozessbaum_auch_unter_windows(
     assert "Gate-Prozess 30 ohne Ende-Zeile beendet" in text
 
 
-def test_prozess_lebt_windows_kernel_pfad(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_prozess_lebt_windows_kernel_pfad(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Unter Windows führt prozess_lebt über prozessbaum.lebt in den Kernel-Weg."""
     lebende = {12: 259, 30: 0}  # 259 = STILL_ACTIVE, 0 = beendet (Griff noch offen)
 
@@ -367,9 +349,7 @@ def test_prozess_lebt_windows_kernel_pfad(
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setattr(prozessbaum, "_WINDOWS", True)
     monkeypatch.setattr(prozessbaum, "_PROC", tmp_path / "kein-proc")
-    monkeypatch.setattr(
-        ctypes, "windll", types.SimpleNamespace(kernel32=kernel), raising=False
-    )
+    monkeypatch.setattr(ctypes, "windll", types.SimpleNamespace(kernel32=kernel), raising=False)
 
     assert deploy_status.prozess_lebt(12) is True
     assert deploy_status.prozess_lebt(30) is False

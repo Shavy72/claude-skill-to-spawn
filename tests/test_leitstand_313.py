@@ -30,9 +30,7 @@ def _umgebung(ordner: Path) -> dict:
     return env
 
 
-def _halte_prozess(
-    ordner: Path, name: str, halter: str, bis_datei: Path
-) -> subprocess.Popen:
+def _halte_prozess(ordner: Path, name: str, halter: str, bis_datei: Path) -> subprocess.Popen:
     """Startet einen Unterprozess, der ``leitstand halte`` ausführt."""
     return subprocess.Popen(
         [
@@ -52,9 +50,7 @@ def _halte_prozess(
     )
 
 
-def _warte_bis(
-    bedingung, zeitlimit_s: float = WARTE_ZEITLIMIT_S, takt_s: float = 0.05
-) -> bool:
+def _warte_bis(bedingung, zeitlimit_s: float = WARTE_ZEITLIMIT_S, takt_s: float = 0.05) -> bool:
     """Pollt ``bedingung`` bis sie wahr ist oder das Zeitlimit reißt."""
     ende = time.monotonic() + zeitlimit_s
     while time.monotonic() < ende:
@@ -103,24 +99,18 @@ def test_zweiter_prozess_wartet_und_bekommt_sperre(tmp_path: Path) -> None:
     a = _halte_prozess(tmp_path, "gate", "A", a_los)
     b = None
     try:
-        assert _warte_bis(lambda: Path(f"{a_los}.hat").exists()), (
-            "A hat die Sperre nicht bekommen"
-        )
+        assert _warte_bis(lambda: Path(f"{a_los}.hat").exists()), "A hat die Sperre nicht bekommen"
         b = _halte_prozess(tmp_path, "gate", "B", b_los)
 
         time.sleep(1.0)
-        assert not Path(f"{b_los}.hat").exists(), (
-            "B hätte nicht sofort die Sperre bekommen dürfen"
-        )
+        assert not Path(f"{b_los}.hat").exists(), "B hätte nicht sofort die Sperre bekommen dürfen"
 
         eintrag = _warte_bis_stand(tmp_path, "gate")
         assert eintrag["halter"]["halter"] == "A"
         assert any(w["halter"] == "B" for w in eintrag["wartende"])
 
         a_los.touch()
-        assert _warte_bis(lambda: Path(f"{b_los}.hat").exists()), (
-            "B hat die Sperre nicht bekommen"
-        )
+        assert _warte_bis(lambda: Path(f"{b_los}.hat").exists()), "B hat die Sperre nicht bekommen"
         eintrag = _stand_von(tmp_path, "gate")
         assert eintrag["halter"]["halter"] == "B"
 
@@ -156,9 +146,9 @@ def test_gekillter_halter_gibt_sperre_frei(tmp_path: Path) -> None:
         a.kill()
         a.wait(timeout=20)
 
-        assert _warte_bis(
-            lambda: (_stand_von(tmp_path, "gate") or {}).get("halter") is None
-        ), "veraltete Halter-Datei zählt fälschlich als gehalten"
+        assert _warte_bis(lambda: (_stand_von(tmp_path, "gate") or {}).get("halter") is None), (
+            "veraltete Halter-Datei zählt fälschlich als gehalten"
+        )
 
         from to_spawn import leitstand
 
@@ -182,17 +172,12 @@ def test_gekillter_wartender_verschwindet_aus_reihe(tmp_path: Path) -> None:
     b = _halte_prozess(tmp_path, "gate", "B", b_los)
     try:
         assert _warte_bis(
-            lambda: any(
-                w["halter"] == "B"
-                for w in (_stand_von(tmp_path, "gate") or {}).get("wartende", [])
-            )
+            lambda: any(w["halter"] == "B" for w in (_stand_von(tmp_path, "gate") or {}).get("wartende", []))
         )
         b.kill()
         b.wait(timeout=20)
 
-        assert _warte_bis(
-            lambda: (_stand_von(tmp_path, "gate") or {}).get("wartende") == []
-        )
+        assert _warte_bis(lambda: (_stand_von(tmp_path, "gate") or {}).get("wartende") == [])
     finally:
         a_los.touch()
         _beende(a, b)
@@ -209,27 +194,17 @@ def test_reihe_fifo(tmp_path: Path) -> None:
         assert _warte_bis(lambda: Path(f"{a_los}.hat").exists())
         b = _halte_prozess(tmp_path, "gate", "B", b_los)
         assert _warte_bis(
-            lambda: any(
-                w["halter"] == "B"
-                for w in (_stand_von(tmp_path, "gate") or {}).get("wartende", [])
-            )
+            lambda: any(w["halter"] == "B" for w in (_stand_von(tmp_path, "gate") or {}).get("wartende", []))
         )
         c = _halte_prozess(tmp_path, "gate", "C", c_los)
         assert _warte_bis(
-            lambda: any(
-                w["halter"] == "C"
-                for w in (_stand_von(tmp_path, "gate") or {}).get("wartende", [])
-            )
+            lambda: any(w["halter"] == "C" for w in (_stand_von(tmp_path, "gate") or {}).get("wartende", []))
         )
 
         a_los.touch()
-        assert _warte_bis(lambda: Path(f"{b_los}.hat").exists()), (
-            "B hätte als Erstes drankommen müssen"
-        )
+        assert _warte_bis(lambda: Path(f"{b_los}.hat").exists()), "B hätte als Erstes drankommen müssen"
         time.sleep(0.5)
-        assert not Path(f"{c_los}.hat").exists(), (
-            "C hätte nicht vor B die Sperre bekommen dürfen"
-        )
+        assert not Path(f"{c_los}.hat").exists(), "C hätte nicht vor B die Sperre bekommen dürfen"
     finally:
         b_los.touch()
         c_los.touch()
@@ -245,10 +220,7 @@ def test_cli_stand_text(tmp_path: Path) -> None:
         assert _warte_bis(lambda: Path(f"{a_los}.hat").exists())
         b = _halte_prozess(tmp_path, "gate", "B", b_los)
         assert _warte_bis(
-            lambda: any(
-                w["halter"] == "B"
-                for w in (_stand_von(tmp_path, "gate") or {}).get("wartende", [])
-            )
+            lambda: any(w["halter"] == "B" for w in (_stand_von(tmp_path, "gate") or {}).get("wartende", []))
         )
 
         ausgabe = subprocess.run(
@@ -303,9 +275,7 @@ def test_zustand_paralleles_schreiben(tmp_path: Path) -> None:
         for i in range(8):
             env = _umgebung(tmp_path)
             env["PROZESS_ID"] = str(i)
-            prozesse.append(
-                subprocess.Popen([PY, "-c", skript], cwd=str(SKILL), env=env)
-            )
+            prozesse.append(subprocess.Popen([PY, "-c", skript], cwd=str(SKILL), env=env))
         for p in prozesse:
             assert p.wait(timeout=30) == 0
 
@@ -348,9 +318,7 @@ def test_zustand_bereiche(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     assert leitstand.leiter_stufe(313) == 2
 
 
-def test_zustand_kaputt_nicht_ueberschreiben(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_zustand_kaputt_nicht_ueberschreiben(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TO_SPAWN_LEITSTAND_ORDNER", str(tmp_path))
     zustand_datei = tmp_path / "zustand.json"
     tmp_path.mkdir(parents=True, exist_ok=True)
@@ -418,9 +386,7 @@ while time.monotonic() < ende:
 """
 
 
-def test_wartezettel_anlegen_waehrend_fremder_probe(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_wartezettel_anlegen_waehrend_fremder_probe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Zwei Prozesse proben die Reihe pausenlos (wie ``leitstand stand`` oder
     andere Wartende). Wer gerade seinen Wartezettel anlegt, darf dabei nicht
     abstürzen, nur weil die Probe den Zettel für einen Augenblick sperrt."""
@@ -445,9 +411,7 @@ def test_wartezettel_anlegen_waehrend_fremder_probe(
         _beende(*probierer)
 
 
-def test_interne_sperrnamen_abgelehnt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_interne_sperrnamen_abgelehnt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Namen mit „_“ vorn gehören dem Leitstand selbst (``_zustand``) — von außen verboten."""
     monkeypatch.setenv("TO_SPAWN_LEITSTAND_ORDNER", str(tmp_path))
     from to_spawn import leitstand

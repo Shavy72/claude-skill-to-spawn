@@ -46,9 +46,7 @@ def test_annahme_kommentar_traegt_die_regel(welt: dict[str, Path]) -> None:  # n
     cp._kommentar(welt, "902", "bau-bot", f"{cp.FRAGE}\n\n{cp.VORSCHLAG}", 61)
     ergebnis = _capo(welt)
     assert ergebnis.returncode == 0, _text(ergebnis)
-    annahme = [
-        t for t in cp._texte(welt, "902") if t.startswith("Aufseher: Annahme nach")
-    ]
+    annahme = [t for t in cp._texte(welt, "902") if t.startswith("Aufseher: Annahme nach")]
     assert len(annahme) == 1, cp._texte(welt, "902")
     befehl = f"python {(SKILL / 'to_spawn.py').as_posix()}"
     assert capo.annahme_grenze(902, befehl) in annahme[0], annahme[0]
@@ -56,9 +54,7 @@ def test_annahme_kommentar_traegt_die_regel(welt: dict[str, Path]) -> None:  # n
 
 def test_start_text_traegt_dieselbe_regel(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("BAU_AUFTRAG", raising=False)
-    vorlage = json.loads(
-        (SKILL / "repo-scripts" / "_default.json").read_text(encoding="utf-8")
-    )["prompt_template"]
+    vorlage = json.loads((SKILL / "repo-scripts" / "_default.json").read_text(encoding="utf-8"))["prompt_template"]
     bau = _lade("bau_annahme_490", SKILL / "skripte" / "bau.py")
     text = bau.build_prompt(vorlage, "7", "9", "T", "- k", konfig={})
     assert "{ANNAHME_GRENZE}" not in text

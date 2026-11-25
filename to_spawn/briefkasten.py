@@ -412,10 +412,7 @@ def sperre_eingetragen_in(einstellungen: dict[str, Any]) -> bool:
         and isinstance(b.get("matcher"), str)
         and "Bash" in b["matcher"].split("|")
         and isinstance(b.get("hooks"), list)
-        and any(
-            isinstance(h, dict) and ist_sperre_befehl(h.get("command"), nur_aktiv=True)
-            for h in b["hooks"]
-        )
+        and any(isinstance(h, dict) and ist_sperre_befehl(h.get("command"), nur_aktiv=True) for h in b["hooks"])
         for b in blocks
     )
 

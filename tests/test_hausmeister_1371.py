@@ -33,9 +33,7 @@ def zweig_welt(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> Welt:
     return welt
 
 
-def _sicherung(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch, nr: int, vor_tagen: float
-) -> str:
+def _sicherung(welt: Welt, monkeypatch: pytest.MonkeyPatch, nr: int, vor_tagen: float) -> str:
     """Echte Sicherung über ``aufpasser.sichern``, angelegt vor ``vor_tagen`` Tagen."""
     wt = welt.worktree(nr, schmutzig=True)
     zeit = datetime.fromtimestamp(welt.jetzt - vor_tagen * TAG, tz=UTC)
@@ -56,16 +54,12 @@ def _zweig_zeilen(welt: Welt) -> list[dict]:
     return [z for z in welt.zeilen() if "zweig" in z]
 
 
-def test_91_tage_weg_89_bleibt_ticket_zweige_unberuehrt(
-    zweig_welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_91_tage_weg_89_bleibt_ticket_zweige_unberuehrt(zweig_welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     w = zweig_welt
     _sicherung(w, monkeypatch, 31, 91)
     _sicherung(w, monkeypatch, 32, 89)
     vorher = _zweige(w)
-    assert {"sicherung/31", "sicherung/32", "ticket/31-test", "ticket/32-test"} <= set(
-        vorher
-    )
+    assert {"sicherung/31", "sicherung/32", "ticket/31-test", "ticket/32-test"} <= set(vorher)
     erg = hausmeister.sicherungen_aufraeumen(loeschen=True, jetzt=w.jetzt)
     nachher = _zweige(w)
     assert "sicherung/31" not in nachher
@@ -77,9 +71,7 @@ def test_91_tage_weg_89_bleibt_ticket_zweige_unberuehrt(
     }
 
 
-def test_log_zeile_je_loeschung(
-    zweig_welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_log_zeile_je_loeschung(zweig_welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     w = zweig_welt
     sha31 = _sicherung(w, monkeypatch, 31, 120)
     sha33 = _sicherung(w, monkeypatch, 33, 91)
@@ -96,22 +88,16 @@ def test_log_zeile_je_loeschung(
         assert {"zeit", "angelegt", "fehler"} <= set(z)
 
 
-def test_trockenlauf_loescht_nichts_schreibt_aber_log(
-    zweig_welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_trockenlauf_loescht_nichts_schreibt_aber_log(zweig_welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     w = zweig_welt
     _sicherung(w, monkeypatch, 31, 91)
     erg = hausmeister.sicherungen_aufraeumen(jetzt=w.jetzt)
-    assert [(e.zweig, e.art, e.trocken) for e in erg] == [
-        ("sicherung/31", "gelöscht", True)
-    ]
+    assert [(e.zweig, e.art, e.trocken) for e in erg] == [("sicherung/31", "gelöscht", True)]
     assert "sicherung/31" in _zweige(w)
     assert [z["trocken"] for z in _zweig_zeilen(w)] == [True]
 
 
-def _nachsichern(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch, nr: int, vor_tagen: float
-) -> None:
+def _nachsichern(welt: Welt, monkeypatch: pytest.MonkeyPatch, nr: int, vor_tagen: float) -> None:
     wt = welt.heim / "wt" / f"wt-{nr}"
     (wt / f"spaeter-{vor_tagen}.txt").write_text("neu\n", encoding="utf-8")
     zeit = datetime.fromtimestamp(welt.jetzt - vor_tagen * TAG, tz=UTC)
@@ -122,9 +108,7 @@ def _nachsichern(
         monkeypatch.delenv("GIT_COMMITTER_DATE")
 
 
-def test_alte_kette_mit_alter_nachsicherung_geht(
-    zweig_welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_alte_kette_mit_alter_nachsicherung_geht(zweig_welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     """Angelegt vor 120 Tagen, zuletzt nachgesichert vor 95 Tagen ⇒ weg."""
     w = zweig_welt
     _sicherung(w, monkeypatch, 31, 120)
@@ -134,9 +118,7 @@ def test_alte_kette_mit_alter_nachsicherung_geht(
     assert "sicherung/31" not in _zweige(w)
 
 
-def test_frische_nachsicherung_haelt_den_zweig(
-    zweig_welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_frische_nachsicherung_haelt_den_zweig(zweig_welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     """Prüfpanel #1371: Ticket läuft > 90 Tage, Aufpasser sichert noch ⇒ bleibt.
 
     Sonst Lösch-Schleife: der Aufpasser legt den Zweig mit der alten Kette neu an,
@@ -150,9 +132,7 @@ def test_frische_nachsicherung_haelt_den_zweig(
     assert "sicherung/31" in _zweige(w)
 
 
-def test_hoechstens_einmal_taeglich(
-    zweig_welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_hoechstens_einmal_taeglich(zweig_welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     w = zweig_welt
     _sicherung(w, monkeypatch, 31, 91)
     assert hausmeister.sicherungen_aufraeumen(loeschen=True, jetzt=w.jetzt)
@@ -163,21 +143,15 @@ def test_hoechstens_einmal_taeglich(
     assert [(e.zweig, e.art) for e in erg] == [("sicherung/33", "gelöscht")]
 
 
-def test_trockenlauf_verbraucht_den_tag_nicht(
-    zweig_welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_trockenlauf_verbraucht_den_tag_nicht(zweig_welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     w = zweig_welt
     _sicherung(w, monkeypatch, 31, 91)
     hausmeister.sicherungen_aufraeumen(jetzt=w.jetzt)
     erg = hausmeister.sicherungen_aufraeumen(loeschen=True, jetzt=w.jetzt + 60)
-    assert [(e.zweig, e.art, e.trocken) for e in erg] == [
-        ("sicherung/31", "gelöscht", False)
-    ]
+    assert [(e.zweig, e.art, e.trocken) for e in erg] == [("sicherung/31", "gelöscht", False)]
 
 
-def test_laeuft_im_takt_von_aufraeumen_alles(
-    zweig_welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_laeuft_im_takt_von_aufraeumen_alles(zweig_welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     w = zweig_welt
     _sicherung(w, monkeypatch, 31, 91)
     hausmeister.aufraeumen_alles(loeschen=True, jetzt=w.jetzt)
@@ -187,9 +161,7 @@ def test_laeuft_im_takt_von_aufraeumen_alles(
     assert "sicherung/33" in _zweige(w)
 
 
-def test_andere_zweige_nie_angefasst(
-    zweig_welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_andere_zweige_nie_angefasst(zweig_welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     """Nur ``sicherung/<Zahl>``: alte Zweige mit anderem Namen bleiben."""
     w = zweig_welt
     alt = datetime.fromtimestamp(w.jetzt - 200 * TAG, tz=UTC).isoformat()
@@ -207,9 +179,7 @@ def test_andere_zweige_nie_angefasst(
     assert _zweige(w) == vorher
 
 
-def test_ohne_aufpasser_betreff_bleibt_der_zweig(
-    zweig_welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_ohne_aufpasser_betreff_bleibt_der_zweig(zweig_welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     """Anlegezeit nicht belegbar ⇒ im Zweifel bleibt (keine Schätzung über die Spitze)."""
     w = zweig_welt
     alt = datetime.fromtimestamp(w.jetzt - 200 * TAG, tz=UTC).isoformat()
@@ -224,12 +194,8 @@ def test_ohne_aufpasser_betreff_bleibt_der_zweig(
     assert "sicherung/8" in _zweige(w)
 
 
-def test_remote_nicht_erreichbar_wirft_nie(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv(
-        "TO_SPAWN_HAUSMEISTER_ZWEIG_REPOS", str(welt.tmp / "gibt-es-nicht.git")
-    )
+def test_remote_nicht_erreichbar_wirft_nie(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_ZWEIG_REPOS", str(welt.tmp / "gibt-es-nicht.git"))
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_ZWEIGE_LOESCHEN", "1")  # #1491: Löschen nur mit Schalter
     erg = hausmeister.sicherungen_aufraeumen(loeschen=True, jetzt=welt.jetzt)
     assert len(erg) == 1 and erg[0].fehler and erg[0].art == "bleibt"
@@ -239,9 +205,7 @@ def test_remote_nicht_erreichbar_wirft_nie(
     assert len(erg) == 1 and erg[0].fehler
 
 
-def test_zweig_bewegt_seit_dem_lesen_bleibt(
-    zweig_welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_zweig_bewegt_seit_dem_lesen_bleibt(zweig_welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     """Löschen nur mit Lease auf den gelesenen Stand — neue Sicherung dazwischen bleibt."""
     w = zweig_welt
     _sicherung(w, monkeypatch, 31, 91)
@@ -255,9 +219,7 @@ def test_zweig_bewegt_seit_dem_lesen_bleibt(
 
     monkeypatch.setattr(hausmeister, "_zweig_loeschen", dazwischen)
     erg = hausmeister.sicherungen_aufraeumen(loeschen=True, jetzt=w.jetzt)
-    assert [(e.zweig, e.art, e.fehler) for e in erg] == [
-        ("sicherung/31", "bleibt", True)
-    ]
+    assert [(e.zweig, e.art, e.fehler) for e in erg] == [("sicherung/31", "bleibt", True)]
     assert "sicherung/31" in _zweige(w)
 
 

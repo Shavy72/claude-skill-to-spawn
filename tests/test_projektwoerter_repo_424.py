@@ -60,7 +60,9 @@ def test_mechanik_meldet_neues_projektwort_ausserhalb_review(tmp_path: Path) -> 
 
     (tmp_path / "docs" / "beispiel.md").write_text("Sauber\nDienst: funkmast_api\n", encoding="utf-8")
     (tmp_path / "to_spawn" / "modul.py").write_text("# lagerhalle_db.DB_PATH\nx = 1\n", encoding="utf-8")
-    (tmp_path / "tests" / "hilfen" / "log.jsonl").write_text('{"text": "ok"}\n{"text": "Funkmast_API"}\n', encoding="utf-8")
+    (tmp_path / "tests" / "hilfen" / "log.jsonl").write_text(
+        '{"text": "ok"}\n{"text": "Funkmast_API"}\n', encoding="utf-8"
+    )
     (tmp_path / "review" / "eigene.md").write_text("funkmast_api\n", encoding="utf-8")
     (tmp_path / "docs" / "bin.dat").write_bytes(b"\x00funkmast_api\x00")
 

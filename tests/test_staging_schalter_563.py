@@ -47,8 +47,7 @@ SPEC_MIT_SCHALTER = (
 )
 
 SPEC_OHNE_SCHALTER = (
-    "## Hauptschalter\n\n"
-    "- **Kein Schalter nötig, weil:** nur Fehlerbehebungen an freigegebenen Funktionen.\n"
+    "## Hauptschalter\n\n- **Kein Schalter nötig, weil:** nur Fehlerbehebungen an freigegebenen Funktionen.\n"
 )
 
 
@@ -66,9 +65,7 @@ def _aufrufe(pfad: Path) -> list[list[str]]:
     return [json.loads(z) for z in pfad.read_text(encoding="utf-8").splitlines() if z]
 
 
-def _spec_fertig(
-    welt: dict[str, Path], spec_text: str | None, mit_skript: bool = True
-) -> None:
+def _spec_fertig(welt: dict[str, Path], spec_text: str | None, mit_skript: bool = True) -> None:
     dateien = {**_beleg("901"), **_beleg("902")}
     if mit_skript:
         dateien["scripts/schalter.py"] = SCHALTER_FAKE
@@ -79,9 +76,7 @@ def _spec_fertig(
         _gh_setzen(welt, SPEC, state="open", body=spec_text)
 
 
-def test_spec_fertig_schaltet_staging_an_und_nur_einmal(
-    welt: dict[str, Path], protokoll: Path
-) -> None:
+def test_spec_fertig_schaltet_staging_an_und_nur_einmal(welt: dict[str, Path], protokoll: Path) -> None:
     _spec_fertig(welt, SPEC_MIT_SCHALTER)
     erster = _capo(welt)
     zweiter = _capo(welt)
@@ -96,21 +91,15 @@ def test_spec_fertig_schaltet_staging_an_und_nur_einmal(
     assert "Staging-Schalter" not in zweiter.stdout
 
 
-def test_probe_zeigt_befehl_und_schaltet_nichts(
-    welt: dict[str, Path], protokoll: Path
-) -> None:
+def test_probe_zeigt_befehl_und_schaltet_nichts(welt: dict[str, Path], protokoll: Path) -> None:
     _spec_fertig(welt, SPEC_MIT_SCHALTER)
     ergebnis = _capo(welt, "--dry-run")
-    assert "[Probe] Staging-Schalter demo_funktion.an AN" in ergebnis.stdout, _text(
-        ergebnis
-    )
+    assert "[Probe] Staging-Schalter demo_funktion.an AN" in ergebnis.stdout, _text(ergebnis)
     assert "--ziel staging" in ergebnis.stdout
     assert _aufrufe(protokoll) == []
 
 
-def test_spec_ohne_schalter_tut_nichts_und_meldet_es(
-    welt: dict[str, Path], protokoll: Path
-) -> None:
+def test_spec_ohne_schalter_tut_nichts_und_meldet_es(welt: dict[str, Path], protokoll: Path) -> None:
     _spec_fertig(welt, SPEC_OHNE_SCHALTER)
     ergebnis = _capo(welt)
     _capo(welt)
@@ -119,15 +108,11 @@ def test_spec_ohne_schalter_tut_nichts_und_meldet_es(
     assert ergebnis.returncode == 0, _text(ergebnis)
 
 
-def test_ohne_schalter_skript_ist_fehler_und_schaltet_nicht(
-    welt: dict[str, Path], protokoll: Path
-) -> None:
+def test_ohne_schalter_skript_ist_fehler_und_schaltet_nicht(welt: dict[str, Path], protokoll: Path) -> None:
     """Spec nennt einen Schalter, Skript fehlt (Stand veraltet): FEHLER, nicht still abhaken."""
     _spec_fertig(welt, SPEC_MIT_SCHALTER, mit_skript=False)
     ergebnis = _capo(welt)
-    assert "FEHLER: Staging-Schalter demo_funktion.an" in ergebnis.stdout, _text(
-        ergebnis
-    )
+    assert "FEHLER: Staging-Schalter demo_funktion.an" in ergebnis.stdout, _text(ergebnis)
     assert "scripts/schalter.py" in ergebnis.stdout
     assert _aufrufe(protokoll) == []
     assert ergebnis.returncode == 1, _text(ergebnis)
@@ -147,12 +132,8 @@ def test_unlesbarer_name_ist_fehler_und_schaltet_keinen_fremden_schalter(
     _spec_fertig(welt, f"## Hauptschalter\n\n{zeile}\n")
     ergebnis = _capo(welt)
     zweiter = _capo(welt)
-    assert "FEHLER: Staging-Schalter — Name des Hauptschalters" in ergebnis.stdout, (
-        _text(ergebnis)
-    )
-    assert (
-        "FEHLER: Staging-Schalter" in zweiter.stdout
-    )  # nicht abgehakt, nächster Tick prüft neu
+    assert "FEHLER: Staging-Schalter — Name des Hauptschalters" in ergebnis.stdout, _text(ergebnis)
+    assert "FEHLER: Staging-Schalter" in zweiter.stdout  # nicht abgehakt, nächster Tick prüft neu
     assert _aufrufe(protokoll) == []
 
 

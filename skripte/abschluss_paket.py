@@ -553,7 +553,9 @@ def abschluss_faellig(
                 neue |= manifest_nrs - bekannte - manifest_abnahme - cp_nrs
             neue_sortiert = tuple(sorted(neue))
             if verstoesse:
-                return AbschlussStand(runde, stand, False, runde + 1 if neue else runde, neue_sortiert, "offene capo-Verstöße")
+                return AbschlussStand(
+                    runde, stand, False, runde + 1 if neue else runde, neue_sortiert, "offene capo-Verstöße"
+                )
             if hat_live and not neue:
                 return AbschlussStand(runde, stand, False, runde, (), "Spec ist bereits live")
             if neue:
@@ -651,15 +653,17 @@ def rundschau_auftrag_text(
             ):
                 passend.append(f"{d_titel}: {d_url}")
                 genutzt.add(idx)
-        link_text = " · ".join(passend) if passend else (
-            f"{stage} (Route für #{nr} ergänzen)" if stage else "(Direkt-Link in die Staging-App ergänzen)"
+        link_text = (
+            " · ".join(passend)
+            if passend
+            else (f"{stage} (Route für #{nr} ergänzen)" if stage else "(Direkt-Link in die Staging-App ergänzen)")
         )
         if titel_sauber.lower().startswith("abnahme"):
             ticket_bloecke.extend(
                 [
                     f"### Ticket #{nr} — {titel_sauber} (Abnahme-Ticket)",
                     f"- **Direkt-Link in die Staging-App**: {link_text}",
-                    "- **Hinweis**: gehört auf die Pflicht-Folie „Offenes“ (Teil 2, `data-art=\"offenes\"`).",
+                    '- **Hinweis**: gehört auf die Pflicht-Folie „Offenes“ (Teil 2, `data-art="offenes"`).',
                     "",
                 ]
             )
@@ -676,9 +680,7 @@ def rundschau_auftrag_text(
             )
     if not ticket_bloecke:
         ticket_bloecke = ["- (keine Tickets im Manifest gefunden)", ""]
-    weitere = [
-        f"- {d_titel}: {d_url}" for idx, (d_titel, d_url) in enumerate(direkt) if idx not in genutzt
-    ]
+    weitere = [f"- {d_titel}: {d_url}" for idx, (d_titel, d_url) in enumerate(direkt) if idx not in genutzt]
     weitere_block = ["### Weitere Direkt-Links", "", *weitere, ""] if weitere else []
 
     ent_link = entscheidungen_link(repo, spec)
@@ -775,7 +777,12 @@ def selbstpruefung_cli(argv: list[str]) -> int:
     p_plan = unter.add_parser("planen")
     p_plan.add_argument("spec", type=int)
     p_plan.add_argument("--stage", default="", help="Stage-App-Link (Vorgabe: staging.url aus .to-spawn/config.json)")
-    p_plan.add_argument("--rundschau-datei", type=Path, default=None, help="Rundschau-HTML-Datei (Vorgabe: docs/agents/rundschau_<S>.html)")
+    p_plan.add_argument(
+        "--rundschau-datei",
+        type=Path,
+        default=None,
+        help="Rundschau-HTML-Datei (Vorgabe: docs/agents/rundschau_<S>.html)",
+    )
     p_plan.add_argument("--neu", action="store_true", help="Auch nach grünem Marker erneut planen")
     p_plan.add_argument("--repo", type=Path, default=None)
     p_sam = unter.add_parser("sammeln")
@@ -881,7 +888,9 @@ def ablegen(argv: list[str]) -> int:
         return 2
     ap = _parser()
     ap.add_argument("--spec-fertig", default=None, help="Zeitpunkt „SPEC FERTIG“ (ISO), sonst jetzt")
-    ap.add_argument("--neue-runde", action="store_true", help="Runden-Zähler für eine neue Abnahme-Runde erhöhen (#370)")
+    ap.add_argument(
+        "--neue-runde", action="store_true", help="Runden-Zähler für eine neue Abnahme-Runde erhöhen (#370)"
+    )
     a = ap.parse_args(argv)
     repo = _repo(a.repo)
     p, neue_form = _paket(a, ap, repo)

@@ -32,7 +32,9 @@ REPO_ORDNER = Path(os.environ["TO_SPAWN_REPO"]).resolve() if os.environ.get("TO_
 
 
 def sh(*args: str, cwd: Path | None = None) -> str:
-    r = subprocess.run(list(args), capture_output=True, text=True, encoding="utf-8", cwd=cwd, check=False, **prozessbaum.fensterlos())
+    r = subprocess.run(
+        list(args), capture_output=True, text=True, encoding="utf-8", cwd=cwd, check=False, **prozessbaum.fensterlos()
+    )
     if r.returncode != 0:
         raise RuntimeError(f"{args[:3]} → {r.stderr.strip()[:200]}")
     return r.stdout.strip()

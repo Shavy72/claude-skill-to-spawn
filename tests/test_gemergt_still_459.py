@@ -30,7 +30,9 @@ def gemergt(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 AUSSAGE = "Pull-Request ist gemergt. Ich bin fertig."
 
 
-def test_gemergt_still_offen_anstoss_im_naechsten_takt_genau_einmal(welt: dict[str, Any], gemergt: dict[str, Any]) -> None:
+def test_gemergt_still_offen_anstoss_im_naechsten_takt_genau_einmal(
+    welt: dict[str, Any], gemergt: dict[str, Any]
+) -> None:
     _bild(welt, _sagt(AUSSAGE))
     w = _wecker(welt)
     w.einmal()
@@ -50,7 +52,9 @@ def test_gemergt_aber_nicht_auf_origin_kein_anstoss(
     assert _getippt(welt) == []
 
 
-@pytest.mark.parametrize("stand", [{"state": "CLOSED"}, {"labels": [{"name": "checkpoint:human"}]}, {"labels": [{"name": "staging:fertig"}]}])
+@pytest.mark.parametrize(
+    "stand", [{"state": "CLOSED"}, {"labels": [{"name": "checkpoint:human"}]}, {"labels": [{"name": "staging:fertig"}]}]
+)
 def test_gemergt_geschlossen_checkpoint_oder_staging_kein_anstoss(
     welt: dict[str, Any], gemergt: dict[str, Any], stand: dict[str, Any]
 ) -> None:
@@ -73,7 +77,9 @@ def test_gemergt_live_ja_aufforderung_kein_anstoss(welt: dict[str, Any], gemergt
     assert _getippt(welt) == []
 
 
-def test_ticket_stand_unlesbar_kein_anstoss(welt: dict[str, Any], gemergt: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ticket_stand_unlesbar_kein_anstoss(
+    welt: dict[str, Any], gemergt: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(ticket_zustand, "lesen", lambda *a, **k: None)
     _bild(welt, _sagt(AUSSAGE))
     _wecker(welt).einmal()

@@ -285,14 +285,22 @@ def _einreichen(ordner: Path, nummer: str) -> Ergebnis:
     sha = _git(ordner, "rev-parse", "HEAD")
     if _ist_vorfahr(ordner, sha, basis):
         return Ergebnis(OK, f"nichts einzureichen: {sha[:7]} ist schon auf {basis}")
-    if vom_haupt and not _ist_vorfahr(ordner, basis, sha) and not _git(ordner, "rev-list", "--no-merges", f"{sha}..{basis}"):
+    if (
+        vom_haupt
+        and not _ist_vorfahr(ordner, basis, sha)
+        and not _git(ordner, "rev-list", "--no-merges", f"{sha}..{basis}")
+    ):
         # #476: nur Merge-Commits eigener, schon gemergter Einreichungen fehlen (Nachziehen verpasst)
         try:
             _git(ordner, "merge", "--no-edit", "--quiet", basis)
         except _Rot:
             # Konflikt: keinen halben Merge im geteilten Klon liegen lassen
             subprocess.run(
-                ["git", "-C", str(ordner), "merge", "--abort"], capture_output=True, timeout=GIT_MAX_S, check=False, **prozessbaum.fensterlos()
+                ["git", "-C", str(ordner), "merge", "--abort"],
+                capture_output=True,
+                timeout=GIT_MAX_S,
+                check=False,
+                **prozessbaum.fensterlos(),
             )
             raise
         sha = _git(ordner, "rev-parse", "HEAD")
@@ -317,7 +325,9 @@ def _einreichen(ordner: Path, nummer: str) -> Ergebnis:
         if not _pr_gemergt(ordner, nr):
             raise
         log.warning("einreichen #%s: %s — Pull-Request #%s ist gemergt", nummer, rot.text, nr)
-        return Ergebnis(OK, f"{sha[:7]} gemergt (Pull-Request #{nr}, {zweig}){hinweis} — {basis} lokal nicht nachgezogen")
+        return Ergebnis(
+            OK, f"{sha[:7]} gemergt (Pull-Request #{nr}, {zweig}){hinweis} — {basis} lokal nicht nachgezogen"
+        )
     if not _ist_vorfahr(ordner, sha, basis):
         raise _Rot(ROT, f"Pull-Request #{nr} gemeldet, aber {sha[:7]} fehlt auf {basis}")
     if vom_haupt:

@@ -590,9 +590,7 @@ def sammeln(spec: int, q: Quellen, vorher: _Vorher) -> _Ergebnis:
         elif fenster is None:
             zustand, still_min = FENSTER_UNBEKANNT, None
         elif n in fenster:
-            zustand, still_min, m, letzte, blockiert_text = _fenster_lage(
-                n, *fenster[n], q, vorher, jetzt
-            )
+            zustand, still_min, m, letzte, blockiert_text = _fenster_lage(n, *fenster[n], q, vorher, jetzt)
             if m:
                 merker[str(n)] = m
         else:
@@ -771,9 +769,12 @@ def ticket_lage(spec: int, ticket: int, q: Quellen, ordner: Path | None = None) 
 def _beleg_letzte_zeile(lage: TicketLage, zustand: Zustand) -> str:
     """Aussagekräftige letzte Zeile für :class:`StandBeleg` (nie leer und nie nur „—“)."""
     if zustand == BLOCKIERT:
-        kandidat = lage.blockiert_text or (
-            lage.letzte_zeile if lage.letzte_zeile != STRICH else ""
-        ) or (lage.aussage if lage.aussage != STRICH else "") or "Session meldet blockiert"
+        kandidat = (
+            lage.blockiert_text
+            or (lage.letzte_zeile if lage.letzte_zeile != STRICH else "")
+            or (lage.aussage if lage.aussage != STRICH else "")
+            or "Session meldet blockiert"
+        )
     elif zustand == FERTIG:
         if lage.letzte_zeile != STRICH:
             kandidat = lage.letzte_zeile

@@ -22,18 +22,14 @@ from to_spawn import config, respawn
 
 
 @pytest.mark.parametrize("plattform", ["win32", "linux"])
-def test_bau_wt_dir_gilt_auf_jeder_plattform(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, plattform: str
-) -> None:
+def test_bau_wt_dir_gilt_auf_jeder_plattform(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, plattform: str) -> None:
     monkeypatch.delenv("TO_SPAWN_REPO", raising=False)
     monkeypatch.setenv("BAU_WT_DIR", str(tmp_path / "wts"))
     monkeypatch.setattr(sys, "platform", plattform)
     assert config.worktree_pfad(7, tmp_path) == f"{(tmp_path / 'wts').as_posix()}/wt-7"
 
 
-def test_ohne_bau_wt_dir_windows_vorgabe_c_dev(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_ohne_bau_wt_dir_windows_vorgabe_c_dev(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("TO_SPAWN_REPO", raising=False)
     monkeypatch.delenv("BAU_WT_DIR", raising=False)
     monkeypatch.setattr(sys, "platform", "win32")

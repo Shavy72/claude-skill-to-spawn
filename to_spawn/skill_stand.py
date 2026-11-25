@@ -154,9 +154,7 @@ def vergleich(skill: Path = SKILL) -> tuple[str, str]:
     # ponytail: nur SHA-Gleichheit, eine Installation von einem Zweig vor main gilt als veraltet;
     # Upgrade: Vorfahren-Prüfung, wenn der Stempel einmal die Historie kennt.
     klon = _klon_pfad(stempel)
-    return VERALTET, (
-        f"veraltet: installiert {commit[:KURZ]}, {ZWEIG} {entfernt[:KURZ]} — Befehl: {_befehl(klon)}"
-    )
+    return VERALTET, (f"veraltet: installiert {commit[:KURZ]}, {ZWEIG} {entfernt[:KURZ]} — Befehl: {_befehl(klon)}")
 
 
 def _ist_dauerhafter_arbeitsbaum(ordner: Path) -> bool:
@@ -220,11 +218,7 @@ def _dauerhafter_klon(klon: Path) -> str | None:
     wurzel = Path(zeilen[3]).resolve()
     if common != git_dir:
         haupt = common.parent.resolve()
-        return (
-            str(haupt)
-            if common.name == ".git" and _ist_dauerhafter_arbeitsbaum(haupt)
-            else None
-        )
+        return str(haupt) if common.name == ".git" and _ist_dauerhafter_arbeitsbaum(haupt) else None
     if (git_dir / "objects" / "info" / "alternates").is_file():
         haupt = _haupt_aus_alternates(git_dir)
         return str(haupt) if haupt is not None else None
@@ -261,15 +255,11 @@ def stempel(ziel: Path, klon: Path) -> dict[str, str]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument(
-        "--stempel", type=Path, required=True, help="installierte Kopie"
-    )
+    parser.add_argument("--stempel", type=Path, required=True, help="installierte Kopie")
     parser.add_argument("--klon", type=Path, required=True, help="Git-Klon des Skills")
     args = parser.parse_args(argv)
     daten = stempel(args.stempel, args.klon)
-    print(
-        f"Skill-Stand gestempelt: {daten['commit'][:KURZ] or 'unbekannt'} ({args.stempel / STEMPEL})"
-    )
+    print(f"Skill-Stand gestempelt: {daten['commit'][:KURZ] or 'unbekannt'} ({args.stempel / STEMPEL})")
     return 0
 
 

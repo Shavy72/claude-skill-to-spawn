@@ -56,9 +56,7 @@ def test_b7_prompt_nennt_respawn_aus_startklar(tmp_path: Path) -> None:
     assert ergebnis.stdout.count(text) == 2, text
 
 
-def test_b7_probe_prueft_respawn(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_b7_probe_prueft_respawn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", str(_heim_mit_werkzeugen(tmp_path)))
     _manifest(tmp_path, {"451": {"title": "a"}})
     befunde = startklar.werkzeug_probe(tmp_path, SPEC, settings_dateien=[])

@@ -39,9 +39,7 @@ def plugin_anlegen(heim: Path, version: str = VERSION, registrieren: bool = True
                 {
                     "version": 2,
                     "plugins": {
-                        "context-mode@context-mode": [
-                            {"scope": "user", "installPath": str(wurzel), "version": version}
-                        ]
+                        "context-mode@context-mode": [{"scope": "user", "installPath": str(wurzel), "version": version}]
                     },
                 }
             ),

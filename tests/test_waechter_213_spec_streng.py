@@ -71,9 +71,7 @@ def test_label_waechter_ok_meldet_den_verstoss_trotzdem(welt: dict[str, Path]) -
 
 
 def test_trailer_test_entfernt_entschuldigt_nichts(welt: dict[str, Path]) -> None:
-    _commit(
-        welt["repo"], "test: alt", {"tests/test_a.py": "def test_alt():\n    pass\n"}
-    )
+    _commit(welt["repo"], "test: alt", {"tests/test_a.py": "def test_alt():\n    pass\n"})
     _commit(
         welt["repo"],
         "refactor: Umbau (#901)\n\nTest-entfernt: test_alt prüfte die alte Tabelle",

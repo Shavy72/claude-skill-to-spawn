@@ -67,9 +67,7 @@ def _vorhandene_sitzung(socket: str, ordner: Path, name: str = SITZUNG) -> None:
     assert lauf.returncode == 0, lauf.stderr
 
 
-def _spawn(
-    tmp_path: Path, socket: str, *extra: str
-) -> subprocess.CompletedProcess[str]:
+def _spawn(tmp_path: Path, socket: str, *extra: str) -> subprocess.CompletedProcess[str]:
     """``spawn_srv.sh <S>`` mit einem ``tmux`` im PATH, das nur ``-L socket`` spricht."""
     from to_spawn import bash_wahl
 

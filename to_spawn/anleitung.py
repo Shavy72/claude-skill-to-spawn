@@ -158,8 +158,8 @@ ABSCHLUSS_ANWEISUNG = (
     "schreibt docs/agents/live_bereit_{S}.md; Code 2 = Lücken gefunden und je ein Folge-Ticket an der Spec angelegt — kein stilles Weiterlaufen, erst Lücken schließen; "
     "Code 0 = bereit, docs/agents/live_bereit_{S}.md mit Pathspec + [skip ci] committen + `python {SKILL}/to_spawn.py einreichen {S}`). "
     "Erst danach `python {SKILL}/skripte/abschluss_paket.py ablegen {S} --stand abnahme --stage <url> --rundschau <link> "
-    "--rundschau-datei docs/agents/rundschau_{S}.html --belege <link> --tests <link> --direkt \"<Titel (als Rolle)>=<url>\"… "
-    "--basic-auth-nutzer <name> --app-rolle \"<Name (rolle)>\" --bitwarden <eintrag>` "
+    '--rundschau-datei docs/agents/rundschau_{S}.html --belege <link> --tests <link> --direkt "<Titel (als Rolle)>=<url>"… '
+    '--basic-auth-nutzer <name> --app-rolle "<Name (rolle)>" --bitwarden <eintrag>` '
     "(prüft Rundschau-Deck + docs/agents/live_bereit_{S}.md, legt ab, schreibt docs/agents/entscheidungen_{S}.md, mailt nicht). "
     "Danach Aufbau-Prüfung (einmal): `python {SKILL}/skripte/thermo_lauf.py plan {S}`. "
     "Exit 0 → je Eintrag in `teile` ein Subagent, alle parallel im selben Zug (`model: opus`, Prompt = Feld `prompt` unverändert); "
@@ -179,7 +179,7 @@ ABSCHLUSS_ANWEISUNG = (
     "Exit 2 → `live.befehl` fehlt, Komplett-Prüfung grün, Live-Schritt nach Repo-Ablauf von Hand. "
     "Ohne ausdrückliches Wort des Nutzers geht nichts live. "
     "Meldet der Nutzer nach dem Abnahme-Paket Nachbesserungen (Kommentar im Spec-Issue), je Punkt ein Folge-Ticket an derselben Spec über "
-    "`python {SKILL}/skripte/abschluss_paket.py nachbesserung {S} --punkt \"<Punkt>\"` anlegen (Manifest ergänzt, Kette baut weiter); "
+    '`python {SKILL}/skripte/abschluss_paket.py nachbesserung {S} --punkt "<Punkt>"` anlegen (Manifest ergänzt, Kette baut weiter); '
     "sind die Folge-Tickets fertig, läuft der Abnahme-Abschluss erneut (neue Rundschau, neue Selbstprüfung, `thermo_lauf.py live-bereit plan {S} --neu`, "
     "`abschluss_paket.py ablegen {S} --stand abnahme …` → Paket trägt „Runde 2“ im Titel; keine zweite Mail). "
     "Nach dem Live-Deploy dasselbe einmal mit `--stand live` (`abschluss_paket.py ablegen {S} --stand live …` + `abschluss_paket.py nachsehen {S} --stand live`); "

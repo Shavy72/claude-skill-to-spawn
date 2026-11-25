@@ -318,9 +318,7 @@ def test_bau_1_und_bau_10_werden_nicht_verwechselt(welt: dict[str, Any]) -> None
     assert [g["ziel"] for g in _getippt(welt)] == [f"=spec-{SPEC}:@2"]
 
 
-def test_kaputtes_ticket_bricht_andere_weckrufe_nicht_ab(
-    welt: dict[str, Any], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_kaputtes_ticket_bricht_andere_weckrufe_nicht_ab(welt: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
     """Wirft das Lesen der Antwort eines Tickets, wird das andere trotzdem geweckt."""
     modul = _wecker_modul()
     andere = TICKET + 1

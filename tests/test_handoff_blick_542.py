@@ -61,11 +61,7 @@ def _rebase_auf_neue_basis(wt: Path, committer_zeit: float) -> None:
     _git(wt, "add", "basis.txt")
     _git(wt, "commit", "-q", "-m", "chore: neue Basis", zeit=committer_zeit)
     _git(wt, "checkout", "-q", zweig)
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if k not in ("GIT_AUTHOR_DATE", "GIT_COMMITTER_DATE")
-    }
+    env = {k: v for k, v in os.environ.items() if k not in ("GIT_AUTHOR_DATE", "GIT_COMMITTER_DATE")}
     env["GIT_COMMITTER_DATE"] = f"@{int(committer_zeit)} +0000"
     subprocess.run(
         ["git", "-C", str(wt), "rebase", "-q", "basis"],
@@ -168,9 +164,7 @@ def _manifest(haupt: Path) -> None:
 
 
 @pytest.fixture
-def blick_welt(
-    welt: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> dict[str, Any]:
+def blick_welt(welt: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """``welt`` + Manifest der Spec + Aufseher-Stand in tmp + Probe-Naht."""
     monkeypatch.setenv(aufseher_stand.STAND_ENV, str(tmp_path / "stand"))
     _manifest(welt["haupt"])
@@ -221,9 +215,7 @@ def test_blick_simulierte_uhr_leiter_spaetestens_180s_nach_faelligkeit(
     ],
     ids=["arbeitet", "rueckfrage", "ticket_zu"],
 )
-def test_blick_faelliger_handoff_ohne_still_und_offen_keine_leiter(
-    blick_welt: dict, bild: str, state: str
-) -> None:
+def test_blick_faelliger_handoff_ohne_still_und_offen_keine_leiter(blick_welt: dict, bild: str, state: str) -> None:
     blick_welt["aussen"].bild = bild
     blick_welt["aussen"].state = state
     _handoff(blick_welt["wt"], JETZT - 5 * MINUTE)
@@ -271,11 +263,7 @@ def test_blick_gescheiterte_leiter_nur_einmal_versucht_und_gemeldet(
 
 def _laut(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
     """Warnungen und Schlimmeres aus dem Blick-Modul (andere Module zählen nicht)."""
-    return [
-        r
-        for r in caplog.records
-        if r.name == handoff_blick.log.name and r.levelno >= logging.WARNING
-    ]
+    return [r for r in caplog.records if r.name == handoff_blick.log.name and r.levelno >= logging.WARNING]
 
 
 class KaputteNaht:
@@ -336,11 +324,7 @@ class ZaehlNaht(KaputteNaht):
 
 
 def _blick_faeden(spec: int) -> list[threading.Thread]:
-    return [
-        f
-        for f in threading.enumerate()
-        if f.name == f"handoff-blick-{spec}" and f.is_alive()
-    ]
+    return [f for f in threading.enumerate() if f.name == f"handoff-blick-{spec}" and f.is_alive()]
 
 
 def test_laeuft_startet_und_stoppt_faden_sauber() -> None:
@@ -357,9 +341,7 @@ def test_laeuft_startet_und_stoppt_faden_sauber() -> None:
     assert naht.aufrufe == 1
 
 
-def test_echte_naht_leiter_kind_ohne_to_spawn_repo(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_echte_naht_leiter_kind_ohne_to_spawn_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Befehl C als eigener Prozess: ``to_spawn.py leiter <S> <N>``, cwd=ordner,
     stdin=DEVNULL, ohne Fenster, Kind-Env ohne ``TO_SPAWN_REPO`` — die eigene bleibt."""
     monkeypatch.setenv("TO_SPAWN_REPO", str(tmp_path / "fremd"))
@@ -397,9 +379,7 @@ def test_echte_naht_leiter_echter_prozess_meldet_fehler(welt: dict) -> None:
     assert "GitHub-Repo unbekannt" in lauf.zeile
 
 
-def test_wache_main_startet_blick_vor_fahre_und_stoppt_danach(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_wache_main_startet_blick_vor_fahre_und_stoppt_danach(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``wache.main`` umschließt alle Aufseher-Runden mit dem Handoff-Blick (#542):
     Blick an → ``fahre`` (auch nach einer Ablösung) → Blick aus. Die Naht ist die echte
     ``EchteNaht`` mit Repo-Wurzel, Aufseher-Ordner und GitHub-Slug aus ``wache``."""

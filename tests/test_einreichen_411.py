@@ -310,7 +310,9 @@ def test_werkzeug_bricht_ab_meldet_rot_statt_traceback(
     assert erg.text
 
 
-def test_merge_bekommt_volle_sha_auch_wenn_kurze_ankommt(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+def test_merge_bekommt_volle_sha_auch_wenn_kurze_ankommt(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
     """#464: kommt eine kurze SHA an die Merge-Stelle, sieht ``gh pr merge`` trotzdem 40 Hex-Zeichen."""
     from to_spawn import einreichen
 
@@ -385,7 +387,9 @@ def test_aufseher_heilt_verpasstes_nachziehen_beim_naechsten_einreichen(
     assert erst.returncode == 0, erst.stdout + erst.stderr
     assert _git(klon, "rev-parse", "main") != _remote_main(welt), "Lauf 1 muss das Nachziehen verpasst haben"
     monkeypatch.delenv("EINREICHEN_SPERRE_NACH_MERGE")
-    sperre = Path(_git(klon, "rev-parse", "--path-format=absolute", "--git-common-dir")) / "refs/remotes/origin/main.lock"
+    sperre = (
+        Path(_git(klon, "rev-parse", "--path-format=absolute", "--git-common-dir")) / "refs/remotes/origin/main.lock"
+    )
     sperre.unlink()
     sha = _commit(klon, "docs/HANDOFF_2.md", "Stand 2\n", "docs(aufseher): Handoff 2 [skip ci]")
     zweit = _einreichen(klon, "1")

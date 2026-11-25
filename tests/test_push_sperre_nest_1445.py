@@ -173,9 +173,7 @@ def test_installer_kommt_aus_origin_nicht_aus_dem_arbeitsordner(tmp_path: Path) 
     """B2: Ein im Arbeitsordner veränderter Installer läuft nie, es zählt ``origin/master``."""
     klon, _heim = _welt(tmp_path)
     marke = tmp_path / "boese-gelaufen"
-    (klon / "scripts" / "hooks" / "install_git_hooks.sh").write_text(
-        f"touch {marke}\nexit 0\n", encoding="utf-8"
-    )
+    (klon / "scripts" / "hooks" / "install_git_hooks.sh").write_text(f"touch {marke}\nexit 0\n", encoding="utf-8")
     assert nest.git_hooks_einrichten(klon) is True
     assert not marke.exists(), "Installer aus dem Arbeitsordner ausgeführt"
     hook = Path(_git(klon, "rev-parse", "--path-format=absolute", "--git-common-dir").strip()) / "hooks" / "pre-push"

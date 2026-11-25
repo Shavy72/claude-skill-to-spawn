@@ -377,4 +377,3 @@ def test_ungueltiges_abnahme_argument_bricht_ohne_schreiben_ab(tmp_path: Path) -
         assert erwartet in lauf.stdout, (abn_arg, lauf.stdout)
     assert e2._welt(weltdatei)["posts"] == []
     assert e2._manifest(repo).read_bytes() == manifest_vorher
-

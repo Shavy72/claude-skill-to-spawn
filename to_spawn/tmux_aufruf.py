@@ -83,9 +83,7 @@ def aufrufen(*argumente: str, eingabe: str | None = None, start: bool = False) -
     except OSError as fehler:  # tmux fehlt (z. B. am PC: FileNotFoundError, #501)
         raise TmuxFehler(unterbefehl, f"nicht aufrufbar ({fehler})") from fehler
     except subprocess.TimeoutExpired as fehler:
-        raise TmuxFehler(
-            unterbefehl, f"keine Antwort nach {fehler.timeout} s"
-        ) from fehler
+        raise TmuxFehler(unterbefehl, f"keine Antwort nach {fehler.timeout} s") from fehler
     return fertig.stdout
 
 

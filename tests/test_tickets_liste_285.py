@@ -50,7 +50,7 @@ def test_git_bash_file_weg(tmp_path: Path, schreibweise: str) -> None:
 @braucht_bash
 @pytest.mark.parametrize("schreibweise", ["1476,1477", "'1476,1477'", "1476 1477"])
 def test_git_bash_command_weg(tmp_path: Path, schreibweise: str) -> None:
-    befehl = f'pwsh -NoProfile -Command "& \'{SKRIPT}\' -Spec 48 -Tickets {schreibweise} -NurListe"'
+    befehl = f"pwsh -NoProfile -Command \"& '{SKRIPT}' -Spec 48 -Tickets {schreibweise} -NurListe\""
     lauf = _lauf([BASH, "-c", befehl], tmp_path)
     assert lauf.returncode == 0, lauf.stdout + lauf.stderr
     assert _erkannt(lauf) == ["1476,1477"], lauf.stdout + lauf.stderr
@@ -59,7 +59,20 @@ def test_git_bash_command_weg(tmp_path: Path, schreibweise: str) -> None:
 @braucht_pwsh
 @pytest.mark.parametrize("schreibweise", SCHREIBWEISEN)
 def test_powershell_file_weg(tmp_path: Path, schreibweise: str) -> None:
-    lauf = _lauf([PWSH, "-NoProfile", "-File", SKRIPT, "-Spec", "48", "-Tickets", *schreibweise.replace('"', "").split(" "), "-NurListe"], tmp_path)
+    lauf = _lauf(
+        [
+            PWSH,
+            "-NoProfile",
+            "-File",
+            SKRIPT,
+            "-Spec",
+            "48",
+            "-Tickets",
+            *schreibweise.replace('"', "").split(" "),
+            "-NurListe",
+        ],
+        tmp_path,
+    )
     assert lauf.returncode == 0, lauf.stdout + lauf.stderr
     assert _erkannt(lauf) == ["1476,1477"], lauf.stdout + lauf.stderr
 
@@ -75,7 +88,9 @@ def test_powershell_command_weg(tmp_path: Path, schreibweise: str) -> None:
 @braucht_pwsh
 def test_restliche_argumente_werden_nicht_zum_fenster(tmp_path: Path) -> None:
     # „1476 1477“ per -File: 1477 darf nicht als -Window (Positionsparameter) landen.
-    lauf = _lauf([PWSH, "-NoProfile", "-File", SKRIPT, "-Spec", "48", "-Tickets", "1476", "1477", "-NurListe"], tmp_path)
+    lauf = _lauf(
+        [PWSH, "-NoProfile", "-File", SKRIPT, "-Spec", "48", "-Tickets", "1476", "1477", "-NurListe"], tmp_path
+    )
     assert lauf.returncode == 0, lauf.stdout + lauf.stderr
     assert _erkannt(lauf) == ["1476,1477"]
 
@@ -90,7 +105,9 @@ def test_keine_zahl_meldet_und_exit_2(tmp_path: Path) -> None:
 @braucht_pwsh
 @pytest.mark.parametrize("trenner", [";", ",", " "])
 def test_semikolon_trennt_auch(tmp_path: Path, trenner: str) -> None:
-    lauf = _lauf([PWSH, "-NoProfile", "-File", SKRIPT, "-Spec", "48", "-Tickets", f"1476{trenner}1477", "-NurListe"], tmp_path)
+    lauf = _lauf(
+        [PWSH, "-NoProfile", "-File", SKRIPT, "-Spec", "48", "-Tickets", f"1476{trenner}1477", "-NurListe"], tmp_path
+    )
     assert _erkannt(lauf) == ["1476,1477"], lauf.stdout + lauf.stderr
 
 

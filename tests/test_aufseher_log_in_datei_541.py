@@ -24,8 +24,7 @@ def _terminal_handler():
         for h in logging.getLogger().handlers
         if isinstance(h, logging.StreamHandler)
         and not isinstance(h, logging.FileHandler)
-        and getattr(h, "stream", None)
-        in (sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__)
+        and getattr(h, "stream", None) in (sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__)
     ]
 
 
@@ -83,9 +82,7 @@ def test_nach_dem_abschalten_bleibt_nur_der_datei_handler(tmp_path):
         assert _terminal_handler()
         w.terminal_log_abschalten()
         assert _terminal_handler() == []
-        assert any(
-            isinstance(h, logging.FileHandler) for h in logging.getLogger().handlers
-        )
+        assert any(isinstance(h, logging.FileHandler) for h in logging.getLogger().handlers)
 
     _sauber(lauf)
 
@@ -106,11 +103,7 @@ def test_main_schaltet_terminal_log_vor_fahre_ab(tmp_path, monkeypatch):
 
         def fahre(**kw):
             gesehen["terminal"] = _terminal_handler()
-            gesehen["datei"] = [
-                h
-                for h in logging.getLogger().handlers
-                if isinstance(h, logging.FileHandler)
-            ]
+            gesehen["datei"] = [h for h in logging.getLogger().handlers if isinstance(h, logging.FileHandler)]
             return 0
 
         monkeypatch.setattr(w.waechter_lauf, "fahre", fahre)

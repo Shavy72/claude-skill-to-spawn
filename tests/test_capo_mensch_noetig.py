@@ -142,15 +142,17 @@ def test_gleicher_stand_mehrere_zeilen_ein_kommentar(welt: dict[str, Path], date
     """Review-Befund: scharf schreibt je Stop eine Zeile (neue Zeit) → trotzdem nur 1 Kommentar."""
     _schreibe(datei, _eintrag(zeit="2026-09-24T22:00:00+0200"), _eintrag(zeit="2026-09-24T22:05:00+0200"))
     _capo(welt)
-    _schreibe(datei, _eintrag(zeit="2026-09-24T22:00:00+0200"), _eintrag(zeit="2026-09-24T22:05:00+0200"),
-              _eintrag(zeit="2026-09-24T22:10:00+0200"))
+    _schreibe(
+        datei,
+        _eintrag(zeit="2026-09-24T22:00:00+0200"),
+        _eintrag(zeit="2026-09-24T22:05:00+0200"),
+        _eintrag(zeit="2026-09-24T22:10:00+0200"),
+    )
     _capo(welt)
     assert len(_mensch_kommentare(welt, "902")) == 1
 
 
-def test_fremdes_repo_gleiche_spec_kein_kommentar_465(
-    welt: dict[str, Path], datei: Path
-) -> None:
+def test_fremdes_repo_gleiche_spec_kein_kommentar_465(welt: dict[str, Path], datei: Path) -> None:
     """#465: Probe-Lauf 2 bekam am blockierten #5 den Eintrag eines anderen Repos (gleiche
     Spec 1, gleiches Ticket 5, Worktree ``to-spawn-probe-srv-1/wt-5``) — fremd, nie melden."""
     fremd = welt["tmp"] / "anderes-repo" / "wt-902"

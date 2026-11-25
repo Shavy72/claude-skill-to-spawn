@@ -17,9 +17,7 @@ from to_spawn import config, einrichten
 SLUG = "Shavy72/probe-542"
 
 
-def _welt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, gh_code: int, gh_text: str
-) -> Path:
+def _welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, gh_code: int, gh_text: str) -> Path:
     repo = tmp_path / "repo"
     repo.mkdir()
     for a in (
@@ -28,20 +26,14 @@ def _welt(
     ):
         subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True)
     stub = tmp_path / "gh_stub.py"
-    stub.write_text(
-        f"import sys\nprint({gh_text!r})\nsys.exit({gh_code})\n", encoding="utf-8"
-    )
+    stub.write_text(f"import sys\nprint({gh_text!r})\nsys.exit({gh_code})\n", encoding="utf-8")
     monkeypatch.setenv("TO_SPAWN_GH_STUB", str(stub))
     monkeypatch.setenv("TO_SPAWN_MASCHINE", str(tmp_path / "maschine.json"))
     return repo
 
 
 def _eintrag(repo: Path) -> dict[str, str]:
-    return next(
-        e
-        for e in config.maschine()["repos"]
-        if Path(e["pfad"]).resolve() == repo.resolve()
-    )
+    return next(e for e in config.maschine()["repos"] if Path(e["pfad"]).resolve() == repo.resolve())
 
 
 def _anlegen(repo: Path) -> str:
@@ -50,9 +42,7 @@ def _anlegen(repo: Path) -> str:
     return aus.getvalue()
 
 
-def test_a_beleg_da_wird_eingetragen(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_beleg_da_wird_eingetragen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo = _welt(
         tmp_path,
         monkeypatch,
@@ -63,17 +53,13 @@ def test_a_beleg_da_wird_eingetragen(
     assert _eintrag(repo)["ticket_repo"] == SLUG
 
 
-def test_b_gh_fehler_bleibt_leer_mit_hinweis(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_b_gh_fehler_bleibt_leer_mit_hinweis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo = _welt(tmp_path, monkeypatch, 1, "")
     assert "ticket_repo fehlt" in _anlegen(repo)
     assert _eintrag(repo)["ticket_repo"] == ""
 
 
-def test_c_issues_aus_bleibt_leer_mit_hinweis(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_c_issues_aus_bleibt_leer_mit_hinweis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo = _welt(
         tmp_path,
         monkeypatch,
@@ -84,9 +70,7 @@ def test_c_issues_aus_bleibt_leer_mit_hinweis(
     assert _eintrag(repo)["ticket_repo"] == ""
 
 
-def test_d_vorhandener_wert_bleibt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_d_vorhandener_wert_bleibt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo = _welt(
         tmp_path,
         monkeypatch,
@@ -94,13 +78,7 @@ def test_d_vorhandener_wert_bleibt(
         json.dumps({"hasIssuesEnabled": True, "nameWithOwner": SLUG}),
     )
     (tmp_path / "maschine.json").write_text(
-        json.dumps(
-            {
-                "repos": [
-                    {"slug": SLUG, "pfad": str(repo), "ticket_repo": "o/eigene-tickets"}
-                ]
-            }
-        ),
+        json.dumps({"repos": [{"slug": SLUG, "pfad": str(repo), "ticket_repo": "o/eigene-tickets"}]}),
         encoding="utf-8",
     )
     assert "ticket_repo fehlt" not in _anlegen(repo)

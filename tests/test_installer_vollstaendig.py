@@ -19,6 +19,7 @@ SKILL = Path(__file__).resolve().parent.parent
 # ``probe`` ist nicht mehr ausgenommen (#466): wird mitinstalliert, damit ``probe/anlegen.sh`` auch
 # aus der installierten Kopie läuft.
 # ``.github`` (#537): GitHub-Actions-Workflow, nur für die Prüfung im Repo.
+# ``ruff.toml`` (#190): Formatier-Konfiguration, nur für die Prüfung im Repo.
 NICHT_INSTALLIERT = {
     ".github",
     ".gitignore",
@@ -26,6 +27,7 @@ NICHT_INSTALLIERT = {
     ".review",
     "messung",
     "conftest.py",
+    "ruff.toml",
 }
 
 

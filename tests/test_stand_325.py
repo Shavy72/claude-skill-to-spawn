@@ -23,11 +23,7 @@ SKILL = Path(__file__).resolve().parent.parent
 CLI = SKILL / "to_spawn.py"
 GH_STUB = Path(__file__).resolve().parent / "hilfen" / "gh_stub.py"
 #: Echte Skill-Stand-Wache aus dem DuoPlus-Worktree (#282/#325).
-WACHE = Path(
-    os.environ.get(
-        "SKILL_STAND_WACHE", "C:/dev/wt-325/scripts/hooks/skill_stand_wache.py"
-    )
-)
+WACHE = Path(os.environ.get("SKILL_STAND_WACHE", "C:/dev/wt-325/scripts/hooks/skill_stand_wache.py"))
 
 SPEC = 900
 TICKET = "901"
@@ -53,9 +49,7 @@ def _py(code: str) -> str:
 def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     """Wegwerf-Repo mit Bare-Remote, Manifest, gestelltem gh, PC- und Server-Skill."""
     fern = tmp_path / "fern.git"
-    subprocess.run(
-        ["git", "init", "--bare", str(fern)], check=True, capture_output=True
-    )
+    subprocess.run(["git", "init", "--bare", str(fern)], check=True, capture_output=True)
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init")
@@ -102,14 +96,10 @@ def _konfig(welt: dict[str, Path], stand: dict[str, str] | None) -> None:
         # Syntax-Sperre prüft die Test-Welt, nicht den echten Skill-Ordner.
         daten["stand"] = {"skill_ordner": welt["pc"].as_posix(), **stand}
     (welt["repo"] / ".to-spawn").mkdir(exist_ok=True)
-    (welt["repo"] / ".to-spawn" / "config.json").write_text(
-        json.dumps(daten), encoding="utf-8"
-    )
+    (welt["repo"] / ".to-spawn" / "config.json").write_text(json.dumps(daten), encoding="utf-8")
 
 
-def _cli(
-    repo: Path, *args: str, env: dict[str, str] | None = None
-) -> subprocess.CompletedProcess[str]:
+def _cli(repo: Path, *args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(CLI), *args],
         cwd=str(repo),
@@ -134,9 +124,7 @@ def test_abweichender_server_wird_nachgezogen(welt: dict[str, Path]) -> None:
     ergebnis = _cli(welt["repo"], "stand")
     assert ergebnis.returncode == 0, _aus(ergebnis)
     assert (welt["tmp"] / "push_lief").exists()
-    assert (welt["server"] / "to_spawn" / "kern.py").read_text(
-        encoding="utf-8"
-    ) == "print('neu')\n"
+    assert (welt["server"] / "to_spawn" / "kern.py").read_text(encoding="utf-8") == "print('neu')\n"
     assert "Push" in _aus(ergebnis)
     # Unabhängige Nachprüfung mit der echten Wache: jetzt gleich.
     nach = subprocess.run(
@@ -166,9 +154,7 @@ def test_gescheiterter_push_weigert_sich(welt: dict[str, Path]) -> None:
     _konfig(welt, {"pruefen": _pruefen(welt), "push": _py("import sys; sys.exit(5)")})
     ergebnis = _cli(welt["repo"], "stand")
     assert ergebnis.returncode != 0, _aus(ergebnis)
-    assert "Push auf den Bau-Server gescheitert (Exit 5) — nichts gestartet" in _aus(
-        ergebnis
-    )
+    assert "Push auf den Bau-Server gescheitert (Exit 5) — nichts gestartet" in _aus(ergebnis)
 
 
 # --- (d) nicht prüfbar ---------------------------------------------------------
@@ -218,9 +204,7 @@ def test_spawn_srv_mit_kaputtem_push_startet_nicht(welt: dict[str, Path]) -> Non
     marker, env = _terminal_marker(welt["tmp"])
     ergebnis = _cli(welt["repo"], "spawn", str(SPEC), "--ziel", "srv", env=env)
     assert ergebnis.returncode == 3, _aus(ergebnis)
-    assert "Push auf den Bau-Server gescheitert (Exit 5) — nichts gestartet" in _aus(
-        ergebnis
-    )
+    assert "Push auf den Bau-Server gescheitert (Exit 5) — nichts gestartet" in _aus(ergebnis)
     assert "Ziel srv ·" not in _aus(ergebnis)
     assert not marker.exists()
 
@@ -237,9 +221,7 @@ def test_spawn_srv_dry_run_prueft_nur(welt: dict[str, Path]) -> None:
 
 
 @pytest.mark.parametrize("stand", [None, {"pruefen": "", "push": ""}])
-def test_ohne_stand_konfig_uebersprungen(
-    welt: dict[str, Path], stand: dict[str, str] | None
-) -> None:
+def test_ohne_stand_konfig_uebersprungen(welt: dict[str, Path], stand: dict[str, str] | None) -> None:
     _konfig(welt, stand)
     ergebnis = _cli(welt["repo"], "stand")
     assert ergebnis.returncode == 0, _aus(ergebnis)
@@ -274,10 +256,7 @@ def test_fehlende_stand_konfig_warnt(welt: dict[str, Path]) -> None:
     _konfig(welt, None)
     ergebnis = _cli(welt["repo"], "stand")
     assert ergebnis.returncode == 0, _aus(ergebnis)
-    assert (
-        "WARNING Stand-Check nicht eingerichtet — Server könnte alten Skill haben"
-        in _aus(ergebnis)
-    )
+    assert "WARNING Stand-Check nicht eingerichtet — Server könnte alten Skill haben" in _aus(ergebnis)
 
 
 def test_befehle_bekommen_den_python_des_aufrufers(welt: dict[str, Path]) -> None:
@@ -285,7 +264,7 @@ def test_befehle_bekommen_den_python_des_aufrufers(welt: dict[str, Path]) -> Non
     älteres Python als der Aufrufer (Live-Lauf #325: ImportError ``datetime.UTC``)."""
     probe = (
         "python -c \"import os,sys; p=os.environ.get('TO_SPAWN_PY'); "
-        "sys.exit(0 if p and os.path.samefile(p, sys.executable) else 7)\""
+        'sys.exit(0 if p and os.path.samefile(p, sys.executable) else 7)"'
     )
     _konfig(welt, {"pruefen": probe, "push": ""})
     ergebnis = _cli(welt["repo"], "stand")

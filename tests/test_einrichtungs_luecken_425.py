@@ -31,9 +31,7 @@ NEU = {
 
 def _repo(tmp_path: Path, werkzeug: bool = True) -> Path:
     if werkzeug:
-        (tmp_path / "pyproject.toml").write_text(
-            "[project]\nname = 'x'\n", encoding="utf-8"
-        )
+        (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n", encoding="utf-8")
     return tmp_path
 
 
@@ -66,9 +64,7 @@ def test_live_url_und_aufraeumen_sind_keine_pflicht(tmp_path: Path) -> None:
         (("live", "befehl"), "live.befehl"),
     ],
 )
-def test_je_fehlender_schluessel_genau_eine_luecke(
-    tmp_path: Path, weg: tuple[str, str], lucke: str
-) -> None:
+def test_je_fehlender_schluessel_genau_eine_luecke(tmp_path: Path, weg: tuple[str, str], lucke: str) -> None:
     eigen = json.loads(json.dumps(NEU))
     eigen[weg[0]][weg[1]] = "   "
     assert einrichtungs_ticket.luecken(_repo(tmp_path), _konfig(**eigen)) == [lucke]
@@ -85,9 +81,7 @@ def test_werkzeug_fehlt_bleibt_eigene_luecke(tmp_path: Path) -> None:
     assert fehlt == ["pruefung"]
 
 
-@pytest.mark.parametrize(
-    "lucke", ["pruefung.schnell", "pruefung.komplett", "live.befehl"]
-)
+@pytest.mark.parametrize("lucke", ["pruefung.schnell", "pruefung.komplett", "live.befehl"])
 def test_auftrag_sagt_was_wo_und_beispiel(lucke: str) -> None:
     text = einrichtungs_ticket._AUFTRAG[lucke]
     gruppe, schluessel = lucke.split(".")
@@ -110,9 +104,7 @@ def test_live_schritt_nicht_text_ist_leer(wert: Any) -> None:
 
 
 def test_text_bleibt_text() -> None:
-    assert config.pruef_befehl(
-        {"pruefung": {"schnell": "  pytest -q "}}, "schnell"
-    ) == ("pytest -q")
+    assert config.pruef_befehl({"pruefung": {"schnell": "  pytest -q "}}, "schnell") == ("pytest -q")
 
 
 def test_liste_als_befehl_wird_luecke(tmp_path: Path) -> None:
@@ -150,9 +142,7 @@ def test_laufender_bau_bleibt_nicht_stehen(tmp_path: Path) -> None:
 
 
 def test_voll_eingerichtet_bleibt_still(tmp_path: Path) -> None:
-    repo, weltdatei, umgebung = t410._aufbau(
-        tmp_path, konfig={**STAGING, **NEU}, python=True
-    )
+    repo, weltdatei, umgebung = t410._aufbau(tmp_path, konfig={**STAGING, **NEU}, python=True)
     lauf = t410._cli(repo, umgebung, "regularien", str(e2.SPEC))
     assert lauf.returncode == 0, lauf.stdout + lauf.stderr
     assert "angelegt" not in e2._welt(weltdatei)

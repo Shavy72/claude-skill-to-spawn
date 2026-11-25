@@ -61,8 +61,7 @@ def _setze_block(text: str, name: str, block: str, nl: str = "\n") -> str:
     start, ende = text.find(start_praefix), text.find(ende_zeile)
     if anzahl != (1, 1) or ende < start:
         raise ValueError(
-            f"Block {name}: Marker-Zeilen kein einzelnes Paar (Start {anzahl[0]}×, "
-            f"Ende {anzahl[1]}×) — von Hand prüfen"
+            f"Block {name}: Marker-Zeilen kein einzelnes Paar (Start {anzahl[0]}×, Ende {anzahl[1]}×) — von Hand prüfen"
         )
     ende += len(ende_zeile)
     if text.startswith(nl, ende):
@@ -105,12 +104,8 @@ def schreibe(ziel: Path, ordner: Path = QUELL_ORDNER) -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    parser = argparse.ArgumentParser(
-        description="Globale Regel-Blöcke in eine CLAUDE.md schreiben"
-    )
-    parser.add_argument(
-        "--ziel", type=Path, default=Path.home() / ".claude" / "CLAUDE.md"
-    )
+    parser = argparse.ArgumentParser(description="Globale Regel-Blöcke in eine CLAUDE.md schreiben")
+    parser.add_argument("--ziel", type=Path, default=Path.home() / ".claude" / "CLAUDE.md")
     parser.add_argument(
         "--pruefen",
         action="store_true",
