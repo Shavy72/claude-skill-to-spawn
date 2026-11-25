@@ -121,6 +121,41 @@ def attrappe(ordner: Path, name: str, python_code: str) -> Path:
     return skript
 
 
+#: Ordner von Werkzeugen, kein Repo-Inhalt — Rückfall, wenn git nicht greift (#491, #532).
+WERKZEUG_ORDNER = frozenset({".git", "__pycache__", ".ruff_cache", ".pytest_cache", ".mypy_cache"})
+
+
+def git_dateien(wurzel: Path) -> list[str] | None:
+    """Relativpfade unter ``wurzel``, die git kennt (``git ls-files``); ``None`` ohne git bzw. Repo (#491, #532)."""
+    try:
+        lauf = subprocess.run(
+            ["git", "-C", str(wurzel), "-c", "core.quotepath=false", "ls-files", "-z"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return [rel for rel in lauf.stdout.split("\0") if rel]
+
+
+def repo_dateien(ordner: Path) -> list[Path]:
+    """Dateien unter ``ordner``, die zum Repo gehören — ohne ``__pycache__``/Caches (#491, #532).
+
+    Im Git-Repo liefert ``git ls-files`` nur erfasste Dateien (übrig gebliebene
+    ``__pycache__/*.pyc`` oder ``.ruff_cache`` fallen heraus). Ohne git: Rückfall auf
+    ``ordner.rglob("*")`` ohne :data:`WERKZEUG_ORDNER`.
+    """
+    bekannt = git_dateien(ordner)
+    kandidaten = ordner.rglob("*") if bekannt is None else (ordner / rel for rel in bekannt)
+    return sorted(
+        p
+        for p in kandidaten
+        if p.is_file() and not (WERKZEUG_ORDNER & set(p.relative_to(ordner).parts))
+    )
+
+
 #: Eigener Temp-Ordner dieses Laufs (#349), nur gesetzt, wenn ``pytest_configure`` ihn anlegte.
 _EIGENER_BASETEMP = pytest.StashKey[Path]()
 

@@ -14,6 +14,7 @@ die echten Prozess-Fälle am Ende laufen nur auf Windows.
 from __future__ import annotations
 
 import ctypes
+import os
 import subprocess
 import sys
 import types
@@ -82,10 +83,11 @@ class _WinWelt:
             getattr(prozessbaum.arbeitsordner_in_windows, "__wrapped__", prozessbaum.arbeitsordner_in_windows),
         )
         monkeypatch.setattr(prozessbaum, "_win32", lambda: (self._kernel(), self._nt()))
+        ich = os.getpid()
         monkeypatch.setattr(
             prozessbaum,
             "_momentaufnahme_windows",
-            lambda: {pid: (4, 1000 + pid) for pid in self.prozesse},
+            lambda: {pid: (ich, 1000 + pid) for pid in self.prozesse},
         )
         monkeypatch.setattr(prozessbaum, "_ordner_von", lambda pfad: ((1, 42), r"\\?\C:\ziel"))
         monkeypatch.setattr(
