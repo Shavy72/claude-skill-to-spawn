@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from to_spawn import capo, config, gh, hausmeister, inventur, temp_ordner
+from to_spawn import capo, config, gh, hausmeister, inventur, prozessbaum, temp_ordner
 
 log = logging.getLogger("to_spawn.nest")
 
@@ -140,6 +140,7 @@ def _git(ordner: Path, *args: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         check=False,
+        **prozessbaum.fensterlos(),
     )
 
 
@@ -246,6 +247,7 @@ def _auschecken_ohne_beleg_bilder(worktree: Path, belege: str) -> None:
         ["git", "-C", str(worktree), "ls-files", "-z", "--", belege],
         capture_output=True,
         check=False,
+        **prozessbaum.fensterlos(),
     )
     if alte.returncode != 0:
         raise NestFehler(f"git ls-files scheiterte: {alte.stderr.decode(errors='replace').strip()[:300]}")
@@ -256,6 +258,7 @@ def _auschecken_ohne_beleg_bilder(worktree: Path, belege: str) -> None:
             input=b"\0".join(bilder) + b"\0",
             capture_output=True,
             check=False,
+            **prozessbaum.fensterlos(),
         )
         if markiert.returncode != 0:
             fehler = markiert.stderr.decode(errors="replace").strip()[:300]
@@ -344,6 +347,7 @@ def git_hooks_einrichten(klon: Path) -> bool:
                 capture_output=True,
                 timeout=GIT_HOOKS_TIMEOUT_S,
                 check=False,
+                **prozessbaum.fensterlos(),
             )
         except (OSError, subprocess.TimeoutExpired) as fehler:
             log.warning("Push-Sperre nicht eingerichtet: git show %s scheiterte (%s)", ref, fehler)
@@ -366,6 +370,7 @@ def git_hooks_einrichten(klon: Path) -> bool:
                 text=True,
                 timeout=GIT_HOOKS_TIMEOUT_S,
                 check=False,
+                **prozessbaum.fensterlos(),
             )
     except (OSError, subprocess.TimeoutExpired) as fehler:
         log.warning("Push-Sperre nicht eingerichtet: Installer von %s scheiterte (%s)", ref, fehler)
@@ -531,7 +536,7 @@ def _bws_geheimnisse(bws: str, projekt: str | None, token: str, environ: Mapping
     befehl = [bws, "secret", "list", *([projekt] if projekt else []), "--output", "json"]
     umgebung = {**environ, "BWS_ACCESS_TOKEN": token}
     try:
-        ergebnis = subprocess.run(befehl, env=umgebung, capture_output=True, text=True, check=False, timeout=120)
+        ergebnis = subprocess.run(befehl, env=umgebung, capture_output=True, text=True, check=False, timeout=120, **prozessbaum.fensterlos())
     except (OSError, subprocess.TimeoutExpired) as fehler:
         raise NestFehler(f"bws nicht startbar ({type(fehler).__name__})") from fehler
     if ergebnis.returncode != 0:

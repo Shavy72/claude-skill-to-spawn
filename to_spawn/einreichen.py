@@ -42,7 +42,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeVar
 
-from . import config, gh, nest, pruef, pruefplan, uebergabe_sichern
+from . import config, gh, nest, prozessbaum, pruef, pruefplan, uebergabe_sichern
 
 log = logging.getLogger("to_spawn.einreichen")
 
@@ -106,6 +106,7 @@ def _git(ordner: Path, *args: str) -> str:
                 errors="replace",
                 timeout=GIT_MAX_S,
                 check=False,
+                **prozessbaum.fensterlos(),
             )
         except (OSError, subprocess.TimeoutExpired) as fehler:
             raise _Rot(ROT, f"git {args[0]} scheiterte: {fehler}") from fehler
@@ -125,6 +126,7 @@ def _ist_vorfahr(ordner: Path, a: str, b: str) -> bool:
         capture_output=True,
         timeout=GIT_MAX_S,
         check=False,
+        **prozessbaum.fensterlos(),
     )
     return erg.returncode == 0
 
@@ -156,6 +158,7 @@ def _projekt_weg(ordner: Path, haupt: str) -> bool:
         capture_output=True,
         timeout=GIT_MAX_S,
         check=False,
+        **prozessbaum.fensterlos(),
     )
     return erg.returncode == 0
 
@@ -273,7 +276,7 @@ def _einreichen(ordner: Path, nummer: str) -> Ergebnis:
         except _Rot:
             # Konflikt: keinen halben Merge im geteilten Klon liegen lassen
             subprocess.run(
-                ["git", "-C", str(ordner), "merge", "--abort"], capture_output=True, timeout=GIT_MAX_S, check=False
+                ["git", "-C", str(ordner), "merge", "--abort"], capture_output=True, timeout=GIT_MAX_S, check=False, **prozessbaum.fensterlos()
             )
             raise
         sha = _git(ordner, "rev-parse", "HEAD")

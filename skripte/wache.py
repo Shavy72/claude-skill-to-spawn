@@ -56,6 +56,7 @@ from to_spawn import (  # noqa: E402
     vertrauen,
     waechter_lauf,
 )
+from to_spawn import prozessbaum  # noqa: E402
 
 log = logging.getLogger("wache")
 #: Repo, in dem gearbeitet wird: ``TO_SPAWN_REPO`` (setzt die Weiterleitung im Repo), sonst
@@ -91,6 +92,7 @@ def repo_aus_origin(fallback: str = "") -> str:
             capture_output=True,
             text=True,
             check=False,
+            **prozessbaum.fensterlos(),
         ).stdout.strip()
     except OSError:
         return fallback

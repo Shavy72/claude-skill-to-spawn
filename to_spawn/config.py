@@ -40,7 +40,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from . import vorgaben
+from . import prozessbaum, vorgaben
 
 log = logging.getLogger("to_spawn.config")
 
@@ -285,6 +285,7 @@ def _repo_kennung(ordner: Path) -> str | None:
                 encoding="utf-8",
                 errors="replace",
                 check=False,
+                **prozessbaum.fensterlos(),
             )
         except OSError as fehler:
             log.warning("git in %s nicht startbar: %s", ordner, fehler)

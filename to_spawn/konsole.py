@@ -7,6 +7,8 @@ import subprocess
 import sys
 from typing import Any, TypedDict
 
+from to_spawn import prozessbaum
+
 
 class _TextLesart(TypedDict):
     encoding: str
@@ -40,7 +42,7 @@ def lauf_daten(befehl: list[str], **kwargs: Any) -> "subprocess.CompletedProcess
     ``OSError``/``TimeoutExpired`` bleiben beim Aufrufer. Ein Nicht-UTF-8-Byte (z. B. Windows-Hinweis in
     OEM-Kodierung) ist kein Absturz, sondern „nicht lesbar“: Aufräum- und Prüf-Wege laufen weiter.
     """
-    roh = subprocess.run(befehl, capture_output=True, **kwargs)
+    roh = subprocess.run(befehl, capture_output=True, **{**prozessbaum.fensterlos(), **kwargs})
     try:
         aus = _text(roh.stdout)
         fehler = _text(roh.stderr)

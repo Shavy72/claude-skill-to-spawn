@@ -33,7 +33,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from to_spawn import bau_log, config, konsole, leitstand
+from to_spawn import bau_log, config, konsole, leitstand, prozessbaum
 
 log = logging.getLogger(__name__)
 
@@ -83,6 +83,7 @@ def _git(wt: Path, *args: str) -> str:
         ["git", "-C", str(wt), *args],
         capture_output=True,
         **konsole.UNTERPROZESS_PFADE,
+        **prozessbaum.fensterlos(),
         check=True,
     ).stdout
 
