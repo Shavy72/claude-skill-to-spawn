@@ -132,9 +132,24 @@ def _origin_url(cwd: Path | None) -> str | None:
     return url.replace("\\", "/")  # Windows-Pfad als Origin (C:\…\org\fern.git), #68
 
 
-def _github_slug(url: str) -> str:
-    treffer = re.search(r"github\.com[:/]([^/]+/[^/\s]+?)(?:\.git)?$", url)
+#: #235 H1 / #129: nur diese drei Anfänge sind GitHub; ein fremder Host (``notgithub.com``)
+#: oder ein lokaler Pfad mit ``github.com/…`` im Namen ist kein GitHub-Repo (nur mit ``.match``).
+_GITHUB_SLUG = re.compile(
+    r"(?:https://github\.com/|ssh://git@github\.com/|git@github\.com:)([^/\s]+/[^/\s]+?)(?:\.git)?/?$"
+)
+
+
+def github_slug(url: str) -> str:
+    """``owner/name`` einer GitHub-URL; alles andere (fremder Host, Pfad, ``http://``) ⇒ ``""``.
+
+    Einzige Stelle für die GitHub-Slug-Regel (#129, #235 H1) — ``gh`` und ``hausmeister``
+    teilen dieselbe Prüfung.
+    """
+    treffer = _GITHUB_SLUG.match(url.strip())
     return treffer.group(1) if treffer else ""
+
+
+_github_slug = github_slug
 
 
 def github_slug_aus_origin(cwd: Path | None = None) -> str:
@@ -143,7 +158,7 @@ def github_slug_aus_origin(cwd: Path | None = None) -> str:
     Für alles, was den Slug dauerhaft festhält (Maschinen-Liste): ein lokaler Pfad als
     origin (Wegwerf-Klon) ergibt nie einen geratenen Slug.
     """
-    return _github_slug(_origin_url(cwd) or "")
+    return github_slug(_origin_url(cwd) or "")
 
 
 def repo_aus_origin(cwd: Path | None = None, fallback: str = "") -> str:
@@ -152,7 +167,7 @@ def repo_aus_origin(cwd: Path | None = None, fallback: str = "") -> str:
     url = _origin_url(cwd)
     if url is None:
         return fallback
-    if slug := _github_slug(url):
+    if slug := github_slug(url):
         return slug
     treffer = re.search(r"([^/\\]+/[^/\\]+?)(?:\.git)?$", url)
     return treffer.group(1) if treffer else fallback
