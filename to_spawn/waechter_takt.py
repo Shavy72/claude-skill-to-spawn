@@ -45,7 +45,22 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from . import befugnis, befund, briefkasten, capo, config, gh, leitstand, starter, ticket_zustand, waechter_lauf
+from . import (
+    aufseher_stand,
+    befugnis,
+    befund,
+    briefkasten,
+    capo,
+    config,
+    gh,
+    leitstand,
+    starter,
+    ticket_zustand,
+    waechter_lauf,
+)
+
+#: Einzige Beleg-Prüfstelle für Aufseher-Meldungen (#289).
+pruefe_meldung = aufseher_stand.pruefe_meldung
 
 log = logging.getLogger("to_spawn.waechter_takt")
 
@@ -85,10 +100,12 @@ Zu entscheiden:
 Notizzettel aus dem letzten Takt:
 {NOTIZ}
 
-PFLICHT am Ende: Notizzettel fortschreiben (Stand + offene Punkte, knapp) mit `python {SKILL}/to_spawn.py takt {S} --notiz "<text>"`."""
-# Befugnis aus einer Quelle (#278 P3b), einmal beim Laden: jeder ``PROMPT.format`` braucht nur noch
-# S/REPO/SKILL/LISTE/NOTIZ; ``{SKILL}`` bleibt für ``format`` stehen.
-PROMPT = PROMPT.replace("{BEFUGNIS}", befugnis.aufseher_text("python {SKILL}/to_spawn.py"))
+PFLICHT am Ende: Notizzettel fortschreiben (Stand + offene Punkte, knapp) mit `python {SKILL}/to_spawn.py takt {S} --notiz "<text>"`. {BELEG_HINWEIS}"""
+# Befugnis und Beleg-Regel aus je einer Quelle (#278 P3b, #289), einmal beim Laden: jeder
+# ``PROMPT.format`` braucht nur noch S/REPO/SKILL/LISTE/NOTIZ; ``{S}`` und ``{SKILL}`` bleiben stehen.
+PROMPT = PROMPT.replace("{BEFUGNIS}", befugnis.aufseher_text("python {SKILL}/to_spawn.py")).replace(
+    "{BELEG_HINWEIS}", aufseher_stand.beleg_hinweis("python {SKILL}/to_spawn.py")
+)
 
 
 # --- Prüfen ---------------------------------------------------------------------
@@ -418,17 +435,38 @@ def _timeout_s() -> float:
         return float(CLAUDE_TIMEOUT_S)
 
 
-def starte_claude(cmd: list[str], repo: Path, prompt: str) -> int:
-    """Claude ohne Shell starten, Prompt über stdin; wirft ``OSError``/``TimeoutExpired``."""
+def starte_claude(cmd: list[str], repo: Path, prompt: str) -> tuple[int, str]:
+    """Claude ohne Shell starten, Prompt über stdin; liefert ``(exit_code, stdout)``.
+
+    Wirft ``OSError``/``TimeoutExpired``.
+    """
     proc = starter.starte(  # Liste, kein Shell, Prompt nur über stdin
-        cmd, cwd=repo, notnagel=None, stdin=subprocess.PIPE, env=_kind_env()
+        cmd,
+        cwd=repo,
+        notnagel=None,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        env=_kind_env(),
     )
     try:
-        proc.communicate(prompt.encode("utf-8"), timeout=_timeout_s())
+        roh_aus, _ = proc.communicate(prompt.encode("utf-8"), timeout=_timeout_s())
     except subprocess.TimeoutExpired:
         waechter_lauf._beende(proc)
         raise
-    return proc.returncode
+    ausgabe = (roh_aus or b"").decode("utf-8", errors="replace")
+    if ausgabe:
+        sys.stdout.write(ausgabe)
+        if not ausgabe.endswith("\n"):
+            sys.stdout.write("\n")
+        sys.stdout.flush()
+    return proc.returncode, ausgabe
+
+
+def _reine_takt_meldung(spec: int, ausgabe: str) -> str:
+    """Aufseher-Meldung aus Claude-stdout ohne eigene ``--notiz``-Bestätigungszeile."""
+    notiz_echo = f"Notizzettel waechter-{spec} gesetzt."
+    zeilen = [z for z in ausgabe.splitlines() if z.strip() and z.strip() != notiz_echo]
+    return "\n".join(zeilen)
 
 
 # --- Takt -----------------------------------------------------------------------
@@ -481,13 +519,19 @@ def takt(
             print(f"Takt #{spec}: {len(eintraege)} zu entscheiden — starte Claude.")
             sys.stdout.flush()
             try:
-                code = starte_claude(cmd, repo, prompt)
+                code, ausgabe = starte_claude(cmd, repo, prompt)
             except OSError as fehler:
                 return _fehler(spec, f"Claude nicht startbar ({cmd[0]}): {fehler}")
             except subprocess.TimeoutExpired:
                 gescheitert = f"Claude über Zeitlimit {_timeout_s():.0f} s — beendet"
             else:
                 gescheitert = f"Claude Exit {code}" if code != 0 else ""
+                if not gescheitert:
+                    meldung = _reine_takt_meldung(spec, ausgabe)
+                    if meldung:
+                        beleg_fehler = pruefe_meldung(meldung)
+                        if beleg_fehler is not None:
+                            gescheitert = beleg_fehler
             if gescheitert:
                 if not any(feld == "fragen" for _t, feld, _k in eintraege[:MAX_EINTRAEGE]):
                     return _fehler(spec, f"{gescheitert} — Merker bleibt.")
@@ -671,6 +715,11 @@ def richte_parser_ein(unter: Any) -> None:
         help="claude-Befehl (Vorgabe: TO_SPAWN_CLAUDE bzw. PATH)",
     )
     p.add_argument("--notiz", default=None, help="nur Notizzettel waechter-<S> setzen und enden")
+    p.add_argument(
+        "--pruefe-meldung",
+        default=None,
+        help="Aufseher-Meldung auf gültige Beleg-Zeile prüfen (Exit 0 ok, Exit 1 Fehler; '-' = stdin, #289)",
+    )
 
     p_e = unter.add_parser("takt-einrichten", help="Aufseher-Takt alle 5 min als Cron (nur Linux)")
     p_e.add_argument("spec", type=int, help="Spec-Issue-Nummer")
@@ -692,6 +741,13 @@ def lauf(args: argparse.Namespace) -> int:
         except RuntimeError as fehler:
             print(f"FEHLER: {fehler}")
             return 1
+        return 0
+    if args.pruefe_meldung is not None:
+        text = sys.stdin.read() if args.pruefe_meldung == "-" else args.pruefe_meldung
+        fehler = pruefe_meldung(text)
+        if fehler is not None:
+            return _fehler(args.spec, fehler)
+        print(f"Takt #{args.spec}: Meldung mit Beleg gültig.")
         return 0
     if args.notiz is not None:
         leitstand.setze_notiz(f"waechter-{args.spec}", args.notiz)
