@@ -58,8 +58,8 @@ class Prozess:
     name: str
     cmd: str
     start: datetime | None
-    #: Arbeitsordner, gelesen beim Erstellen der echten Liste (``prozesse_linux``, #588);
-    #: ``None`` = unbekannt (Windows, aufgezeichnete Liste, unlesbar) → zählt als eigenes Repo.
+    #: Arbeitsordner, gelesen beim Erstellen der echten Liste (``prozesse_linux`` / ``prozesse_lesen``, #588);
+    #: ``None`` = unbekannt (aufgezeichnete Liste, unlesbar) → zählt als eigenes Repo.
     ordner: Path | None = None
 
 
@@ -144,6 +144,8 @@ def prozesse_lesen() -> list[Prozess]:
         log.error("Prozessliste leer — läuft das auf Windows mit PowerShell?")
         return []
     rohe = json.loads(out)
+    if isinstance(rohe, dict):
+        rohe = [rohe]
     ergebnis: list[Prozess] = []
     for r in rohe:
         start = None
@@ -152,13 +154,21 @@ def prozesse_lesen() -> list[Prozess]:
                 start = datetime.fromisoformat(r["Start"])
             except ValueError:
                 start = None
+        pid = int(r["ProcessId"])
+        # Arbeitsordner (#212) und Lebens-Prüfung (#494) wie in prozesse_linux:
+        # Ordner zuerst, dann Lebens-Prüfung — ein zwischen WMI und Blick beendeter
+        # Prozess fällt raus, statt mit unlesbarem Ordner als eigener zu zählen.
+        ordner = arbeitsordner(pid)
+        if beendet(pid):
+            continue
         ergebnis.append(
             Prozess(
-                int(r["ProcessId"]),
+                pid,
                 int(r.get("ParentProcessId") or 0),
                 str(r.get("Name") or ""),
                 str(r.get("CommandLine") or ""),
                 start,
+                ordner,
             )
         )
     return ergebnis
@@ -209,7 +219,13 @@ def manifeste_lesen(spec: str | None) -> dict[str, Eintrag]:
 
 
 def arbeitsordner(pid: int) -> Path | None:
-    """Arbeitsordner aus ``/proc/<pid>/cwd``; ``None`` ohne ``/proc`` (Windows) oder unlesbar."""
+    """Arbeitsordner aus ``/proc/<pid>/cwd`` (Linux) bzw. PEB (Windows); ``None`` = unlesbar."""
+    if sys.platform == "win32":
+        try:
+            pfad = prozessbaum._arbeitsordner_windows(pid)
+            return Path(pfad).resolve() if pfad else None
+        except OSError:
+            return None
     try:
         return Path(os.readlink(f"/proc/{pid}/cwd")).resolve()
     except OSError:
@@ -230,15 +246,20 @@ def ordner_fremd(ordner: Path | None) -> bool:
 
 
 def beendet(pid: int) -> bool:
-    """Ist der Prozess seit ``ps`` beendet (``/proc/<pid>`` weg)? Ohne ``/proc`` (Windows): nein.
+    """Ist der Prozess seit ``ps``/WMI beendet? Linux: ``/proc/<pid>`` weg/Zombie; Windows: Kernel.
 
-    Nur beim Lesen der echten Liste (``prozesse_linux``) gefragt, nie in ``zuordnen`` (#564).
+    Nur beim Lesen der echten Liste (``prozesse_linux`` / ``prozesse_lesen``) gefragt, nie in ``zuordnen`` (#564).
 
     Ein beendeter Prozess läuft nicht mehr, auch wenn ``ordner_fremd`` ihn mangels lesbarem
     Ordner mitzählt (#494): sonst gälte etwa die eben beendete Aufseher-Attrappe eines
     Nachbar-Tests als lebender Aufseher, und ``spawn_srv.sh`` meldete bei vollem Rechner
     „Aufseher startet nach“ (Exit 0), obwohl niemand nachstartet.
     """
+    if sys.platform == "win32":
+        try:
+            return prozessbaum._ist_weg_windows(pid)
+        except OSError:
+            return False
     if not Path("/proc/self").is_dir():
         return False
     if not Path(f"/proc/{pid}").exists():
