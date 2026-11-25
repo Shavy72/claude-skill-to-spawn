@@ -189,8 +189,12 @@ def test_rueckblick_bau_server_nutzt_to_spawn_home(
 def test_wache_prompt_aufpasser_pfad_nutzt_to_spawn_home(tmp_skill: Path) -> None:
     """Aufseher-Prompt: auch der Aufpasser-Hinweis in ``skripte/wache.py`` folgt ``TO_SPAWN_HOME``."""
     wache = _lade_skript("wache.py", "wache_786")
+    # Bestehender 5-Platzhalter-Vertrag von wache.PROMPT.format bleibt unverändert (#786).
+    formatiert = wache.PROMPT.format(S=900, REPO="x/y", DATUM="2026-11-25", TAKT=1800, SKILL="/skill")
+    assert "<FERN_SKILL>/skripte/aufpasser.py --trocken" in formatiert
     text = wache.prompt_bauen(900, "x/y", 1800, {"ssh_ziel": "bau-server", "server_repo": "/home/bau/r"})
     assert f"{tmp_skill.as_posix()}/skripte/aufpasser.py --trocken" in text
+    assert "<FERN_SKILL>" not in text
     assert FEST_PFAD not in text
 
 
