@@ -423,14 +423,21 @@ def stdin_ist_terminal() -> bool:
     if sys.platform != "win32":
         return True
     import ctypes
-    import msvcrt
 
     try:
-        griff = msvcrt.get_osfhandle(sys.stdin.fileno())
+        if sys.stdin.fileno() != 0:
+            return False
     except (OSError, ValueError):
         return False
+    # Griff über die Windows-Schnittstelle statt über das Sperren-Modul der Laufzeit:
+    # dessen Import ist außerhalb von ``to_spawn.sperre`` verboten (tests/test_sperre_e2.py).
+    kernel32 = ctypes.WinDLL("kernel32")
+    kernel32.GetStdHandle.restype = ctypes.c_void_p
+    griff = kernel32.GetStdHandle(-10)  # STD_INPUT_HANDLE
+    if griff in (None, 0, ctypes.c_void_p(-1).value):
+        return False
     modus = ctypes.c_uint32()
-    return bool(ctypes.windll.kernel32.GetConsoleMode(griff, ctypes.byref(modus)))
+    return bool(kernel32.GetConsoleMode(ctypes.c_void_p(griff), ctypes.byref(modus)))
 
 
 def menschen_nachweis(ist_tty: bool) -> None:
