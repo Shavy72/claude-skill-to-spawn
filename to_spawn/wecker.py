@@ -33,7 +33,6 @@ import logging
 import os
 import re
 import shlex
-import subprocess
 import sys
 import threading
 import time
@@ -44,7 +43,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from . import aufpasser, capo, config, manifest, prozessbaum, sperre, waechter_lauf
+from . import aufpasser, config, manifest, sperre, tmux_aufruf, waechter_lauf
 
 log = logging.getLogger("to_spawn.wecker")
 
@@ -417,47 +416,22 @@ class LinuxTmuxWecker:
         *args: str,
         tmux_socket: str | None = None,
         eingabe: str | None = None,
-    ) -> subprocess.CompletedProcess[str]:
-        cmd = [*capo._tmux_befehl()]
-        if tmux_socket:
-            cmd += ["-L", tmux_socket]
-        cmd += list(args)
-        try:
-            return subprocess.run(
-                cmd,
-                input=eingabe,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                check=False,
-                timeout=30,
-                **prozessbaum.fensterlos(),
-            )
-        except FileNotFoundError as fehler:
-            raise RuntimeError(f"tmux nicht gefunden: {fehler}") from fehler
-        except subprocess.TimeoutExpired:
-            raise RuntimeError(f"tmux {args[0] if args else ''} antwortet nicht (30 s)") from None
+    ) -> str:
+        befehl = ("-L", tmux_socket, *args) if tmux_socket else args
+        return tmux_aufruf.aufrufen(*befehl, eingabe=eingabe)
 
     def pane_lesen(self, ziel: str, *, tmux_socket: str | None = None) -> PaneStand:
         try:
-            info = self._tmux("display-message", "-p", "-t", ziel, "#{pane_pid}", tmux_socket=tmux_socket)
+            pid_roh = self._tmux("display-message", "-p", "-t", ziel, "#{pane_pid}", tmux_socket=tmux_socket)
         except RuntimeError as fehler:
             return PaneStand(existiert=False, fehler=str(fehler))
-        if info.returncode != 0:
-            meldung = (info.stderr or info.stdout).strip() or "Pane nicht gefunden"
-            return PaneStand(existiert=False, fehler=meldung)
-        pid_text = info.stdout.strip().splitlines()[0] if info.stdout.strip() else ""
+        pid_text = pid_roh.strip().splitlines()[0] if pid_roh.strip() else ""
         pane_pid = int(pid_text) if pid_text.isdigit() else 0
         laeuft = not aufpasser.session_beendet(pane_pid)
         try:
-            bild = self._tmux("capture-pane", "-e", "-p", "-t", ziel, tmux_socket=tmux_socket)
+            farbig = self._tmux("capture-pane", "-e", "-p", "-t", ziel, tmux_socket=tmux_socket)
         except RuntimeError as fehler:
             return PaneStand(existiert=False, fehler=str(fehler))
-        if bild.returncode != 0:
-            meldung = (bild.stderr or bild.stdout).strip() or "capture-pane fehlgeschlagen"
-            return PaneStand(existiert=False, fehler=meldung)
-        farbig = bild.stdout
         return PaneStand(
             existiert=True,
             session_laeuft=laeuft,
@@ -468,20 +442,26 @@ class LinuxTmuxWecker:
     def tippen(self, ziel: str, text: str, *, tmux_socket: str | None = None) -> None:
         puffer = f"wecker-{os.getpid()}-{next(_PUFFER_NR)}"
         with _TIPP_SPERRE:
-            laden = self._tmux("load-buffer", "-b", puffer, "-", tmux_socket=tmux_socket, eingabe=text)
-            if laden.returncode != 0:
-                raise RuntimeError(f"tmux load-buffer: {(laden.stderr or laden.stdout).strip()}")
-            einfuegen = self._tmux(
-                "paste-buffer", "-p", "-d", "-b", puffer, "-t", ziel, tmux_socket=tmux_socket
-            )
-            if einfuegen.returncode != 0:
-                self._tmux("delete-buffer", "-b", puffer, tmux_socket=tmux_socket)
-                raise RuntimeError(f"tmux paste-buffer: {(einfuegen.stderr or einfuegen.stdout).strip()}")
+            self._tmux("load-buffer", "-b", puffer, "-", tmux_socket=tmux_socket, eingabe=text)
+            try:
+                self._tmux(
+                    "paste-buffer", "-p", "-d", "-b", puffer, "-t", ziel, tmux_socket=tmux_socket
+                )
+            except tmux_aufruf.TmuxFehler:
+                try:
+                    self._tmux("delete-buffer", "-b", puffer, tmux_socket=tmux_socket)
+                except tmux_aufruf.TmuxFehler:
+                    pass
+                raise
             time.sleep(TIPP_PAUSE_S)
-            enter = self._tmux("send-keys", "-t", ziel, "Enter", tmux_socket=tmux_socket)
-            if enter.returncode != 0:
-                self._tmux("send-keys", "-t", ziel, "C-u", tmux_socket=tmux_socket)
-                raise RuntimeError(f"tmux send-keys: {(enter.stderr or enter.stdout).strip()}")
+            try:
+                self._tmux("send-keys", "-t", ziel, "Enter", tmux_socket=tmux_socket)
+            except tmux_aufruf.TmuxFehler:
+                try:
+                    self._tmux("send-keys", "-t", ziel, "C-u", tmux_socket=tmux_socket)
+                except tmux_aufruf.TmuxFehler:
+                    pass
+                raise
 
     def cron_einrichten(
         self,

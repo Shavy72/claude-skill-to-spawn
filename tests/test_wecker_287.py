@@ -219,8 +219,11 @@ def test_echter_tmux_weg_limit_scheitert_und_nach_reset_weiter(tmp_path: Path) -
             tmux_socket=socket,
         )
 
+        # „resets 11pm“ ohne Zeitzone gilt in Ortszeit des laufenden Rechners (auch unter TZ=UTC).
+        ortszone = datetime(2026, 11, 22, 22, 7).astimezone().tzinfo
+
         # 1) 22:07 — Weckruf trifft auf das Wochen-Limit.
-        t_vor_reset = datetime(2026, 11, 22, 22, 7, tzinfo=BERLIN).timestamp()
+        t_vor_reset = datetime(2026, 11, 22, 22, 7, tzinfo=ortszone).timestamp()
         erg1 = wecker.durchgang(
             zustand,
             jetzt=t_vor_reset,
@@ -245,7 +248,7 @@ def test_echter_tmux_weg_limit_scheitert_und_nach_reset_weiter(tmp_path: Path) -
         ), log_zeilen
 
         # 2) 22:25 — Limit-Reset (23:00 + 2 min Puffer) noch nicht vorbei → kein erneutes Tippen.
-        t_waehrend = datetime(2026, 11, 22, 22, 25, tzinfo=BERLIN).timestamp()
+        t_waehrend = datetime(2026, 11, 22, 22, 25, tzinfo=ortszone).timestamp()
         spur_vorher = spur.read_text(encoding="utf-8")
         erg2 = wecker.durchgang(
             zustand,
@@ -258,7 +261,7 @@ def test_echter_tmux_weg_limit_scheitert_und_nach_reset_weiter(tmp_path: Path) -
 
         # 3) 23:00 Reset erfolgt; 23:05 (≤ 5 min nach Reset) läuft der nächste Cron-Takt.
         limit_flag.unlink()
-        t_nach_reset = datetime(2026, 11, 22, 23, 5, tzinfo=BERLIN).timestamp()
+        t_nach_reset = datetime(2026, 11, 22, 23, 5, tzinfo=ortszone).timestamp()
         erg3 = wecker.durchgang(
             zustand,
             jetzt=t_nach_reset,

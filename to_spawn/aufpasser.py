@@ -3184,7 +3184,7 @@ class Aufpasser:
                     log.error("%s: Fenster nicht lesbar: %s", sitzung, fehler)
             return
         # Entscheidung #262: Die Deploy-Wache läuft immer VOR dem Hausmeister (und dem
-        # externen Wecker). Ein laufender Deploy/Prüflauf (oder eine gestörte Wache,
+        # externen Wecker). Ein laufender Deploy/Prüflauf (oder eine gestörte Deploy-Wache,
         # fail-closed) sperrt damit auch das Aufräumen von Ordnern, Zweigen und
         # Docker-Resten; außerhalb des Aufpassers schützen den Hausmeister weiter seine
         # eigenen Sperren je Ordner (laufender Prozess im Ordner, offenes Ticket, 24 h).
