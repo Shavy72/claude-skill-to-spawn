@@ -4,10 +4,11 @@
 # Jeder vorhandene Skill-Ordner (to-spawn, Alias, Kette) wird nie gelöscht, sondern nach <Skills>\_alt\<name>-<zeit> verschoben.
 # Dazu die Kette: kette/skills/* → <Skills>/<name>, Regel-Blöcke kette/global/*.md → globale CLAUDE.md.
 # Linux/macOS: install.sh.
-# Aufruf: pwsh -File install.ps1 [-Repo <Pfad-zum-Repo>] [-Skills <Ordner>] [-ClaudeMd <Datei>]
+# Aufruf: pwsh -File install.ps1 [-Repo <Pfad-zum-Repo>] [-Skills <Ordner>] [-ClaudeMd <Datei>] [-Erzwingen]
 #   -Skills    Zielordner der Skills (Vorgabe %USERPROFILE%\.claude\skills)
 #   -ClaudeMd  globale CLAUDE.md für die Regel-Blöcke (Vorgabe %USERPROFILE%\.claude\CLAUDE.md)
-param([string]$Repo = "", [string]$Skills = "", [string]$ClaudeMd = "")
+#   -Erzwingen Installations-Sperre bewusst überstimmen (roter/unbekannter Stand)
+param([string]$Repo = "", [string]$Skills = "", [string]$ClaudeMd = "", [switch]$Erzwingen)
 $ErrorActionPreference = "Stop"
 # Ausgabe immer UTF-8 (Umlaute in Meldungen): sonst schreibt PowerShell umgeleitet in der OEM-Codepage.
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -23,10 +24,13 @@ if ((Test-Path $ziel) -and ((Resolve-Path $ziel).Path -eq (Resolve-Path $hier).P
 if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
     throw "Abbruch: python fehlt — erst Python installieren, dann install.ps1 erneut starten (nichts kopiert)."
 }
-# Skill-Test-Suite vor jedem Tausch prüfen (#415): rot → Abbruch ohne Änderung + Fehler-Log + Ticket.
+# Installations-Sperre vor jedem Tausch prüfen (#415, #577): GitHub Actions, sonst lokale Suite;
+# rot/unbekannt → Abbruch ohne Änderung (+ Fehler-Log, bei Rot Ticket); -Erzwingen überstimmt bewusst.
 $env:PYTHONIOENCODING = "utf-8"
 $env:PYTHONPATH = $hier
-python -m to_spawn.install_pruefung pruefen --klon $hier --python (Get-Command python).Source
+$pruefArgs = @("-m", "to_spawn.install_pruefung", "pruefen", "--klon", $hier, "--python", (Get-Command python).Source)
+if ($Erzwingen) { $pruefArgs += "--erzwingen" }
+python @pruefArgs
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 $zeit = Get-Date -Format "yyyyMMdd-HHmmss"
@@ -181,8 +185,8 @@ if (Test-Path $cj) {
         $roh = Get-Content $cj -Raw
         if ($roh -notmatch '"preferredNotifChannel"\s*:\s*"terminal_bell"') {
             Copy-Item $cj "$cj.bak-to-spawn" -Force
-            $obj = $roh | ConvertFrom-Json -AsHashtable
-            $obj["preferredNotifChannel"] = "terminal_bell"
+            $obj = $roh | ConvertFrom-Json
+            $obj | Add-Member -NotePropertyName "preferredNotifChannel" -NotePropertyValue "terminal_bell" -Force
             ($obj | ConvertTo-Json -Depth 50) | Set-Content $cj -Encoding utf8
             Write-Host "Glocke gesetzt: preferredNotifChannel = terminal_bell (Sicherung $cj.bak-to-spawn). Gilt für neue Sessions."
         } else { Write-Host "Glocke schon gesetzt." }

@@ -230,12 +230,85 @@ def repo_wurzel(start: Path | None = None) -> Path:
     return pfad
 
 
+#: Konkreter ``Path``-Typ des laufenden Systems — bleibt auch bei umgebogenem ``os.name`` gültig (#232).
+_SYSTEM_PFAD: type[Path] = type(Path())
+
+
+class KeinHeimOrdner(RuntimeError):
+    """Heimat-Ordner nicht bestimmbar (weder ``HOME`` noch ``USERPROFILE`` gesetzt, #212)."""
+
+
+_KEIN_HEIM_MELDUNG = (
+    "Heimat-Ordner nicht bestimmbar: weder HOME noch USERPROFILE in der Umgebung gesetzt."
+)
+
+
+def _ist_path_home_umgebogen() -> bool:
+    """True, wenn ``Path.home`` ersetzt wurde (z. B. ``monkeypatch.setattr(Path, 'home', …)``, #212)."""
+    fn = getattr(Path, "home", None)
+    modul = getattr(fn, "__module__", "") or ""
+    return not (modul == "pathlib" or modul.startswith("pathlib."))
+
+
+def heim_ordner() -> Path:
+    """Heimat-Ordner erst bei Gebrauch bestimmen — eine Tür für Windows und Linux (#212).
+
+    Liest die Umgebung (Windows: ``USERPROFILE``, ``HOMEDRIVE``+``HOMEPATH``, ``HOME``;
+    Linux/macOS: ``HOME``, ``USERPROFILE``). Fehlt alles, wirft :class:`KeinHeimOrdner`
+    mit verständlicher Meldung — Windows und Linux gleich (kein Absturz beim Import und
+    kein stiller Rückfall auf ``/etc/passwd``). Wurde ``Path.home`` in einem Test
+    umgebogen, respektiert die Tür das und übersetzt ``RuntimeError`` in
+    :class:`KeinHeimOrdner`. Nutzt :data:`_SYSTEM_PFAD`, damit auch ein umgebogenes
+    ``os.name`` keinen ``UnsupportedOperation``-Fehler auslöst (#232).
+    """
+    if _ist_path_home_umgebogen():
+        try:
+            return Path.home()
+        except RuntimeError as fehler:
+            raise KeinHeimOrdner(_KEIN_HEIM_MELDUNG) from fehler
+    if sys.platform == "win32":
+        laufwerk_pfad = (
+            os.environ.get("HOMEDRIVE", "").strip() + os.environ.get("HOMEPATH", "").strip()
+            if os.environ.get("HOMEPATH", "").strip()
+            else ""
+        )
+        kandidaten = (
+            os.environ.get("USERPROFILE", "").strip(),
+            laufwerk_pfad,
+            os.environ.get("HOME", "").strip(),
+        )
+    else:
+        kandidaten = (
+            os.environ.get("HOME", "").strip(),
+            os.environ.get("USERPROFILE", "").strip(),
+        )
+    for wert in kandidaten:
+        if wert:
+            return _SYSTEM_PFAD(wert)
+    raise KeinHeimOrdner(_KEIN_HEIM_MELDUNG)
+
+
+def expand_heim(pfad: str | Path) -> Path:
+    """Löst führendes ``~`` / ``~/…`` über die eine Tür :func:`heim_ordner` auf (#212)."""
+    text = os.fspath(pfad)
+    if text == "~":
+        return heim_ordner()
+    if text.startswith(("~/", "~\\")):
+        return heim_ordner() / text[2:]
+    if text.startswith("~"):
+        return _SYSTEM_PFAD(text).expanduser()
+    return _SYSTEM_PFAD(text)
+
+
 def notiz_tresor() -> Path:
     """Ort des privaten Notiz-Tresors (Obsidian-Vault): ``$OBSIDIAN_VAULT``, sonst ``~/obsidian`` (#365).
 
     Einzige Quelle für :mod:`to_spawn.uebergabe_sichern` und :mod:`to_spawn.befugnis`.
     """
-    return Path(os.environ.get("OBSIDIAN_VAULT") or "~/obsidian").expanduser()
+    roh = os.environ.get("OBSIDIAN_VAULT", "").strip()
+    if roh:
+        return expand_heim(roh)
+    return heim_ordner() / "obsidian"
 
 
 def worktree_pfad(ticket: str | int, repo: Path | None = None) -> str:
@@ -702,8 +775,8 @@ def maschine_datei() -> Path:
     """Ort der Maschinen-Liste: ``TO_SPAWN_MASCHINE``, sonst ``~/.config/to-spawn/maschine.json``."""
     roh = os.environ.get("TO_SPAWN_MASCHINE")
     if roh:
-        return Path(roh).expanduser()
-    return Path.home() / ".config" / "to-spawn" / "maschine.json"
+        return expand_heim(roh)
+    return heim_ordner() / ".config" / "to-spawn" / "maschine.json"
 
 
 def _repo_eintrag(roh: Any) -> dict[str, str] | None:

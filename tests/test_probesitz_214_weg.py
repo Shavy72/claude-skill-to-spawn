@@ -8,6 +8,7 @@ sie kosten Token/Mail und gehören zum Live-Probesitz der Hauptsession.
 from __future__ import annotations
 
 import concurrent.futures
+import os
 import shutil
 import subprocess
 import sys
@@ -20,7 +21,7 @@ import pytest
 SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL))
 
-from to_spawn import config, probesitz  # noqa: E402
+from to_spawn import config, probesitz
 
 
 @pytest.fixture()
@@ -42,14 +43,23 @@ def test_weg_p1_echter_login_status() -> None:
         assert erg.fehlt_noch
 
 
+def _sandbox_rahmen() -> Path:
+    """Beschreibbarer Ordner außerhalb ``/tmp`` (#232): ``srt`` lässt Schreiben in ``/tmp``
+    immer zu, und ``Path.home()`` zeigt im Testlauf auf das isolierte Test-Heim unter ``/tmp``."""
+    var_tmp = Path("/var/tmp")
+    if var_tmp.is_dir() and os.access(var_tmp, os.W_OK):
+        return var_tmp
+    return Path.home()
+
+
 @pytest.mark.skipif(
     shutil.which("srt") is None or shutil.which("bwrap") is None,
     reason="srt/bwrap nicht installiert",
 )
 def test_weg_p4_echte_sandbox_sperrt_aussen(repo: Path) -> None:
-    # Eigener Rahmenordner unter HOME (#260): zwei parallele Test-Suiten sehen sich beim
+    # Eigener Rahmenordner außerhalb /tmp (#260, #232): zwei parallele Test-Suiten sehen sich beim
     # Aufräum-Check sonst gegenseitig ihre laufenden .probesitz-*-Ordner weg.
-    with tempfile.TemporaryDirectory(prefix=".to-spawn-test-p4-", dir=Path.home()) as heim_str:
+    with tempfile.TemporaryDirectory(prefix=".to-spawn-test-p4-", dir=_sandbox_rahmen()) as heim_str:
         heim = Path(heim_str)
         erg = probesitz.pruefe_sandbox(config.lade(repo), repo, home=heim)
         assert erg.ok, f"{erg.grund} · fehlt noch: {erg.fehlt_noch}"
@@ -69,7 +79,7 @@ def test_weg_p4_parallele_sandbox_pruefungen_stoeren_sich_nicht_260(repo: Path) 
     beim Ende — der parallele Lauf bricht mit ``bwrap: Can't find source path …`` ab.
     """
     konfig = config.lade(repo)
-    with tempfile.TemporaryDirectory(prefix=".to-spawn-test-260-", dir=Path.home()) as heim_str:
+    with tempfile.TemporaryDirectory(prefix=".to-spawn-test-260-", dir=_sandbox_rahmen()) as heim_str:
         heim = Path(heim_str)
         claude = heim / ".claude"
         claude.mkdir()

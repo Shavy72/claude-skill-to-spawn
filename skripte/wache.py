@@ -91,7 +91,7 @@ def repo_aus_origin(fallback: str = "") -> str:
             ["git", "remote", "get-url", "origin"],
             cwd=str(REPO_ORDNER),
             capture_output=True,
-            text=True,
+            **konsole.UNTERPROZESS_TEXT,
             check=False,
             **prozessbaum.fensterlos(),
         ).stdout.strip()
@@ -200,9 +200,7 @@ def wartende_nachstarten(
                     cwd=str(repo),
                     env=umgebung,
                     capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
+                    **konsole.UNTERPROZESS_TEXT,
                     timeout=600,
                 )
             except (OSError, subprocess.SubprocessError) as fehler:
@@ -295,7 +293,7 @@ def prompt_bauen(
     """Aufseher-Prompt mit Server-Befehlen aus der Konfig (``ssh_ziel``, ``server_repo``)
     und dem Manifest-Pfad aus ``pfade.manifeste``."""
     # aufseher_vorlage (#450 F5): Linux/Bau-Server kennt nur ``python3``.
-    vorlage = startklar.aufseher_vorlage(PROMPT)
+    vorlage = startklar.aufseher_vorlage(_prompt_vorlage())
     text = vorlage.format(
         S=spec, REPO=repo, DATUM=date.today().isoformat(), TAKT=max(600, takt), SKILL=startklar.skill_pfad()
     )
@@ -358,7 +356,7 @@ TAKT_S = 1800
 #: Takt, wenn alle offenen Tickets nur noch auf die Abnahme des Menschen warten: 60 min (E38, #500).
 TAKT_ABNAHME_S = 3600
 
-PROMPT = """/loop Bau-Aufseher Spec #{S} ({REPO})
+_PROMPT_ROH = """/loop Bau-Aufseher Spec #{S} ({REPO})
 
 ## Auftrag
 Du bist verantwortlich, dass Spec #{S} vollständig, sauber und autonom fertig gebaut wird. Du bist eine voll fähige Session: lesen, prüfen, Subagenten nutzen, Fehler selbst beheben — was nötig ist, damit der Bau durchläuft.
@@ -427,14 +425,26 @@ Erste Zeile jeder Antwort: 🧭 Opus · medium · Aufseher #{S}"""
 
 
 # Werkzeug-Befehle aus derselben Quelle wie die Startklar-Probe (#450 F5).
-PROMPT = PROMPT.replace("{AUFRAEUMEN}", startklar.BEFEHL_AUFRAEUMEN).replace("{NEUSTART}", startklar.BEFEHL_NEUSTART).replace("{RESPAWN}", startklar.BEFEHL_RESPAWN)
+_PROMPT_ROH = _PROMPT_ROH.replace("{AUFRAEUMEN}", startklar.BEFEHL_AUFRAEUMEN).replace("{NEUSTART}", startklar.BEFEHL_NEUSTART).replace("{RESPAWN}", startklar.BEFEHL_RESPAWN)
 # Feste Texte der Aufseher-Anleitung aus einer Quelle (#500, #367).
-PROMPT = PROMPT.replace("{MINDSET}", anleitung.MINDSET).replace("{STOSS}", anleitung.STOSS).replace("{ABLOESE_SOP}", anleitung.ABLOESE_SOP).replace("{ABSCHLUSS}", anleitung.ABSCHLUSS_ANWEISUNG)
-PROMPT = PROMPT.replace("{TAKT_ABNAHME}", str(TAKT_ABNAHME_S))
-# Befugnis und Beleg-Regel aus je einer Quelle (#278 P3b, #289): ``{SKILL}`` bleibt für ``format`` in ``prompt_bauen`` stehen.
-PROMPT = PROMPT.replace("{BEFUGNIS}", befugnis.aufseher_text("python {SKILL}/to_spawn.py")).replace(
-    "{KLASSE_2}", befugnis.klasse_2_erkennung()
-).replace("{BELEG_HINWEIS}", aufseher_stand.beleg_hinweis("python {SKILL}/to_spawn.py"))
+_PROMPT_ROH = _PROMPT_ROH.replace("{MINDSET}", anleitung.MINDSET).replace("{STOSS}", anleitung.STOSS).replace("{ABLOESE_SOP}", anleitung.ABLOESE_SOP).replace("{ABSCHLUSS}", anleitung.ABSCHLUSS_ANWEISUNG)
+_PROMPT_ROH = _PROMPT_ROH.replace("{TAKT_ABNAHME}", str(TAKT_ABNAHME_S))
+# Beleg-Regel und Klasse-2-Liste aus je einer Quelle (#278 P3b, #289); ``{BEFUGNIS}`` folgt
+# erst beim Zugriff dem aktuellen ``HOME``/``OBSIDIAN_VAULT`` (Notiz-Tresor, #232).
+_PROMPT_ROH = _PROMPT_ROH.replace("{KLASSE_2}", befugnis.klasse_2_erkennung()).replace(
+    "{BELEG_HINWEIS}", aufseher_stand.beleg_hinweis("python {SKILL}/to_spawn.py")
+)
+
+
+def _prompt_vorlage() -> str:
+    """Aufseher-Vorlage mit aktuellem ``befugnis.aufseher_text`` (folgt ``HOME``/``OBSIDIAN_VAULT`` zur Laufzeit, #232)."""
+    return _PROMPT_ROH.replace("{BEFUGNIS}", befugnis.aufseher_text("python {SKILL}/to_spawn.py"))
+
+
+def __getattr__(name: str) -> object:
+    if name == "PROMPT":
+        return _prompt_vorlage()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def logging_einrichten(repo_ordner: Path, spec: int, auf_terminal: bool) -> Path | None:

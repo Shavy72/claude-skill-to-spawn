@@ -351,8 +351,8 @@ def baue_parser() -> _Parser:
     p_um.add_argument("--repo", help="Ordner mit dem Bau-Log (sonst TO_SPAWN_LOG_REPO)")
     p_um.add_argument(
         "--transkripte",
-        default=str(Path.home() / ".claude" / "projects"),
-        help="Claude-Projektordner mit den Transkripten",
+        default=None,
+        help="Claude-Projektordner mit den Transkripten (Vorgabe: ~/.claude/projects)",
     )
 
     # Speicher-Schutz (#257 Paket B): Stand drucken, Exit 0 = frei, 5 = voll,

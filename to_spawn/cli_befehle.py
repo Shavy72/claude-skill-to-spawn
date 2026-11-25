@@ -469,7 +469,11 @@ def _umrechnen(args: argparse.Namespace) -> int:
     if not ticket.isdigit():
         log.error("Ticket-Nummer fehlt — --ticket <N> angeben.")
         return 2
-    transkripte = Path(args.transkripte).expanduser()
+    transkripte = (
+        config.expand_heim(args.transkripte)
+        if args.transkripte
+        else config.heim_ordner() / ".claude" / "projects"
+    )
     if not transkripte.is_dir():
         log.error("Transkript-Ordner %s fehlt.", transkripte)
         return 1

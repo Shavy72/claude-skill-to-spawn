@@ -12,9 +12,13 @@ Ticket-Nummer → Ticket zu → 24 h → keine tmux-Sitzung ``spec-<N>`` → kei
 Ordner (cwd, exe, offene Dateien) → Prüfung des Ungesicherten → Sicherung → Gegenprobe →
 Log → löschen. Vorab: Namen aus :data:`GESCHUETZTE_ORDNER` bleiben immer.
 
-#1536 — Behalten ist die Ausnahme mit echtem Grund. Ordner ohne Ticket-Nummer und Ordner
-ganz ohne Git (kein ``.git`` oder verwaister Worktree, dessen Hauptrepo fehlt) bleiben
-immer, ``fuer_david=True`` — ohne Git gibt es nichts, wohin sie sich sichern ließen.
+#1536/#163 — Behalten ist die Ausnahme mit echtem Grund. Ordner ganz ohne Git (kein
+``.git`` oder verwaister Worktree, dessen Hauptrepo fehlt) mit Ticket-Nummer im Namen
+werden geräumt, wenn alles gilt: kein Prozess darin, keine laufende Spec-Sitzung, kein
+offenes Ticket zur Nummer (alle Ticket-Repos der Maschine geprüft, fail-closed), nichts
+jünger als :data:`OHNE_GIT_ALTER_SEKUNDEN`, kein Geheimnis-Verdacht, keine fremde
+Datenbank, kein eingebettetes Repo und kein Lesefehler; ohne Ticket-Nummer im Namen
+bleiben sie immer (``fuer_david=True``).
 Unterordner eines fremden Repos und unlesbare Git-Ordner bleiben. Je Takt schreibt :func:`aufraeumen_alles` eine Zeile
 nach :data:`KENNZAHL_DATEI` neben dem Log („x von y gelöscht, z bleiben“, Bleib-Gründe
 gezählt) — eigene Datei, damit Leser des Ordner-Logs nur Ordner-Zeilen sehen.
@@ -117,6 +121,7 @@ import logging
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -182,7 +187,16 @@ def _ohne_ticket_repo(repos: list[dict[str, str]]) -> list[dict[str, str]]:
 
 
 def _hauptrepo_namen_aus(repos: list[dict[str, str]]) -> tuple[str, ...]:
-    return tuple(Path(p).expanduser().name for e in repos if (p := (e.get("pfad") or "").strip()))
+    namen: list[str] = []
+    for e in repos:
+        p = (e.get("pfad") or "").strip()
+        if not p:
+            continue
+        # Für ``~/foo`` oder absolute Pfade reicht ``.name`` ohne Heimordner-Auflösung (#212);
+        # nur ein nacktes ``~`` braucht den aufgelösten Ordnernamen.
+        pfad = config.heim_ordner() if p.rstrip("/\\") == "~" else Path(p)
+        namen.append(pfad.name)
+    return tuple(namen)
 
 
 def _remotes_aus(repos: list[dict[str, str]]) -> tuple[str, ...]:
@@ -215,6 +229,16 @@ def _ticket_repo() -> str | None:
     Nur noch Rückfall ohne GitHub-origin; je Ordner/Zweig gilt :func:`_ticket_repo_fuer` (#176).
     """
     return _ticket_repo_aus(_maschinen_repos())
+
+
+def _alle_ticket_repos() -> list[str]:
+    """Alle bekannten Ticket-Repos der Maschine (ohne Doppelte, Originalschreibweise)."""
+    gesehen: dict[str, str] = {}
+    for eintrag in _maschinen_repos():
+        wert = (eintrag.get("ticket_repo") or "").strip()
+        if wert and wert.lower() not in gesehen:
+            gesehen[wert.lower()] = wert
+    return list(gesehen.values())
 
 
 def _ticket_repo_fuer(slug: str) -> str | None:
@@ -272,6 +296,17 @@ def _geschuetzte_ordner() -> tuple[str, ...]:
 
 
 MINDEST_ZU_SEKUNDEN = 24 * 3600
+#: #163: Alters-Schwelle für verwaiste Ordner ohne eigenes Git (jüngste Änderung im Baum).
+OHNE_GIT_ALTER_SEKUNDEN = MINDEST_ZU_SEKUNDEN
+#: #163: Geheimnis-Verdacht für Ordner ohne Git (erweitert ``aufpasser.SICHERUNG_AUSSCHLUSS``).
+OHNE_GIT_GEHEIMNISSE = (
+    *aufpasser.SICHERUNG_AUSSCHLUSS,
+    "**/credentials.json",
+    "**/*.p12",
+    "**/*.pfx",
+    "**/id_rsa",
+    "**/id_ed25519",
+)
 #: Bleib-Grund (und Lösch-Grund-Anfang) für Ordner ohne Ticket-Nummer (#1536, #235).
 OHNE_NUMMER = "keine Ticket-Nummer"
 #: Unter diesem Anteil freier Platte gilt Platznot: fertige Ordner gehen vor Ablauf der 24 h.
@@ -629,6 +664,9 @@ def _aufraeumen(ordner: Path, *, loeschen: bool, jetzt: float | None, platznot: 
         erg, ziel = _regeln(ordner, trocken, jetzt, stand, platznot)
     except _Bleibt as b:
         erg = _bleibt(ordner, trocken, stand, b)
+    except config.KeinHeimOrdner as fehler:
+        log.error("Hausmeister: %s (%s)", fehler, ordner)
+        erg = _bleibt(ordner, trocken, stand, _Bleibt(f"Fehler: {_kurz(fehler)}", fehler=True))
     except Exception as fehler:  # Vertrag: wirft nie, im Zweifel bleibt
         log.exception("Hausmeister: Fehler bei %s", ordner)
         erg = _bleibt(ordner, trocken, stand, _Bleibt(f"Fehler: {_kurz(fehler)}", fehler=True))
@@ -1431,10 +1469,10 @@ def _regeln(
     if not trocken:  # Trockenlauf zeigt die echte Regel (Altbestand-Liste für den Menschen)
         _kein_altbestand(echt)
 
-    # 2/3 Git-Ordner? Hauptrepo? Eigenes Repo? (None = gar kein Git, #1536)
+    # 2/3 Git-Ordner? Hauptrepo? Eigenes Repo? (None = gar kein Git, #1536/#163)
     ist_worktree = _git_ordner_pruefen(echt)
-    if ist_worktree is None:  # #1536: ohne Git nichts sicherbar ⇒ bleibt immer
-        raise _Bleibt("kein eigener Git-Ordner (nicht sicherbar)", fuer_david=True)
+    if ist_worktree is None:
+        return _ohne_git_regeln(ordner, echt, trocken, jetzt, stand)
 
     # 4 Ticket-Nummer aus Name und Zweig (None = keine, #1536)
     stand.ticket = ticket = _ticket_nummer(ordner, echt)
@@ -1468,12 +1506,16 @@ def _regeln(
     koepfe, zu_sichern, status_vorher = _ungesichertes(echt, ist_worktree)
     art: Art = "gesichert und gelöscht" if (koepfe or zu_sichern) else "gelöscht"
     if ticket is None:  # 8b #235: ohne Nummer keine Sicherung (sicherung/<N>) ⇒ nur Fertiges
-        if koepfe or zu_sichern:
+        if zu_sichern:
             raise _Bleibt(
                 f"{OHNE_NUMMER}: Änderungen oder Commits nicht auf origin (ohne Nummer nicht sicherbar)",
                 fuer_david=True,
             )
-        _koepfe_auf_server(echt, ist_worktree)
+        if koepfe:
+            raise _Bleibt(
+                f"{OHNE_NUMMER}: {koepfe[0]} nicht auf dem Server (ls-remote origin, ohne Nummer nicht sicherbar)",
+                fuer_david=True,
+            )
         grund = f"{OHNE_NUMMER}; alles auf origin, Baum sauber, seit 24 h unverändert, kein Pull-Request offen"
     elif fremd:  # 8b #135: ohne gültiges Ticket nur, was nachweislich fertig ist
         grund = _fremd_fertig(echt, ticket, bool(koepfe or zu_sichern), jetzt)
@@ -1548,6 +1590,154 @@ def _ohne_git(echt: Path) -> bool:
     if not ziel.is_absolute():
         ziel = echt / ziel
     return not os.path.lexists(ziel)
+
+
+def _glob_zu_regex(muster: str) -> re.Pattern[str]:
+    """Übersetzt ein Git-Glob-Muster (``**``, ``*``, ``?``) in einen POSIX-Pfad-Regex."""
+    teile: list[str] = []
+    i = 0
+    n = len(muster)
+    while i < n:
+        if muster.startswith("**/", i):
+            teile.append("(?:.*/)?")
+            i += 3
+        elif muster.startswith("/**", i) and i + 3 == n:
+            teile.append("/.*")
+            i += 3
+        elif muster.startswith("**", i):
+            teile.append(".*")
+            i += 2
+        elif muster[i] == "*":
+            teile.append("[^/]*")
+            i += 1
+        elif muster[i] == "?":
+            teile.append("[^/]")
+            i += 1
+        else:
+            teile.append(re.escape(muster[i]))
+            i += 1
+    return re.compile("^" + "".join(teile) + "$", re.IGNORECASE)
+
+
+_OHNE_GIT_GEHEIMNIS_MUSTER = tuple(_glob_zu_regex(m) for m in OHNE_GIT_GEHEIMNISSE)
+_OHNE_GIT_DB_MUSTER = tuple(_glob_zu_regex(m) for m in aufpasser.NIE_HOCHLADEN)
+
+
+def _ist_ticket_nicht_vorhanden(fehlertext: str) -> bool:
+    """True nur, wenn ``gh issue view`` eindeutig meldet, dass die Nummer im Repo fehlt."""
+    klein = fehlertext.lower()
+    return any(
+        text in klein
+        for text in ("could not resolve to an issue", "issue not found", "http 404")
+    )
+
+
+def _kein_offenes_ticket_ohne_git(nr: int) -> None:
+    """#163: prüft ``nr`` in allen Ticket-Repos der Maschine; offen oder Lesefehler ⇒ ``_Bleibt``."""
+    repos = _alle_ticket_repos()
+    if not repos:
+        raise _Bleibt(
+            f"Ticket #{nr} nicht abfragbar (kein Ticket-Repo in der Maschinen-Liste)",
+            fehler=True,
+        )
+    for repo in repos:
+        code, ausgabe = gh.lauf(
+            ["issue", "view", str(nr), "-R", repo, "--json", "state,closedAt"],
+            timeout=GH_ZEITLIMIT_S,
+            fehlertext=True,
+        )
+        if code != 0:
+            if _ist_ticket_nicht_vorhanden(ausgabe):
+                continue
+            raise _Bleibt(f"Ticket #{nr} nicht abfragbar ({repo})", fehler=True)
+        try:
+            daten = json.loads(ausgabe)
+        except ValueError:
+            raise _Bleibt(f"Ticket #{nr} nicht abfragbar ({repo})", fehler=True) from None
+        if not isinstance(daten, dict) or "state" not in daten:
+            raise _Bleibt(f"Ticket #{nr} nicht abfragbar ({repo})", fehler=True)
+        if not ticket_zustand.endgueltig_zu(daten):
+            raise _Bleibt(f"Ticket #{nr} offen ({repo})")
+
+
+def _ohne_git_baum_pruefen(echt: Path, jetzt: float) -> None:
+    """#163: prüft einen Ordner ohne eigenes Git komplett (fail-closed bei Lesefehler).
+
+    Symlinks werden nie verfolgt. Hält den Ordner bei jungen Dateien/Ordnern
+    (< :data:`OHNE_GIT_ALTER_SEKUNDEN`), Sockets/FIFOs, eingebetteten Git-Repos,
+    Geheimnis-Verdacht (:data:`OHNE_GIT_GEHEIMNISSE` ohne :func:`_neu_erzeugbar`),
+    unbekannten/zu großen Datenbanken sowie jedem ``OSError``.
+    """
+    try:
+        wurzel_stat = os.lstat(echt)
+    except OSError as fehler:
+        raise _Bleibt(f"Ordner nicht lesbar: {_kurz(fehler)}", fehler=True) from None
+    if jetzt - wurzel_stat.st_mtime < OHNE_GIT_ALTER_SEKUNDEN:
+        raise _Bleibt("frisch geändert (ohne Git)")
+    stapel = [echt]
+    while stapel:
+        d = stapel.pop()
+        try:
+            with os.scandir(d) as it:
+                eintraege = list(it)
+        except OSError as fehler:
+            raise _Bleibt(f"Ordner nicht lesbar: {_kurz(fehler)}", fehler=True) from None
+        if d != echt:
+            namen = {e.name for e in eintraege}
+            if ".git" in namen or {"HEAD", "objects", "refs"} <= namen:
+                rel_d = d.relative_to(echt).as_posix()
+                raise _Bleibt(f"eingebettetes Repo {rel_d}", fuer_david=True)
+        for e in eintraege:
+            try:
+                info = e.stat(follow_symlinks=False)
+            except OSError as fehler:
+                raise _Bleibt(
+                    f"Eintrag nicht lesbar ({e.name}): {_kurz(fehler)}", fehler=True
+                ) from None
+            rel = Path(e.path).relative_to(echt).as_posix()
+            art = info.st_mode
+            if stat.S_ISSOCK(art) or stat.S_ISFIFO(art):
+                raise _Bleibt(f"Socket/FIFO im Ordner ({rel}) — ein Prozess lebt evtl.")
+            if jetzt - info.st_mtime < OHNE_GIT_ALTER_SEKUNDEN:
+                raise _Bleibt(f"frisch geändert ({rel})")
+            if any(m.match(rel) for m in _OHNE_GIT_GEHEIMNIS_MUSTER) and not _neu_erzeugbar(rel):
+                raise _Bleibt(
+                    f"Geheimnis-Verdacht {rel} (ohne Git nicht sicherbar)", fuer_david=True
+                )
+            if any(m.match(rel) for m in _OHNE_GIT_DB_MUSTER) and not ist_test_db(echt, rel):
+                raise _Bleibt(
+                    f"Datenbank {rel} ist keine Test-Kopie (nicht sicherbar)", fuer_david=True
+                )
+            if stat.S_ISDIR(art):
+                stapel.append(Path(e.path))
+
+
+def _ohne_git_regeln(
+    ordner: Path, echt: Path, trocken: bool, jetzt: float | None, stand: _Stand
+) -> tuple[Ergebnis, tuple[Path, bool] | None]:
+    """#163: räumt einen verwaisten Ordner ohne eigenes Git nach allen Schutz-Regeln."""
+    nr = _nummer(ordner.name, _name_muster())
+    if nr is None:
+        raise _Bleibt(
+            "kein eigener Git-Ordner und keine Ticket-Nummer (nicht sicherbar)",
+            fuer_david=True,
+        )
+    stand.ticket = nr
+    # Lokale Prüfungen vor der Netzabfrage: frische/aktive Ordner bleiben ohne gh-Aufruf.
+    _kein_prozess(echt)
+    jetzt_ts = jetzt if jetzt is not None else time.time()
+    _ohne_git_baum_pruefen(echt, jetzt_ts)
+    _keine_spec_sitzung(nr)
+    _kein_offenes_ticket_ohne_git(nr)
+    grund = (
+        f"verwaister Ordner ohne Git (#{nr}: kein offenes Ticket, alt, "
+        "kein Prozess, kein Geheimnis-Verdacht)"
+    )
+    if trocken:
+        return Ergebnis(ordner, "gelöscht", grund, nr, trocken=True), None
+    _kein_prozess(echt, probe=True)
+    _ohne_git_baum_pruefen(echt, jetzt_ts)
+    return Ergebnis(ordner, "gelöscht", grund, nr, trocken=False), (echt, False)
 
 
 def _keine_spec_sitzung(ticket: int) -> None:
@@ -1648,7 +1838,8 @@ def _fremd_fertig(echt: Path, ticket: int, ungesichert: bool, jetzt: float | Non
     if ungesichert:
         raise _Bleibt(f"{vorne}: Änderungen oder Commits nicht im Hauptzweig gesichert", fuer_david=True)
     haupt = _hauptzweig(echt, str(echt))
-    offen = _git_oder_none(echt, "rev-list", "-n", "1", "HEAD", "--not", f"refs/remotes/origin/{haupt}")
+    haupt_sha = _server_zweig_sha(echt, haupt)
+    offen = _git_oder_none(echt, "rev-list", "--ignore-missing", "-n", "1", "HEAD", "--not", haupt_sha)
     if offen is None:
         raise _Bleibt(f"{vorne}: origin/{haupt} nicht lesbar", fehler=True)
     if offen:
@@ -1826,7 +2017,7 @@ def _platten_basen() -> list[Path]:
             basis = Path(*teile)
             if basis.is_dir():
                 basen.setdefault(basis, None)
-    return list(basen) or [Path.home()]
+    return list(basen) or [config.heim_ordner()]
 
 
 def _naht_anteil(roh: str) -> float | None:
@@ -1887,7 +2078,7 @@ def _ablehnen(art: str, wert: str) -> None:
 def _echt_unter_home(pfad: Path) -> bool:
     """Absolut und nach Auflösen (Symlinks) echt unter dem Home — nicht Home, nicht darüber."""
     try:
-        echt, heim = pfad.resolve(), Path.home().resolve()
+        echt, heim = pfad.resolve(), config.heim_ordner().resolve()
     except (OSError, RuntimeError):
         return False
     return pfad.is_absolute() and heim in echt.parents
@@ -1895,7 +2086,7 @@ def _echt_unter_home(pfad: Path) -> bool:
 
 def _versteckt_unter_home(pfad: Path) -> bool:
     """Ein Teil unterhalb des Home beginnt mit ``.`` (``~/.ssh``, ``~/a/.cache``)."""
-    heim = Path.home().parts
+    heim = config.heim_ordner().parts
     rest = pfad.parts[len(heim) :] if pfad.parts[: len(heim)] == heim else pfad.parts
     return any(teil.startswith(".") for teil in rest)
 
@@ -1979,12 +2170,17 @@ def _origin_slug(echt: Path) -> str:
     lesen = _git_oder_none(echt, "remote", "get-url", "origin")
     if lesen is None or lesen != _git_oder_none(echt, "remote", "get-url", "--push", "origin"):
         return ""
-    if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*::", lesen):
+    if _ist_transport_helfer(lesen):
         return ""
     # #252: wirksame Adresse nach allen Umleitungen (auch Maschine, includeIf, Umgebung)
     if _ziel_im_ordner(echt, lesen):
         return ""
     return _slug(roh[0])
+
+
+def _ist_transport_helfer(url: str) -> bool:
+    """``ext::…``, ``fd::…`` u. ä.: führt einen Befehl statt eines Servers aus."""
+    return bool(re.match(r"^[A-Za-z][A-Za-z0-9+.-]*::", url.strip()))
 
 
 def _ziel_im_ordner(echt: Path, url: str) -> bool:
@@ -2100,7 +2296,8 @@ def _ungesichertes(repo: Path, ist_worktree: bool) -> tuple[list[str], bool, lis
         raise _Bleibt(f"git fetch origin gescheitert: {_kurz(fehler)}", fehler=True) from None
     if not ist_worktree and _git_oder_none(repo, "rev-parse", "--verify", "-q", "refs/stash"):
         raise _Bleibt("Stash vorhanden (git stash list)", fuer_david=True)
-    if _nur_im_reflog(repo, ist_worktree):
+    auf_server = _server_koepfe(repo)
+    if _nur_im_reflog(repo, ist_worktree, auf_server):
         raise _Bleibt("ungesicherte Commits im Verlauf (Reflog, auf keinem Zweig)", fuer_david=True)
     for zeile in aufpasser.git_lauf(repo, "ls-files", "-s").splitlines():
         if zeile.startswith("160000 "):
@@ -2130,16 +2327,17 @@ def _ungesichertes(repo: Path, ist_worktree: bool) -> tuple[list[str], bool, lis
     nicht_hoch = geheim | datenbanken
     zu_sichern = any(xy != "!!" and p not in nicht_hoch for xy, p in alle)
 
-    koepfe = _ungepushte_koepfe(repo, ist_worktree)
+    koepfe = _ungepushte_koepfe(repo, ist_worktree, auf_server)
     if koepfe:
+        gegen = ["--not", *auf_server] if auf_server else []
         leck = aufpasser.git_lauf(
             repo,
             "log",
+            "--ignore-missing",
             "--format=",
             "--name-only",
             *koepfe,
-            "--not",
-            "--remotes=origin",
+            *gegen,
             "--",
             *_glob(aufpasser.SICHERUNG_AUSSCHLUSS),
         ).split()
@@ -2164,7 +2362,9 @@ def _lokale_koepfe(repo: Path, ist_worktree: bool) -> list[str]:
 _REFLOG_HAPPEN = 200
 
 
-def _nur_im_reflog(repo: Path, ist_worktree: bool) -> bool:
+def _nur_im_reflog(
+    repo: Path, ist_worktree: bool, auf_server: list[str] | None = None
+) -> bool:
     """#235 R1: liegt ein Commit nur im Reflog, der mit dem Ordner verschwindet?
 
     Verschwinden: beim Klon alle Reflogs (auch die verknüpfter Worktrees), beim Worktree die
@@ -2198,7 +2398,8 @@ def _nur_im_reflog(repo: Path, ist_worktree: bool) -> bool:
             if len(felder) < 3 or not all(re.fullmatch(rb"[0-9a-f]{40}(?:[0-9a-f]{24})?", f) for f in felder[:2]):
                 raise _Bleibt(f"unlesbare Reflog-Zeile in {datei.name}", fehler=True)
             staende |= {f.decode() for f in felder[:2] if f.strip(b"0")}
-    sicher = ("--not", "--exclude=refs/remotes/*", "--all", *_server_koepfe(repo))
+    server = _server_koepfe(repo) if auf_server is None else auf_server
+    sicher = ("--not", "--exclude=refs/remotes/*", "--all", *server)
     liste = sorted(staende)
     for i in range(0, len(liste), _REFLOG_HAPPEN):
         happen = liste[i : i + _REFLOG_HAPPEN]
@@ -2211,23 +2412,38 @@ def _nur_im_reflog(repo: Path, ist_worktree: bool) -> bool:
     return False
 
 
-def _ungepushte_koepfe(repo: Path, ist_worktree: bool) -> list[str]:
-    """Refs mit Commits nicht auf origin (laut lokaler Tracking-Refs)."""
+def _ungepushte_koepfe(
+    repo: Path, ist_worktree: bool, auf_server: list[str] | None = None
+) -> list[str]:
+    """#179: Refs mit Commits auf keinem erreichbaren Remote-Kopf (``ls-remote origin``)."""
+    server = _server_koepfe(repo) if auf_server is None else auf_server
     return [
         ref
         for ref in _lokale_koepfe(repo, ist_worktree)
-        if aufpasser.git_lauf(repo, "rev-list", "-n", "1", ref, "--not", "--remotes=origin").strip()
+        if aufpasser.git_lauf(repo, "rev-list", "--ignore-missing", "-n", "1", ref, "--not", *server).strip()
     ]
 
 
 def _koepfe_auf_server(repo: Path, ist_worktree: bool) -> None:
-    """#235 M1a: jeder lokale Kopf muss von einem Zweig-Kopf auf dem Server (``ls-remote``)
+    """#235 M1a/#179: jeder lokale Kopf muss von einem Zweig-Kopf auf dem Server (``ls-remote``)
     erreichbar sein — lokale Tracking-Refs lassen sich fälschen oder per Refspec verengen.
     Server-Köpfe, die lokal fehlen, zählen nicht (``--ignore-missing``). Sonst ``_Bleibt``."""
-    auf_server = _server_koepfe(repo)
-    for ref in _lokale_koepfe(repo, ist_worktree):
-        if aufpasser.git_lauf(repo, "rev-list", "--ignore-missing", "-n", "1", ref, "--not", *auf_server).strip():
-            raise _Bleibt(f"{OHNE_NUMMER}: {ref} nicht auf dem Server (ls-remote origin)", fuer_david=True)
+    fehlend = _ungepushte_koepfe(repo, ist_worktree)
+    if fehlend:
+        raise _Bleibt(f"{OHNE_NUMMER}: {fehlend[0]} nicht auf dem Server (ls-remote origin)", fuer_david=True)
+
+
+def _server_zweig_sha(repo: Path, zweig: str) -> str:
+    """#179: SHA von ``refs/heads/<zweig>`` direkt vom erreichbaren Remote ``origin`` (fail-closed)."""
+    ref = f"refs/heads/{zweig}"
+    try:
+        roh = _git_ohne_frage(repo, "ls-remote", "origin", ref).strip()
+    except RuntimeError as fehler:
+        raise _Bleibt(f"Server nicht erreichbar (ls-remote {zweig}): {_kurz(fehler)}", fehler=True) from None
+    treffer = _LS_REMOTE_ZEILE.fullmatch(roh)
+    if treffer is None or not roh.endswith(f"\t{ref}"):
+        raise _Bleibt(f"origin/{zweig} am Server nicht lesbar (ls-remote)", fehler=True)
+    return treffer.group(1)
 
 
 def _server_koepfe(repo: Path) -> list[str]:
@@ -2614,7 +2830,7 @@ def _kennzahl_pfad() -> Path:
 
 def _log_pfad() -> Path:
     roh = os.environ.get("TO_SPAWN_HAUSMEISTER_LOG")
-    return Path(roh).expanduser() if roh else Path.home() / ".claude" / "to-spawn" / "hausmeister.jsonl"
+    return config.expand_heim(roh) if roh else config.heim_ordner() / ".claude" / "to-spawn" / "hausmeister.jsonl"
 
 
 def _log_schreiben(erg: Ergebnis) -> bool:
@@ -2641,7 +2857,7 @@ def _log_zeile(zeile: dict[str, object], datei: Path | None = None) -> bool:
         datei.parent.mkdir(parents=True, exist_ok=True)
         with datei.open("a", encoding="utf-8") as f:
             f.write(json.dumps(zeile, ensure_ascii=False) + "\n")
-    except OSError as fehler:
+    except (OSError, config.KeinHeimOrdner) as fehler:
         log.warning("Hausmeister-Log nicht schreibbar: %s", fehler)
         return False
     return True
