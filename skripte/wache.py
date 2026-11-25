@@ -329,7 +329,9 @@ Du bist verantwortlich, dass Spec #{S} vollständig, sauber und autonom fertig g
 - Arbeitet: Status `arbeitet` im Aufseher-Stand (Session busy, Pane ändert sich) → nie eingreifen, egal wie lange es dauert.
 - Still am Prompt: Status `still` — die Session sitzt fertig oder wartend am Eingabe-Prompt, nichts ändert sich. Das ist der Hänger-Fall, auch wenn sie „nur fertig“ ist. Eingriff dann ausschließlich über die Eingriffs-Leiter je Ticket (Befehl C); sie entscheidet die Stufe selbst: still ≥ 20 min → Mindset-Stoß (Anstupser „{STOSS}“), weitere 15 min still oder Handoff-Grenze erreicht → Ablöse-SOP, Ticket zu → `/exit`. Keine eigenen Minuten-Regeln daneben.
 - Rückfrage: Status `Rückfrage` — die Session steht an einem Rückfragen-/Freigabe-Fenster → Abschnitt „Rückfragen-Fenster“.
+- Blockiert: Status `blockiert` — die Session meldet selbst einen Halt (Wortlaut im Stand/Beleg) → nicht als „arbeitet“ melden, Ursache beheben oder weitergeben.
 - Tot: Ticket `aus` oder VERWAIST in Befehl A, nur noch die Shell im Fenster → Befehl B.
+- {BELEG_HINWEIS}
 
 ## Rückfragen-Fenster (Freigabe-Dialoge)
 Bleibt eine Bau-Session an einem Rückfragen-/Freigabe-Fenster hängen: angefragten Befehl bzw. Skript lesen. Harmlos (lesen, testen, bauen, committen, auf der Staging-App schalten) → selbst bestätigen (Auswahl per `tmux send-keys`, Text und Enter getrennt) und eine Zeile ins Bau-Log (`eintrag --typ entscheidung`). Nie bestätigen bei Löschen (`rm`, auch in `shell -c`) oder Klasse 2 – {KLASSE_2} – (z. B. `safe_deploy_vps.sh`, Live-URL, Live-API, irgendetwas in der Live-App) — dort Fenster stehen lassen, Stand-Zeile „Rückfrage wartet: <Befehl>“ statt Klick, `eintrag --typ blockiert`.
@@ -386,10 +388,10 @@ PROMPT = PROMPT.replace("{AUFRAEUMEN}", startklar.BEFEHL_AUFRAEUMEN).replace("{N
 # Feste Texte der Aufseher-Anleitung aus einer Quelle (#500).
 PROMPT = PROMPT.replace("{MINDSET}", anleitung.MINDSET).replace("{STOSS}", anleitung.STOSS).replace("{ABLOESE_SOP}", anleitung.ABLOESE_SOP)
 PROMPT = PROMPT.replace("{TAKT_ABNAHME}", str(TAKT_ABNAHME_S))
-# Befugnis aus einer Quelle (#278 P3b): ``{SKILL}`` bleibt für ``format`` in ``prompt_bauen`` stehen.
+# Befugnis und Beleg-Regel aus je einer Quelle (#278 P3b, #289): ``{SKILL}`` bleibt für ``format`` in ``prompt_bauen`` stehen.
 PROMPT = PROMPT.replace("{BEFUGNIS}", befugnis.aufseher_text("python {SKILL}/to_spawn.py")).replace(
     "{KLASSE_2}", befugnis.klasse_2_erkennung()
-)
+).replace("{BELEG_HINWEIS}", aufseher_stand.beleg_hinweis("python {SKILL}/to_spawn.py"))
 
 
 def logging_einrichten(repo_ordner: Path, spec: int, auf_terminal: bool) -> Path | None:

@@ -58,14 +58,15 @@ import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 from to_spawn import (
     aufpasser,
     bau_log,
     befugnis,
+    briefkasten,
     capo,
     config,
     gh,
@@ -103,12 +104,61 @@ PHASEN = {
 }
 
 ARBEITET = "arbeitet"
+WARTET = "wartet"
+BLOCKIERT = "blockiert"
+FERTIG = "fertig"
 STILL = "still"
 RUECKFRAGE = "Rückfrage"
 KEIN_FENSTER = "kein Fenster"
 #: Fenster-Zustand, wenn tmux bzw. die Sitzung ``spec-<S>`` nicht lesbar ist.
 FENSTER_UNBEKANNT = STRICH
 TMUX_HINWEIS = "tmux nicht lesbar"
+
+#: Vier Grund-Zustände einer Bau-Session für Stand-Abfrage und Beleg (#289).
+Zustand = Literal["arbeitet", "wartet", "blockiert", "fertig"]
+ZUSTAENDE: tuple[Zustand, ...] = (ARBEITET, WARTET, BLOCKIERT, FERTIG)
+#: Maximale Länge der letzten Zeile im Beleg (voller Wortlaut inkl. Befehl bleibt sichtbar).
+BELEG_ZEILE_MAX = 200
+
+#: Sätze/Signale, mit denen eine Bau-Session meldet, dass sie blockiert ist (#289).
+_BLOCKIERT_MUSTER = re.compile(
+    r"(?:"
+    r"\bblockiert\b"
+    r"|darf\s+ich\s+nicht\s+selbst\s+starten"
+    r"|braucht\s+die\s+Nachricht\s+von\s+außen"
+    r"|Bitte\s+schick\s+hier\s+diese\s+Nachricht"
+    r"|braucht\s+den\s+(?:Nutzer|Menschen)"
+    r")",
+    re.IGNORECASE,
+)
+#: Verneinungen, die trotz des Wortes „blockiert“ keinen Halt bedeuten.
+_NICHT_BLOCKIERT_MUSTER = re.compile(
+    r"\b(?:nicht(?:\s+mehr)?|kein\w*)\s+blockiert\b",
+    re.IGNORECASE,
+)
+_ZEIT_MUSTER = r"(?:\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:?\d{2})?|\d{2}:\d{2}(?::\d{2})?)"
+_BELEG_ZEILE_RE = re.compile(
+    r"^\s*(?:[-*]\s+)?Beleg\s+#(?P<ticket>\d+)\s*[·|]\s*"
+    rf"(?P<zeit>{_ZEIT_MUSTER})\s*[·|]\s*"
+    rf"(?P<zustand>{'|'.join(ZUSTAENDE)})\s*[·|]\s*"
+    r'(?:„(?P<zeile_de>[^\n]+)“|"(?P<zeile_en>[^\n]+)")\s*$'
+)
+_NICHT_ARBEITET_MUSTER = re.compile(
+    r"\b(?:nicht\s+(?:mehr\s+)?(?:arbeitet|arbeiten)|(?:arbeitet|arbeiten)\s+nicht)\b",
+    re.IGNORECASE,
+)
+_BEHAUPTET_ARBEITET_MUSTER = re.compile(r"\b(?:arbeitet|arbeiten)\b", re.IGNORECASE)
+_TICKET_NUMMER_RE = re.compile(r"#(\d+)\b")
+
+
+@dataclass(frozen=True)
+class StandBeleg:
+    """Maschinell prüfbarer Beleg für den Stand einer Bau-Session (#289)."""
+
+    ticket: int
+    zeit: str
+    zustand: Zustand
+    letzte_zeile: str
 
 
 class GhFehlt(RuntimeError):
@@ -196,11 +246,29 @@ class TicketLage:
     aussage: str = STRICH
     neue_kommentare: int | None = None
     abgelehnt: int = 0  # #496: Komplett-Prüfungen, die die Bau-Ticket-Sperre abgelehnt hat
+    letzte_zeile: str = STRICH  # #289: letzte aussagekräftige Zeile im Fenster (nur für Beleg)
+    blockiert_text: str = ""  # #289: erkannter Wortlaut bei Zustand ``blockiert``
 
     @property
     def endgueltig_zu(self) -> bool:
         """Wie ``ticket_zustand.endgueltig_zu`` (zu oder verworfen); unbekannt gilt als nicht zu."""
         return self.stufe in ticket_zustand.ENDGUELTIG_ZU_STUFEN
+
+
+def sitzungs_zustand(lage: TicketLage) -> Zustand:
+    """Vier Grund-Zustände (``arbeitet``, ``wartet``, ``blockiert``, ``fertig``) aus :class:`TicketLage` (#289).
+
+    ``fertig`` gilt nur für endgültig geschlossene Tickets (``staging:fertig`` ist ``wartet``);
+    ``blockiert`` gilt bei erkannter Blockade-Meldung der Session; bloßes Vorhandensein eines
+    Fensters zählt nie als ``arbeitet``.
+    """
+    if lage.endgueltig_zu:
+        return FERTIG
+    if lage.fenster == BLOCKIERT:
+        return BLOCKIERT
+    if lage.fenster == ARBEITET:
+        return ARBEITET
+    return WARTET
 
 
 def _kuerzen(text: str, laenge: int) -> str:
@@ -209,12 +277,15 @@ def _kuerzen(text: str, laenge: int) -> str:
 
 
 def kurz_zeile(lage: TicketLage) -> str:
-    """Eine Zeile ≤ :data:`ZEILE_MAX` Zeichen, nie Pane-Text."""
+    """Eine Zeile ≤ :data:`ZEILE_MAX` Zeichen, nie roher Pane-Text (außer erkanntem Blockade-Wortlaut)."""
     zustand = STRICH if lage.stufe is None else ticket_zustand.ANZEIGE[lage.stufe]
     fenster = lage.fenster
-    if fenster in (STILL, RUECKFRAGE) and lage.still_min is not None:
+    if fenster in (STILL, RUECKFRAGE, BLOCKIERT, WARTET) and lage.still_min is not None:
         fenster = f"{fenster} {lage.still_min} min"
-    aussage = STRICH if lage.aussage == STRICH else f"„{_kuerzen(lage.aussage, AUSSAGE_MAX)}“"
+    aussage_text = lage.aussage
+    if aussage_text == STRICH and lage.fenster == BLOCKIERT and lage.blockiert_text:
+        aussage_text = lage.blockiert_text
+    aussage = STRICH if aussage_text == STRICH else f"„{_kuerzen(aussage_text, AUSSAGE_MAX)}“"
     kommentare = STRICH if lage.neue_kommentare is None else str(lage.neue_kommentare)
     teile = [
         f"#{lage.nummer} {zustand}",
@@ -336,25 +407,79 @@ def bau_fenster(spec: int) -> dict[int, str] | None:
     return None if liste is None else {n: ziel for n, (ziel, _aktiv) in liste.items()}
 
 
+def letzte_pane_zeile(text: str) -> str:
+    """Letzte nicht-leere Ausgabe-Zeile eines Panes (ohne Statuszeile, Eingabefeld und Farben, #289)."""
+    sauber = aufpasser.ohne_farben(text)
+    zeilen = [z.strip() for z in unbeaufsichtigt(sauber) if z.strip()]
+    if not zeilen:
+        zeilen = [z.strip() for z in aufpasser._zeilen_am_prompt(sauber) if z.strip()]
+    return " ".join(zeilen[-1].split()) if zeilen else STRICH
+
+
+def _ist_blockiert_zeile(text: str) -> bool:
+    if briefkasten.JA_BEFEHL in text:
+        return True
+    bereinigt = _NICHT_BLOCKIERT_MUSTER.sub("", text)
+    return bool(_BLOCKIERT_MUSTER.search(bereinigt))
+
+
+def blockiert_im_text(text: str) -> str:
+    """Erkannter Blockade-Wortlaut der Session am Ende des Pane-Texts (#289); ``""`` = nicht blockiert.
+
+    Betrachtet wird die Ausgabe seit der letzten Eingabezeile (:func:`unbeaufsichtigt`), bei
+    ausgebliebener Antwort die Ausgabe vor dem Eingabefeld. Verneinungen („nicht mehr blockiert“)
+    zählen nicht.
+    """
+    sauber = aufpasser.ohne_farben(text)
+    roh = unbeaufsichtigt(sauber)
+    if not any(z.strip() for z in roh):
+        roh = aufpasser._zeilen_am_prompt(sauber)
+    absatz: list[str] = []
+    for z in reversed(roh):
+        if not z.strip():
+            if absatz:
+                break
+            continue
+        absatz.insert(0, z.strip())
+    if absatz:
+        zusammen = " ".join(" ".join(absatz).split())
+        if _ist_blockiert_zeile(zusammen):
+            return zusammen
+    nicht_leer = [z.strip() for z in roh if z.strip()][-6:]
+    for z in reversed(nicht_leer):
+        if _ist_blockiert_zeile(z):
+            return " ".join(z.split())
+    gemeldet = aufpasser.gemeldete_blocker("\n".join(roh))
+    if gemeldet:
+        return f"WARTET: {gemeldet}"
+    return ""
+
+
 def _fenster_lage(
     n: int, ziel: str, aktiv: float, q: Quellen, vorher: _Vorher, jetzt: float
-) -> tuple[str, int | None, dict[str, Any] | None]:
-    """(Zustand, Still-Minuten, Merker für die Stand-Datei)."""
+) -> tuple[str, int | None, dict[str, Any] | None, str, str]:
+    """(Zustand, Still-Minuten, Merker für die Stand-Datei, letzte Zeile, Blockade-Wortlaut)."""
     text = q.tmux(["capture-pane", "-p", "-t", ziel])
     if text is None:
         log.warning("Pane von #%s (%s) nicht lesbar.", n, ziel)
-        return KEIN_FENSTER, None, None
+        return KEIN_FENSTER, None, None, STRICH, ""
     h = aufpasser.pane_hash(text)
     alt = vorher.fenster.get(str(n)) or {}
     # tmux-Aktivität zählt auch die tickende Uhr; gleicher Hash = still seit dem alten Wert.
     seit = min(float(alt.get("seit", aktiv)), aktiv) if alt.get("hash") == h else aktiv
     merker = {"hash": h, "seit": seit}
     minuten = max(0, int((jetzt - seit) // 60))
+    letzte = letzte_pane_zeile(text)
     if aufpasser.rueckfrage(text):
-        return RUECKFRAGE, minuten, merker
-    if aufpasser.arbeitet(text):
-        return ARBEITET, None, merker
-    return STILL, minuten, merker
+        return RUECKFRAGE, minuten, merker, letzte, ""
+    if any(m in text for m in aufpasser.ARBEITS_MARKER) or bool(aufpasser.LIMIT_TEXT.search(text)):
+        return ARBEITET, None, merker, letzte, ""
+    if aufpasser.BLOCKER_WARTEN.search(text):
+        return WARTET, minuten, merker, letzte, ""
+    grund = blockiert_im_text(text)
+    if grund:
+        return BLOCKIERT, minuten, merker, letzte, grund
+    return STILL, minuten, merker, letzte, ""
 
 
 def _log_lage(n: int, repo: Path) -> tuple[str, str, str, int] | None:
@@ -425,12 +550,16 @@ def sammeln(spec: int, q: Quellen, vorher: _Vorher) -> _Ergebnis:
         except (KeyError, TypeError, ValueError):
             log.warning("Sub-Issue ohne Nummer übersprungen: %r", kind)
             continue
+        letzte = STRICH
+        blockiert_text = ""
         if q.pc_still is not None:
             zustand, still_min = _pc_lage(q.pc_still(n))
         elif fenster is None:
             zustand, still_min = FENSTER_UNBEKANNT, None
         elif n in fenster:
-            zustand, still_min, m = _fenster_lage(n, *fenster[n], q, vorher, jetzt)
+            zustand, still_min, m, letzte, blockiert_text = _fenster_lage(
+                n, *fenster[n], q, vorher, jetzt
+            )
             if m:
                 merker[str(n)] = m
         else:
@@ -448,8 +577,25 @@ def sammeln(spec: int, q: Quellen, vorher: _Vorher) -> _Ergebnis:
             ohne_log.append(f"#{n}")
             log_lage = (STRICH, STRICH, STRICH, 0)
         kontext, phase, aussage, abgelehnt = log_lage
+        stufe = _stufe(kind)
+        if stufe == "offen" and zustand == STILL and phase == "blockiert":
+            zustand = BLOCKIERT
+            if not blockiert_text and aussage != STRICH:
+                blockiert_text = aussage
         lagen.append(
-            TicketLage(n, _stufe(kind), zustand, still_min, kontext, phase, aussage, neue, abgelehnt)
+            TicketLage(
+                n,
+                stufe,
+                zustand,
+                still_min,
+                kontext,
+                phase,
+                aussage,
+                neue,
+                abgelehnt,
+                letzte,
+                blockiert_text,
+            )
         )
     if ohne_log:
         # Eine Zeile statt einer je Ticket: der Aufseher liest die Ausgabe in seinen Kontext.
@@ -589,11 +735,163 @@ def ticket_lage(spec: int, ticket: int, q: Quellen, ordner: Path | None = None) 
     return TicketBlick(lage, eintrag[0] if eintrag else None)
 
 
+def _beleg_letzte_zeile(lage: TicketLage, zustand: Zustand) -> str:
+    """Aussagekräftige letzte Zeile für :class:`StandBeleg` (nie leer und nie nur „—“)."""
+    if zustand == BLOCKIERT:
+        kandidat = lage.blockiert_text or (
+            lage.letzte_zeile if lage.letzte_zeile != STRICH else ""
+        ) or (lage.aussage if lage.aussage != STRICH else "") or "Session meldet blockiert"
+    elif zustand == FERTIG:
+        if lage.letzte_zeile != STRICH:
+            kandidat = lage.letzte_zeile
+        elif lage.aussage != STRICH:
+            kandidat = lage.aussage
+        else:
+            kandidat = "Ticket verworfen" if lage.stufe == "verworfen" else "Ticket zu"
+    elif lage.letzte_zeile != STRICH:
+        kandidat = lage.letzte_zeile
+    elif lage.aussage != STRICH:
+        kandidat = lage.aussage
+    elif lage.fenster == FENSTER_UNBEKANNT:
+        kandidat = TMUX_HINWEIS
+    else:
+        kandidat = lage.fenster
+    return _kuerzen(kandidat, BELEG_ZEILE_MAX)
+
+
+def beleg_fuer(spec: int, ticket: int, q: Quellen, ordner: Path | None = None) -> StandBeleg:
+    """Stand-Beleg (Zeit, Zustand, letzte Zeile) für ein Ticket — nur lesen (#289)."""
+    erg = sammeln(spec, q, _vorher(spec, ordner))
+    lage = next((t for t in erg.lagen if t.nummer == ticket), None)
+    if lage is None:
+        raise RuntimeError(f"#{ticket} ist kein Sub-Issue von Spec #{spec}")
+    zustand = sitzungs_zustand(lage)
+    zeit = datetime.fromtimestamp(q.jetzt(), tz=UTC).astimezone().strftime("%H:%M")
+    return StandBeleg(
+        ticket=ticket,
+        zeit=zeit,
+        zustand=zustand,
+        letzte_zeile=_beleg_letzte_zeile(lage, zustand),
+    )
+
+
+def nach_anstoss_beleg(
+    spec: int,
+    ticket: int,
+    q: Quellen,
+    *,
+    ordner: Path | None = None,
+    warte_s: float = 0.0,
+    schlafen: Callable[[float], None] = time.sleep,
+) -> StandBeleg:
+    """Prüft die Wirkung eines Anstoßes am Fenster/Stand nach kurzer Pause (#289)."""
+    if warte_s > 0:
+        schlafen(warte_s)
+    return beleg_fuer(spec, ticket, q, ordner=ordner)
+
+
+def beleg_zeile(beleg: StandBeleg) -> str:
+    """Einzeiliger, maschinell prüfbarer Beleg: Zeit, Zustand und letzte Zeile (#289)."""
+    return f"Beleg #{beleg.ticket} · {beleg.zeit} · {beleg.zustand} · „{beleg.letzte_zeile}“"
+
+
+def parse_beleg_zeilen(text: str) -> list[StandBeleg]:
+    """Alle syntaktisch vollständigen Beleg-Zeilen aus einer Aufseher-Meldung (#289)."""
+    funde: list[StandBeleg] = []
+    for zeile in text.splitlines():
+        treffer = _BELEG_ZEILE_RE.match(zeile)
+        if not treffer:
+            continue
+        letzte = (treffer.group("zeile_de") or treffer.group("zeile_en") or "").strip()
+        if not letzte or letzte in (STRICH, "-"):
+            continue
+        zustand: Zustand = treffer.group("zustand")  # type: ignore[assignment]
+        funde.append(
+            StandBeleg(
+                ticket=int(treffer.group("ticket")),
+                zeit=treffer.group("zeit"),
+                zustand=zustand,
+                letzte_zeile=letzte,
+            )
+        )
+    return funde
+
+
+def _behauptet_arbeitet(zeile: str) -> bool:
+    bereinigt = _NICHT_ARBEITET_MUSTER.sub("", zeile)
+    return bool(_BEHAUPTET_ARBEITET_MUSTER.search(bereinigt))
+
+
+def pruefe_meldung(text: str) -> str | None:
+    """Prüft eine Aufseher-Meldung auf Beleg-Zeile und Widerspruchsfreiheit (#289).
+
+    Rückgabe: ``None`` = gültig, sonst klarer Fehlertext. Einzige Prüfstelle für
+    Aufseher-Takt und CLI.
+    """
+    if not text or not text.strip():
+        return "Aufseher-Meldung ist leer — Beleg-Zeile fehlt (Zeit, letzte Zeile, Zustand)."
+    belege = parse_beleg_zeilen(text)
+    if not belege:
+        return (
+            "Aufseher-Meldung ohne gültige Beleg-Zeile "
+            "(erwartet: Beleg #<N> · <Zeit> · <arbeitet|wartet|blockiert|fertig> · „<letzte Zeile>“)."
+        )
+    je_ticket: dict[int, StandBeleg] = {}
+    for b in belege:
+        if b.zustand == ARBEITET and blockiert_im_text(b.letzte_zeile):
+            return (
+                f"Widerspruch im Beleg #{b.ticket}: Zustand „arbeitet“, aber letzte Zeile "
+                f"meldet blockiert („{b.letzte_zeile}“)."
+            )
+        je_ticket[b.ticket] = b
+    alle_blockiert = all(b.zustand == BLOCKIERT for b in belege)
+    for zeile in text.splitlines():
+        if _BELEG_ZEILE_RE.match(zeile) or not _behauptet_arbeitet(zeile):
+            continue
+        nummern = [int(m) for m in _TICKET_NUMMER_RE.findall(zeile)]
+        if nummern:
+            for nr in nummern:
+                b = je_ticket.get(nr)
+                if b is not None and b.zustand == BLOCKIERT:
+                    return (
+                        f"Widerspruch in Aufseher-Meldung: #{nr} als „arbeitet“ gemeldet, "
+                        f"Beleg zeigt „blockiert“ ({beleg_zeile(b)})."
+                    )
+        elif alle_blockiert:
+            return (
+                "Widerspruch in Aufseher-Meldung: nennt „arbeitet“, aber alle Belege zeigen "
+                f"„blockiert“ ({beleg_zeile(belege[0])})."
+            )
+    return None
+
+
+def beleg_hinweis(befehl: str, spec_platzhalter: str = "{S}") -> str:
+    """Einzige Quelle der Beleg-Regel für beide Aufseher-Prompts (Dauer-Aufseher und Takt, #289)."""
+    return (
+        f"Kein Claim ohne Beweis: Nach jedem Anstoß an eine Bau-Session und vor jeder "
+        f"Zustandsmeldung prüfst du die Wirkung am Fenster/Stand mit "
+        f"`{befehl} aufseher-stand {spec_platzhalter} --ticket <N>` und nennst die Beleg-Zeile "
+        f"(`Beleg #<N> · <Zeit> · <arbeitet|wartet|blockiert|fertig> · „<letzte Zeile>“`) wörtlich "
+        f"in deiner Meldung — eine Meldung ohne Beleg-Zeile gilt im Aufseher-Takt als Fehler."
+    )
+
+
 def kopf_zeile(spec: int, lagen: list[TicketLage], jetzt: float, noop: bool) -> str:
     def zahl(bedingung: Callable[[TicketLage], bool]) -> int:
         return sum(1 for x in lagen if bedingung(x))
 
-    uhr = datetime.fromtimestamp(jetzt, tz=timezone.utc).astimezone().strftime("%H:%M")
+    uhr = datetime.fromtimestamp(jetzt, tz=UTC).astimezone().strftime("%H:%M")
+    fenster_teile = [
+        f"{zahl(lambda x: x.fenster == ARBEITET)} arbeitet",
+        f"{zahl(lambda x: x.fenster == STILL)} still",
+        f"{zahl(lambda x: x.fenster == RUECKFRAGE)} Rückfrage",
+    ]
+    blockiert_zahl = zahl(lambda x: x.fenster == BLOCKIERT)
+    if blockiert_zahl:
+        fenster_teile.append(f"{blockiert_zahl} blockiert")
+    wartet_zahl = zahl(lambda x: x.fenster == WARTET)
+    if wartet_zahl:
+        fenster_teile.append(f"{wartet_zahl} wartet")
     teile = [
         f"Aufseher-Stand Spec #{spec} · {uhr}",
         (
@@ -601,11 +899,7 @@ def kopf_zeile(spec: int, lagen: list[TicketLage], jetzt: float, noop: bool) -> 
             f"{zahl(lambda x: x.stufe == 'fertig_gebaut')} fertig gebaut, "
             f"{zahl(lambda x: x.endgueltig_zu)} zu"
         ),
-        (
-            f"{zahl(lambda x: x.fenster == ARBEITET)} arbeitet, "
-            f"{zahl(lambda x: x.fenster == STILL)} still, "
-            f"{zahl(lambda x: x.fenster == RUECKFRAGE)} Rückfrage"
-        ),
+        ", ".join(fenster_teile),
     ]
     if any(x.fenster == FENSTER_UNBEKANNT for x in lagen):
         teile.append(f"{TMUX_HINWEIS} (Sitzung spec-{spec} fehlt oder tmux aus)")
@@ -626,7 +920,7 @@ def stand(spec: int, q: Quellen, *, ordner: Path | None = None, alle: bool = Fal
     noop = abdruck == vorher.fingerabdruck and not any(x.neue_kommentare for x in erg.lagen)
     zeilen = [kurz_zeile(x) for x in erg.lagen]
     eintrag: dict[str, Any] = {
-        "ts": datetime.fromtimestamp(jetzt, tz=timezone.utc).isoformat(timespec="seconds"),
+        "ts": datetime.fromtimestamp(jetzt, tz=UTC).isoformat(timespec="seconds"),
         "fingerabdruck": abdruck,
         "noop": noop,
     }
@@ -652,6 +946,18 @@ def richte_parser_ein(unter: Any) -> None:
     )
     p.add_argument("spec", type=int, help="Spec-Issue-Nummer")
     p.add_argument("--alle", action="store_true", help="auch geschlossene Tickets ohne Fenster")
+    p.add_argument(
+        "--ticket",
+        type=int,
+        default=None,
+        help="nur ein Ticket prüfen und Beleg-Zeile (Zeit, Zustand, letzte Zeile) ausgeben (#289)",
+    )
+    p.add_argument(
+        "--warte",
+        type=float,
+        default=0.0,
+        help="Sekunden vor der --ticket-Beleg-Abfrage warten (nach Anstoß, Vorgabe 0)",
+    )
     p.add_argument("--gh-repo", default="", help="owner/name (Vorgabe: aus origin)")
     p.add_argument(
         "--stand-ordner",
@@ -670,11 +976,18 @@ def lauf(args: Any, repo: Path) -> int:
         return 2
     try:
         q = echte_quellen(repo, gh_repo)
+        stand_pfad = Path(args.stand_ordner).expanduser() if args.stand_ordner else None
+        if args.ticket is not None:
+            beleg = nach_anstoss_beleg(
+                args.spec, args.ticket, q, ordner=stand_pfad, warte_s=max(0.0, float(args.warte or 0.0))
+            )
+            print(beleg_zeile(beleg))
+            return 0
         print(
             stand(
                 args.spec,
                 q,
-                ordner=Path(args.stand_ordner).expanduser() if args.stand_ordner else None,
+                ordner=stand_pfad,
                 alle=args.alle,
             )
         )
