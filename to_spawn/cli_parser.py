@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import NoReturn
 
 from to_spawn import (
+    abgleich,
     aufpasser,
     aufseher_stand,
     befund,
@@ -23,6 +24,7 @@ from to_spawn import (
     leitstand,
     nest,
     respawn,
+    start_last,
     ticketstand,
     uebergabe_sichern,
     vorfall,
@@ -321,6 +323,7 @@ def baue_parser() -> _Parser:
     # Tür B (#278 P2): Befugnis prüfen, Frage einwerfen, Antwort lesen/schreiben, Liste je Spec.
     briefkasten_cli.richte_parser_ein(unter)
     helfer_temp.richte_parser_ein(unter)  # #551
+    abgleich.richte_parser_ein(unter)  # #561
     p_ents = unter.add_parser("entscheidungen", help="Liste aller Entscheidungen einer Spec")
     p_ents.add_argument("spec")
 
@@ -409,5 +412,12 @@ def baue_parser() -> _Parser:
     # ``skripte/aufpasser.py``.
     aufpasser.parser_fuellen(
         unter.add_parser("aufpasser", help="tmux-Fenster bau/wache beaufsichtigen (Cron)")
+    )
+    # Start-Last (#412): Kontext nach Start je Fenstertyp (bau, aufseher) + Obergrenzen-Prüfung.
+    start_last.parser_fuellen(
+        unter.add_parser(
+            "start-last",
+            help="Start-Last (Kontext nach Start) je Fenstertyp messen und gegen Obergrenzen prüfen",
+        )
     )
     return ap
