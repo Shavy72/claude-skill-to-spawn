@@ -13,6 +13,7 @@ import sys
 
 import pytest
 from test_hausmeister_1368 import Welt, welt  # noqa: F401 — Fixture
+
 from to_spawn import prozessbaum
 
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="PEB-Weg nur unter Windows")
@@ -142,6 +143,32 @@ def test_leere_cwd_eines_fremdprozesses_sperrt(welt: Welt, monkeypatch: pytest.M
         def peb(p: int) -> str | None:
             if p == proc.pid:
                 raise prozessbaum._LeereCwd(f"Prozess {p}: leere cwd im PEB")
+            return echt(p)
+
+        monkeypatch.setattr(prozessbaum, "_arbeitsordner_windows", peb)
+        _fremder_benutzer(monkeypatch, proc.pid)
+        r = welt.aufraeumen(wt, loeschen=True)
+        assert r.art == "bleibt" and str(proc.pid) in r.grund, r.grund
+        assert wt.is_dir()
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def test_msys_zugriff_verweigert_eines_fremdprozesses_sperrt(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#243 × #552: MSYS/Cygwin-Prozess mit verweigertem Zugriff sperrt auch bei fremdem Benutzer."""
+    wt = welt.worktree(557)
+    welt.ticket(557, "CLOSED", 48)
+    proc = subprocess.Popen(["sleep", "60"], cwd=welt.tmp, **prozessbaum.ohne_fenster())
+    try:
+        echt = prozessbaum._arbeitsordner_windows
+
+        def peb(p: int) -> str | None:
+            if p == proc.pid:
+                raise prozessbaum._MsysZugriffVerweigert(
+                    prozessbaum._FEHLER_ZUGRIFF_VERWEIGERT,
+                    f"Prozess {p}: Zugriff verweigert, MSYS/Cygwin-cwd unlesbar",
+                )
             return echt(p)
 
         monkeypatch.setattr(prozessbaum, "_arbeitsordner_windows", peb)
