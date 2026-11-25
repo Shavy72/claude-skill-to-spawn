@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from conftest import attrappe
+from conftest import _ECHTES_HEIM, attrappe
 
 SKILL = Path(__file__).resolve().parent.parent
 CLI = SKILL / "to_spawn.py"
@@ -401,9 +401,13 @@ def test_weg_echtes_repo_echtes_home(tmp_path: Path) -> None:
     echte_datei = ECHTES_REPO / ".to-spawn" / "werkzeuge.json"
     vorher = echte_datei.exists()
     ziel = tmp_path / "werkzeuge.json"
+    # Die autouse-Fixture ``test_heim`` (#232) biegt HOME auf einen Wegwerf-Ordner um;
+    # dieser Weg-Test braucht ausdrücklich das echte HOME (nur lesend, Ausgabe nach tmp_path).
+    echt = {**os.environ, "HOME": str(_ECHTES_HEIM), "USERPROFILE": str(_ECHTES_HEIM)}
     lauf = subprocess.run(
         [sys.executable, str(CLI), "inventur", "--json", "--schreiben", "--ausgabe", str(ziel)],
         cwd=str(ECHTES_REPO),
+        env=echt,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -419,7 +423,7 @@ def test_weg_echtes_repo_echtes_home(tmp_path: Path) -> None:
     assert len(alle) >= 20
     je_name = {w["name"]: w for w in alle}
 
-    skills = Path.home() / ".claude" / "skills"
+    skills = _ECHTES_HEIM / ".claude" / "skills"
     for name, kategorie in (("mp-tdd", "testen"), ("ffmpeg-production", "medien")):
         if (skills / name).exists():
             assert je_name[name]["kategorie"] == kategorie
@@ -427,7 +431,7 @@ def test_weg_echtes_repo_echtes_home(tmp_path: Path) -> None:
         pytest.skip("weder mp-tdd noch ffmpeg-production in ~/.claude/skills")
 
     slug = re.sub(r"[^A-Za-z0-9]", "-", str(ECHTES_REPO.resolve()))
-    if (Path.home() / ".claude" / "projects" / slug).is_dir():
+    if (_ECHTES_HEIM / ".claude" / "projects" / slug).is_dir():
         assert any(w["genutzt"] > 0 for w in alle), "Historie ergibt keine Nutzung"
 
     env_namen = _env_namen(ECHTES_REPO / ".env")
@@ -442,7 +446,7 @@ def test_weg_echtes_repo_echtes_home(tmp_path: Path) -> None:
         shutil.which("codex") is not None
         or "OPENAI_API_KEY" in os.environ
         or "OPENAI_API_KEY" in env_namen
-        or (Path.home() / ".codex" / "auth.json").is_file()
+        or (_ECHTES_HEIM / ".codex" / "auth.json").is_file()
     )
     assert ("codex" in zeilen) == (not codex_da)
 
@@ -878,6 +882,7 @@ def _echt(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(CLI), "inventur", *args],
         cwd=str(ECHTES_REPO),
+        env={**os.environ, "HOME": str(_ECHTES_HEIM), "USERPROFILE": str(_ECHTES_HEIM)},
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -914,7 +919,7 @@ def test_f11_weg_echtes_repo_abwahl_ueber_drei_laeufe(tmp_path: Path) -> None:
     assert echte_datei.exists() == vorher, "echte werkzeuge.json darf nicht entstehen"
 
     je_name = {w["name"]: w for k in daten["kategorien"] for w in k["werkzeuge"]}
-    skills = Path.home() / ".claude" / "skills"
+    skills = _ECHTES_HEIM / ".claude" / "skills"
     geprueft = 0
     for skill, kategorie in (("german-umlauts", "bauen"), ("diagnosing-bugs", "testen")):
         if (skills / skill / "SKILL.md").is_file():
