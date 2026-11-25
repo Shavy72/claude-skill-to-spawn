@@ -19,7 +19,7 @@ import pytest
 import test_einrichtungs_ticket_410 as t410
 import test_spec_rand_e2 as e2
 
-from to_spawn import aufseher_stand, bau_log, config, einrichtungs_ticket, gh
+from to_spawn import aufseher_stand, bau_log, config, einrichtungs_ticket, gh, manifest
 
 STAGING = {
     "staging": {"url": "https://staging.example"},
@@ -210,13 +210,31 @@ def test_gh_json_lauf_und_regularien_brechen_bei_haengendem_gh_ab(
     weg.mkdir()
     repo, _welt, umgebung = t410._aufbau(weg)
     umgebung[gh.GH_STUB_ENV] = str(stub)
-    umgebung[gh.GH_ZEIT_ENV] = "1.0"
+    umgebung[gh.GH_ZEIT_ENV] = "0.5"
     start_cli = time.monotonic()
     lauf = t410._cli(repo, umgebung, "regularien", str(e2.SPEC))
     dauer_cli = time.monotonic() - start_cli
     assert dauer_cli < 10.0, f"regularien hing {dauer_cli:.1f} s"
     assert lauf.returncode == 3, lauf.stdout + lauf.stderr
     assert lauf.stdout.strip().splitlines()[-1].startswith("EINRICHTUNG FEHLT")
+
+
+def test_hole_github_spart_blocked_by_wenn_ticket_daten_scheitern(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Scheitert ``gh.ticket_daten``, fragt ``manifest._hole_github`` nicht zusätzlich ``blocked_by`` ab (#353)."""
+    aufrufe: list[str] = []
+    monkeypatch.setattr(gh, "gh_befehl", lambda: ["gh"])
+    monkeypatch.setattr(gh, "repo_aus_origin", lambda _repo: "o/r")
+    monkeypatch.setattr(gh, "ticket_daten", lambda nr, cwd=None: aufrufe.append(f"daten:{nr}") or None)
+    monkeypatch.setattr(gh, "blocked_by", lambda _slug, nr, cwd=None: aufrufe.append(f"kanten:{nr}") or [])
+
+    bericht = manifest.Bericht(spec="900", tickets={"901": {}, "909": {}})
+    ergebnis = manifest._hole_github(tmp_path, bericht)
+
+    assert ergebnis == {"901": None, "909": None}
+    assert len(bericht.fehler) == 2
+    assert aufrufe == ["daten:901", "daten:909"], aufrufe
 
 
 # --- #452: Schalter live.ohne analog staging.ohne + Docstring pruef_befehl ----

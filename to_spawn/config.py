@@ -13,7 +13,8 @@ Schnittstelle für die Aufrufer (L1 Etappe 1, Pakete P1–P5):
   Repo-Wurzel (absolute Werte und ``~`` gelten wie eingetragen).
 - ``maschine() -> dict``: Maschinen-Liste ``~/.config/to-spawn/maschine.json``
   (Env ``TO_SPAWN_MASCHINE`` lenkt um) mit ``repos[]`` (``slug``, ``pfad``,
-  ``ticket_repo``, ``worktree_basis``), ``staging_sperren[]`` und
+  ``ticket_repo``, ``worktree_basis``, optional ``zweig_ticket_repo`` als
+  ``{praefix: ticket_repo_oder_leer}``), ``staging_sperren[]`` und
   ``hausmeister.{wurzeln,ordner_praefixe}``, ``temp_ordner`` — Dinge, die je Maschine gelten, nicht je Repo.
   ``hausmeister.geschuetzte_ordner`` (Liste von Ordnernamen) schützt nur zusätzlich zu
   ``HAUSMEISTER_GESCHUETZTE_ORDNER`` — nie Vorgabe-Ersatz, darum nicht in ``MASCHINE_DEFAULTS``.
@@ -206,6 +207,20 @@ DEFAULTS: dict[str, Any] = {
         "min_frei_mib": 2048,
         "max_sessions": 6,
         "staffel_s": 20,
+    },
+    #: Ort-Wahl für große Testläufe (#760, Beschluss E33): Grenzwerte an genau einer Stelle.
+    #: Misst den Linux-Bau-Server über ``fenster_min`` Minuten (bei Bedarf weitere
+    #: ``verlaengerung_min`` Minuten) im Takt ``takt_s``: freier Speicher (``min_frei_mib``),
+    #: 1-Minuten-Systemlast (``max_last``) und arbeitende Bau-Sessions (``max_bau_sessions``).
+    #: ``lauf_takt_s`` = Prüftakt während eines laufenden Server-Tests.
+    "ort_wahl": {
+        "fenster_min": 30,
+        "verlaengerung_min": 30,
+        "takt_s": 60,
+        "lauf_takt_s": 30,
+        "min_frei_mib": 4096,
+        "max_last": 2.0,
+        "max_bau_sessions": 0,
     },
 }
 
@@ -922,7 +937,7 @@ def ist_skill_slug(slug: str) -> bool:
     return slug.strip().lower() in {s.lower() for s in OEFFENTLICHE_SLUGS}
 
 
-def repo_klon_pfad(eintrag: dict[str, str], *, skill: Path | None = None) -> Path | None:
+def repo_klon_pfad(eintrag: Mapping[str, Any], *, skill: Path | None = None) -> Path | None:
     """Aufgelöster Klon-Ordner für einen ``repos[]``-Eintrag der Maschinen-Liste (#707).
 
     Einzige Stelle für die Reihenfolge „Maschinen-Liste vor ``STAND.json``“:
@@ -951,11 +966,65 @@ def maschine_datei() -> Path:
     return heim_ordner() / ".config" / "to-spawn" / "maschine.json"
 
 
-def _repo_eintrag(roh: Any) -> dict[str, str] | None:
-    """Ein ``repos[]``-Eintrag mit allen Feldern als Text, ``None`` = unbrauchbar (kein Objekt)."""
+#: Gültige Form eines GitHub-Ticket-Repos ``<besitzer>/<name>`` (#261).
+_TICKET_REPO_MUSTER = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+
+
+def zweig_ticket_repo_pruefen(roh: Any) -> tuple[dict[str, str] | None, str]:
+    """Prüft das optionale Feld ``repos[].zweig_ticket_repo`` der Maschinen-Liste (#347).
+
+    Aufbau: ``{zweig_praefix: "<besitzer>/<name>" | ""}`` — Klartext-Präfixe (kein Regex),
+    leerer Wert schaltet die Ticket-Zuordnung für diese Zweig-Form ausdrücklich ab.
+    Rückgabe ``(zuordnung, fehler)``:
+    - ``roh is None`` → ``({}, "")`` (nicht gesetzt, Standardregel ``ticket_repo`` gilt).
+    - gültiges Objekt → ``({praefix: wert}, "")``.
+    - ungültig → ``(None, grund)`` (Hausmeister bleibt fail-closed, Einrichter meldet Lücke).
+    """
+    if roh is None:
+        return {}, ""
+    if not isinstance(roh, dict):
+        return None, f"kein Objekt ({type(roh).__name__})"
+    sauber: dict[str, str] = {}
+    for schluessel, wert in roh.items():
+        if not isinstance(schluessel, str):
+            return None, f"Zweig-Präfix kein Text ({type(schluessel).__name__})"
+        if not schluessel:
+            return None, "leerer Zweig-Präfix"
+        if any(zeichen.isspace() for zeichen in schluessel):
+            return None, f"Zweig-Präfix ungültig ({schluessel!r})"
+        if not isinstance(wert, str):
+            return None, f"ticket_repo für {schluessel!r} ist kein Text ({type(wert).__name__})"
+        normal = wert.strip()
+        if normal and not _TICKET_REPO_MUSTER.fullmatch(normal):
+            return None, (
+                f"ticket_repo für {schluessel!r} ungültig ({wert!r}) — erwartet wird <besitzer>/<name> oder leer"
+            )
+        sauber[schluessel] = normal
+    return sauber, ""
+
+
+def _repo_eintrag(roh: Any) -> dict[str, Any] | None:
+    """Ein ``repos[]``-Eintrag mit allen Feldern als Text, ``None`` = unbrauchbar (kein Objekt).
+
+    Optionales ``zweig_ticket_repo`` (#347) bleibt erhalten: gültig normalisiert, ungültig roh
+    (mit Warnung), damit Hausmeister (fail-closed) und Einrichter es erkennen und Schreib-Wege
+    es nie still löschen.
+    """
     if not isinstance(roh, dict):
         return None
-    return {feld: str(roh.get(feld) or "") for feld in REPO_FELDER}
+    eintrag: dict[str, Any] = {feld: str(roh.get(feld) or "") for feld in REPO_FELDER}
+    if "zweig_ticket_repo" in roh and roh["zweig_ticket_repo"] is not None:
+        zuordnung, fehler = zweig_ticket_repo_pruefen(roh["zweig_ticket_repo"])
+        if zuordnung is None:
+            log.warning(
+                "Maschinen-Liste: zweig_ticket_repo für %r ungültig (%s) — Zweige/Ordner bleiben fail-closed",
+                eintrag["slug"] or eintrag["pfad"],
+                fehler,
+            )
+            eintrag["zweig_ticket_repo"] = copy.deepcopy(roh["zweig_ticket_repo"])
+        else:
+            eintrag["zweig_ticket_repo"] = zuordnung
+    return eintrag
 
 
 def maschine() -> dict[str, Any]:
@@ -1006,10 +1075,6 @@ def _schreibe_maschine(datei: Path, daten: dict[str, Any]) -> None:
         raise
 
 
-#: Gültige Form eines GitHub-Ticket-Repos ``<besitzer>/<name>`` (#261).
-_TICKET_REPO_MUSTER = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-
-
 @dataclass(frozen=True)
 class TicketRepoAenderung:
     """Ergebnis einer ``ticket_repo``-Änderung an einem ``repos[]``-Eintrag (#261)."""
@@ -1031,7 +1096,7 @@ class TicketRepoAenderung:
         return f"{self.slug} ({self.pfad}): ticket_repo {alt} → {neu}"
 
 
-def _veraltete_ticket_repo_ziele(daten: dict[str, Any]) -> list[tuple[dict[str, str], TicketRepoAenderung]]:
+def _veraltete_ticket_repo_ziele(daten: dict[str, Any]) -> list[tuple[dict[str, Any], TicketRepoAenderung]]:
     """Findet Einträge in ``daten["repos"]`` mit bekannter Alt-Vorgabe (``vorgaben.VERALTETE_TICKET_REPOS``)."""
     soll_je_slug = {
         e["slug"].lower(): e["ticket_repo"] for e in vorgaben.REPOS if e.get("slug") and e.get("ticket_repo")
@@ -1039,7 +1104,7 @@ def _veraltete_ticket_repo_ziele(daten: dict[str, Any]) -> list[tuple[dict[str, 
     alt_je_slug = {
         slug.lower(): {wert.lower() for wert in werte} for slug, werte in vorgaben.VERALTETE_TICKET_REPOS.items()
     }
-    treffer: list[tuple[dict[str, str], TicketRepoAenderung]] = []
+    treffer: list[tuple[dict[str, Any], TicketRepoAenderung]] = []
     for eintrag in daten.get("repos", []):
         if not isinstance(eintrag, dict):
             continue
@@ -1123,7 +1188,7 @@ def maschine_ticket_repo_setzen(ziel: str | Path, ticket_repo: str) -> list[Tick
     except (OSError, ValueError):
         ziel_pfad = None
 
-    treffer: list[dict[str, str]] = []
+    treffer: list[dict[str, Any]] = []
     for eintrag in daten["repos"]:
         if (eintrag.get("slug") or "").strip().lower() == ziel_klein or (
             ziel_pfad is not None and _gleicher_ort(eintrag.get("pfad") or "", ziel_pfad)
@@ -1154,7 +1219,7 @@ def maschine_ticket_repo_setzen(ziel: str | Path, ticket_repo: str) -> list[Tick
     return aenderungen
 
 
-def maschine_eintragen(repo: Path | None = None, ticket_repo: str = "") -> dict[str, str]:
+def maschine_eintragen(repo: Path | None = None, ticket_repo: str = "") -> dict[str, Any]:
     """Trägt das Repo in ``repos[]`` der Maschinen-Liste ein und gibt seinen Eintrag zurück.
 
     ``ticket_repo`` (Standard ``""``) setzt nur den Wert eines neuen bzw. noch leeren Eintrags;

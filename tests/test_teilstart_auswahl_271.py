@@ -557,30 +557,35 @@ def test_spawn_srv_speichert_auswahl_und_beachtet_dry_run_und_nachstart(
     fern = tmp_path / "fern.git"
     subprocess.run(["git", "init", "--bare", "-q", str(fern)], check=True)
     repo = _init_git_repo(tmp_path / "repo", origin=fern.as_posix())
+    (repo / ".to-spawn" / "config.json").write_text('{"speicher": {"staffel_s": 0}}', encoding="utf-8")
     _schreibe_manifest(repo, 1330, [101, 102, 103])
-    _git(repo, "add", "docs/agents/manifests/spec-1330.json")
+    _git(repo, "add", ".to-spawn/config.json", "docs/agents/manifests/spec-1330.json")
     _git(repo, "commit", "-q", "-m", "chore: manifest")
     _git(repo, "push", "-q", "-u", "origin", "main")
 
-    # Fake-tmux im PATH, damit kein echtes tmux-Fenster entsteht.
+    # Fake-tmux im PATH, damit kein echtes tmux-Fenster entsteht und anlauf_bereit sofort greift (#353).
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
+    fenster_datei = fake_bin / "fenster.txt"
     fake_tmux = fake_bin / "tmux"
     fake_tmux.write_text(
         "#!/usr/bin/env bash\n"
+        f"fenster={str(fenster_datei)!r}\n"
         'case "$1" in\n'
-        "  has-session) exit 1 ;;\n"
-        "  list-windows) exit 0 ;;\n"
-        "  new-session|new-window) exit 0 ;;\n"
+        '  has-session) [ -s "$fenster" ] ;;\n'
+        '  list-windows) [ -s "$fenster" ] && cat "$fenster" ;;\n'
+        "  new-session|new-window)\n"
+        '    prev=""\n'
+        '    for a in "$@"; do\n'
+        '      if [ "$prev" = "-n" ]; then printf "%s\\n" "$a" >> "$fenster"; break; fi\n'
+        '      prev="$a"\n'
+        "    done\n"
+        "    exit 0 ;;\n"
         "  *) exit 0 ;;\n"
         "esac\n",
         encoding="utf-8",
     )
     fake_tmux.chmod(0o755)
-    # Fake-sleep damit der 10s-Anlauf im Test sofort durchläuft.
-    fake_sleep = fake_bin / "sleep"
-    fake_sleep.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
-    fake_sleep.chmod(0o755)
 
     env = {
         **os.environ,

@@ -1326,6 +1326,25 @@ def sichern(
 
 
 def _crontab(*args: str, eingabe: str | None = None) -> subprocess.CompletedProcess[str]:
+    """Ruft ``crontab`` auf; Dateipfade als Argument sind gesperrt (#757).
+
+    Debian-/Vixie-``crontab`` speichert den Dateinamen in einem festen Puffer
+    (``MAX_FNAME = 100``, also max. 99 Zeichen + NUL) und schneidet längere Pfade
+    still ab. Neue Crontabs gehen darum immer über ``"-"`` + ``eingabe`` (stdin).
+    """
+    i = 0
+    while i < len(args):
+        teil = args[i]
+        if teil == "-u":
+            i += 2
+            continue
+        if teil == "-" or teil.startswith("-"):
+            i += 1
+            continue
+        raise ValueError(
+            f"crontab nie mit Dateipfad aufrufen ({teil!r}): Linux-Vixie-cron schneidet Pfade ab 99 Zeichen ab "
+            "— stattdessen '-' mit eingabe=... (stdin) nutzen (#757)"
+        )
     try:
         return subprocess.run(
             ["crontab", *args],

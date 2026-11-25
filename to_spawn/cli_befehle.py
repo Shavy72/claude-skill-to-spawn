@@ -41,6 +41,7 @@ from to_spawn import (
     live_tuer,
     manifest,
     nest,
+    ort_wahl,
     probesitz,
     pruef,
     respawn,
@@ -58,6 +59,7 @@ from to_spawn import (
     waechter_takt,
     warten,
     wecker,
+    werkzeug,
 )
 from to_spawn import einreichen as einreichen_modul
 from to_spawn import spawn as spawn_modul
@@ -123,6 +125,7 @@ def _setup(repo: Path, args: argparse.Namespace) -> int:
     datei = repo / config.KONFIG_PFAD
     werte = {
         "terminal": args.terminal,
+        "runner": args.runner,
         "modell_ticket": args.modell_ticket,
         "effort_ticket": args.effort_ticket,
         "modell_leicht": args.modell_leicht,
@@ -154,12 +157,15 @@ def _setup(repo: Path, args: argparse.Namespace) -> int:
         print(setup.zeige(konfig, datei, args.plattform, repo=repo))
         return 0
 
-    modelle = [mid for mid, _ in setup.MODELLE]
+    effektiver_runner = args.runner if args.runner in werkzeug.WERKZEUGE else werkzeug.runner_von(konfig)
+    modelle = setup.erlaubte_modelle(effektiver_runner)
+    claude_modelle = [mid for mid, _ in setup.MODELLE]
     erlaubt = {
         "terminal": setup.waehlbare_terminals(args.plattform),
+        "runner": list(werkzeug.WERKZEUGE),
         "modell_ticket": modelle,
         "modell_leicht": modelle,
-        "modell_waechter": modelle,
+        "modell_waechter": claude_modelle,
         "effort_ticket": setup.EFFORTS,
         "effort_leicht": setup.EFFORTS,
         "effort_waechter": setup.EFFORTS,
@@ -182,6 +188,8 @@ def _setup(repo: Path, args: argparse.Namespace) -> int:
         )
         if args.terminal:
             aenderungen["terminal"] = args.terminal
+        if args.runner:
+            aenderungen["runner"] = args.runner
         for rolle, modell, effort in (
             ("ticket", args.modell_ticket, args.effort_ticket),
             ("ticket_leicht", args.modell_leicht, args.effort_leicht),
@@ -207,9 +215,11 @@ def _setup(repo: Path, args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
-    stand = setup.standards(config.lade(repo), args.plattform)
+    gespeichert_konfig = config.lade(repo)
+    stand = setup.standards(gespeichert_konfig, args.plattform)
     print(f"\nGespeichert: {gespeichert}")
     print(f"  terminal ({setup.plattform_von(args.plattform)}): {stand['terminal']}")
+    print(f"  runner: {werkzeug.runner_von(gespeichert_konfig)}")
     for rolle in setup.ROLLEN:
         modell = stand["modelle"][rolle]
         print(f"  {rolle}: {setup.modell_name(modell)} ({modell}), Effort {stand['effort'][rolle]}")
@@ -587,10 +597,12 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         return start_last.lauf_mit_args(args)
     if args.befehl == "warten":
         return warten.lauf(args, config.repo_wurzel(_repo_aus_umgebung()))
+    if args.befehl in ort_wahl.BEFEHLE:
+        return ort_wahl.lauf(args, config.repo_wurzel(_repo_aus_umgebung()))
     if args.befehl == "aufraeumen":
         return _aufraeumen(args, ap)
     if args.befehl == "sichern":
-        return uebergabe_sichern.lauf(args.dateien, trocken=args.trocken)
+        return uebergabe_sichern.lauf(args.dateien, trocken=args.trocken, nur_pruefen=args.pruefen)
     if args.befehl == "ticket-repo":
         return _ticket_repo_befehl(args, ap)
     if args.befehl == "ticketstand":
@@ -685,7 +697,13 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     if args.befehl == "einrichten":
         return einrichten.einrichten(repo, pruefen=args.pruefen, ausgabe=sys.stdout)
     if args.befehl == "probesitz":
-        return probesitz.befehl(repo, punkte=args.punkt, nur_zeigen=args.zeigen, modell=args.modell)
+        return probesitz.befehl(
+            repo,
+            punkte=args.punkt,
+            nur_zeigen=args.zeigen,
+            modell=args.modell,
+            runner=args.runner,
+        )
     if args.befehl == "spawn" and args.dry_run:
         # Probelauf (L1): Einrichter nur prüfend, schreibt nichts, Abweichung hält nicht auf.
         einrichten.einrichten(repo, pruefen=True, ausgabe=sys.stdout)

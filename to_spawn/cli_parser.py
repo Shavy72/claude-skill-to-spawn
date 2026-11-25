@@ -24,6 +24,7 @@ from to_spawn import (
     inventur,
     leitstand,
     nest,
+    ort_wahl,
     respawn,
     start_last,
     ticketstand,
@@ -32,6 +33,7 @@ from to_spawn import (
     waechter_takt,
     warten,
     wecker,
+    werkzeug,
 )
 from to_spawn import einreichen as einreichen_modul
 from to_spawn.pruefplan import Moment
@@ -208,10 +210,18 @@ def baue_parser() -> _Parser:
         help="nur diesen Punkt (1–7), mehrfach möglich",
     )
     p_probe.add_argument("--zeigen", action="store_true", help="nur den gemerkten Stand zeigen, nichts prüfen")
-    p_probe.add_argument("--modell", help="Modell der Wegwerf-Session (Vorgabe claude-sonnet-5)")
+    p_probe.add_argument(
+        "--modell", help="Modell der Wegwerf-Session (Vorgabe claude-sonnet-5 / agy: gemini-4-neon-high)"
+    )
+    p_probe.add_argument(
+        "--runner",
+        choices=list(werkzeug.WERKZEUGE),
+        help="Werkzeug für den Probesitz (Vorgabe: aus Konfig, Standard claude, #660)",
+    )
     p_setup.add_argument("--dialog", action="store_true", help="Dialog auch ohne Terminal (stdin gepipt)")
     p_setup.add_argument("--standard", action="store_true", help="alle Standards ohne Fragen")
     p_setup.add_argument("--terminal")
+    p_setup.add_argument("--runner", help="Bau-Session-Werkzeug (claude oder agy, #660)")
     p_setup.add_argument("--modell-ticket")
     p_setup.add_argument("--effort-ticket")
     p_setup.add_argument("--modell-leicht")
@@ -431,4 +441,6 @@ def baue_parser() -> _Parser:
     )
     # Abbruchfester Warte-Schritt (#286): Zustand in Datei, Neustart mit Pause, Geräte-Logbuch.
     warten.richte_parser_ein(unter)
+    # Ort-Wahl für große Testläufe (#760, E33): Bau-Server wenn ruhig, sonst GitHub.
+    ort_wahl.richte_parser_ein(unter)
     return ap

@@ -37,7 +37,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TextIO
 
-from . import bau_log, config, melder, nest, prozessbaum, sitzung_env, sitzungsjob, starter
+from . import bau_log, config, melder, nest, prozessbaum, sitzung_env, sitzungsjob, starter, werkzeug
 
 log = logging.getLogger("to_spawn.probesitz")
 
@@ -270,7 +270,38 @@ def zeige(zustand: dict[str, Any]) -> str:
 # --- Punkt 1: Login -----------------------------------------------------------------
 
 
-def pruefe_login(*, laeufer: Laeufer = laeufer_standard, which: Which = shutil.which) -> Ergebnis:
+def _pruefe_login_agy(*, laeufer: Laeufer, which: Which) -> Ergebnis:
+    """Punkt 1 für ``agy`` (Linux-Teil, #660): ``agy models`` prüft Installation und Login."""
+    agy = which("agy")
+    if not agy:
+        return _rot(1, "agy nicht gefunden", "Antigravity CLI (agy) installieren + anmelden")
+    fertig = laeufer([agy, "models"], timeout=60)
+    if fertig.returncode != 0:
+        kurz = (fertig.stderr or fertig.stdout).strip()[-200:]
+        return _rot(1, f"agy models Exit {fertig.returncode}: {kurz}", "agy anmelden (Login durch Nutzer)")
+    modelle = [
+        zeile.split("\t", 1)[0].strip()
+        for zeile in (fertig.stdout or "").splitlines()
+        if "\t" in zeile and zeile.split("\t", 1)[0].strip()
+    ]
+    if not modelle:
+        return _rot(1, "agy models liefert keine Modelle", "agy anmelden (Login durch Nutzer)")
+    zusatz = (
+        f"{werkzeug.AGY_STANDARD_MODELL} verfügbar"
+        if werkzeug.AGY_STANDARD_MODELL in modelle
+        else f"{len(modelle)} Modelle"
+    )
+    return _gruen(1, f"agy angemeldet ({zusatz})", beleg=", ".join(modelle[:6]))
+
+
+def pruefe_login(
+    *,
+    laeufer: Laeufer = laeufer_standard,
+    which: Which = shutil.which,
+    runner: str = werkzeug.STANDARD_RUNNER,
+) -> Ergebnis:
+    if runner == "agy":
+        return _pruefe_login_agy(laeufer=laeufer, which=which)
     claude = which("claude")
     if not claude:
         return _rot(1, "claude nicht gefunden", "Claude Code installieren + claude login")
@@ -621,17 +652,26 @@ def staffel_hook_vorhanden(repo: Path, skill: Path = SKILL_ORDNER) -> bool:
     ).is_file()
 
 
-def werte_bau_log(zeilen: Iterable[dict[str, Any]]) -> tuple[Ergebnis, Ergebnis]:
+def werte_bau_log(
+    zeilen: Iterable[dict[str, Any]], *, runner: str = werkzeug.STANDARD_RUNNER
+) -> tuple[Ergebnis, Ergebnis]:
     """Punkte 5 und 6 aus den Bau-Log-Zeilen des Wegwerf-Tickets."""
     zeilen = list(zeilen)
+    ist_agy = runner == "agy"
+    log_hinweis = (
+        "agy-Transkript unter ~/.gemini/antigravity-cli/brain/<id> (bau.py trägt session_ende nach)"
+        if ist_agy
+        else "Bau-Log-Hook (to_spawn.py hook-stop) in der Session-Settings-Datei + TO_SPAWN_LOG_REPO"
+    )
+    staffel_hinweis = (
+        "agy-Staffel-Übergabe in bau.py + Handoff mit „Staffel: weiter“"
+        if ist_agy
+        else f"{STAFFEL_HOOK_HINWEIS} + Handoff mit „Staffel: weiter“"
+    )
     if not zeilen:
         return (
-            _rot(
-                5,
-                "keine Bau-Log-Zeile",
-                "Bau-Log-Hook (to_spawn.py hook-stop) in der Session-Settings-Datei + TO_SPAWN_LOG_REPO",
-            ),
-            _rot(6, "keine Bau-Log-Zeile", f"{STAFFEL_HOOK_HINWEIS} + Handoff mit „Staffel: weiter“"),
+            _rot(5, "keine Bau-Log-Zeile", log_hinweis),
+            _rot(6, "keine Bau-Log-Zeile", staffel_hinweis),
         )
     enden = [z for z in zeilen if z.get("typ") == "session_ende"]
     mit_token = [z for z in enden if isinstance(z.get("tokens"), dict) and int(z["tokens"].get("gesamt") or 0) > 0]
@@ -646,13 +686,17 @@ def werte_bau_log(zeilen: Iterable[dict[str, Any]]) -> tuple[Ergebnis, Ergebnis]
         p5 = _rot(
             5,
             f"{len(enden)} session_ende-Zeile(n), aber 0 Token",
-            "Transkript-Pfad im Stop-Hook (Token kommen aus dem Transkript) — Session-Persistenz prüfen",
+            (
+                "agy-Transkript ohne Token-Zahlen — conversation_summaries.db / transcript.jsonl prüfen"
+                if ist_agy
+                else "Transkript-Pfad im Stop-Hook (Token kommen aus dem Transkript) — Session-Persistenz prüfen"
+            ),
         )
     else:
         p5 = _rot(
             5,
             f"{len(zeilen)} Zeile(n), aber keine session_ende",
-            "Bau-Log-Hook (to_spawn.py hook-stop) in der Session-Settings-Datei",
+            log_hinweis,
         )
     handoffs = [z for z in zeilen if z.get("typ") == "handoff"]
     starts_2 = [z for z in zeilen if z.get("typ") == "session_start" and int(z.get("staffel") or 0) == 2]
@@ -664,10 +708,12 @@ def werte_bau_log(zeilen: Iterable[dict[str, Any]]) -> tuple[Ergebnis, Ergebnis]
         )
     elif handoffs:
         p6 = _rot(
-            6, "handoff da, aber keine session_start mit Staffel 2", f"{STAFFEL_HOOK_HINWEIS} (Übergabe an bau.py)"
+            6,
+            "handoff da, aber keine session_start mit Staffel 2",
+            "agy-Staffel-Übergabe in bau.py" if ist_agy else f"{STAFFEL_HOOK_HINWEIS} (Übergabe an bau.py)",
         )
     else:
-        p6 = _rot(6, "keine handoff-Zeile", f"{STAFFEL_HOOK_HINWEIS} + Handoff mit „Staffel: weiter“")
+        p6 = _rot(6, "keine handoff-Zeile", staffel_hinweis)
     return p5, p6
 
 
@@ -795,6 +841,7 @@ def wegwerf_lauf(
     konfig: dict[str, Any],
     *,
     modell: str | None = None,
+    runner: str | None = None,
     laeufer: Laeufer = laeufer_standard,
     which: Which = shutil.which,
     session_starter: Callable[..., SessionLauf] = session_fahren,
@@ -805,6 +852,7 @@ def wegwerf_lauf(
     zeitlimit_s: float = WEGWERF_ZEITLIMIT_S,
 ) -> dict[int, Ergebnis]:
     """Ein echter Lauf für die Punkte 2, 5 und 6 — Wegwerf-Ticket, Worktree, zwei Runden."""
+    eff_runner = runner or werkzeug.runner_von(konfig)
     ticket, grund = _wegwerf_ticket(repo, laeufer, which)
     if ticket is None:
         return {
@@ -824,6 +872,7 @@ def wegwerf_lauf(
         if fremd:
             raise RuntimeError(fremd)
         worktree_anlegen(worktree, repo, ticket)
+        gewaehltes_modell = modell or (werkzeug.AGY_STANDARD_MODELL if eff_runner == "agy" else MODELL_VORGABE)
         argv = [
             sys.executable,
             str(skill / "skripte" / "bau.py"),
@@ -833,15 +882,17 @@ def wegwerf_lauf(
             "--staffel-max",
             "2",
             "--model",
-            modell or MODELL_VORGABE,
+            gewaehltes_modell,
         ]
+        if eff_runner != werkzeug.STANDARD_RUNNER:
+            argv += ["--runner", eff_runner]
         env = sitzung_env.ohne_sitzung()  # sonst Child Session: kein Transkript/Resume
         env["TO_SPAWN_REPO"] = str(repo)
         lauf = session_starter(
             argv, cwd=worktree, env=env, zeitlimit_s=zeitlimit_s, beobachter=beobachter, ticket=ticket, ausgabe=ausgabe
         )
         # Worktree-Datei + Rückfall-Laufdatei im Hauptbaum (Zeilen vor dem Worktree, #257)
-        p5, p6 = werte_bau_log(bau_log.lese(worktree, ticket, hauptbaum=repo))
+        p5, p6 = werte_bau_log(bau_log.lese(worktree, ticket, hauptbaum=repo), runner=eff_runner)
         p2 = pruefe_push(repo, ticket, zweig, laeufer)
         auszug = _log_auszug(worktree, ticket)
         if auszug:
@@ -862,17 +913,25 @@ def wegwerf_lauf(
             p2 = _rot(
                 2,
                 f"Session ohne Werkzeug-Rechte: {rechte}",
-                "claude -p braucht --allowedTools (bau.py --probesitz) oder bypassPermissions",
+                (
+                    "agy -p braucht --dangerously-skip-permissions (bau.py --probesitz)"
+                    if eff_runner == "agy"
+                    else "claude -p braucht --allowedTools (bau.py --probesitz) oder bypassPermissions"
+                ),
                 p2.beleg,
             )
         elif lauf.exit_code != 0:
             p2 = _rot(
                 2,
                 f"bau.py Exit {lauf.exit_code} (Protokoll {lauf.protokoll})",
-                "Session-Protokoll lesen (Sandbox-Pflicht, srt, claude, context-mode?)",
+                (
+                    "Session-Protokoll lesen (Sandbox-Pflicht, srt, agy?)"
+                    if eff_runner == "agy"
+                    else "Session-Protokoll lesen (Sandbox-Pflicht, srt, claude, context-mode?)"
+                ),
                 p2.beleg,
             )
-        if not staffel_hook_vorhanden(repo, skill) and not p6.ok:
+        if eff_runner == "claude" and not staffel_hook_vorhanden(repo, skill) and not p6.ok:
             p6.fehlt_noch = f"{STAFFEL_HOOK_HINWEIS} fehlt — Skill neu installieren (install.sh)"
         ergebnisse = {2: p2, 5: p5, 6: p6}
         fazit = ", ".join(f"Punkt {n} {'✓' if e.ok else '✗'}" for n, e in sorted(ergebnisse.items()))
@@ -950,6 +1009,7 @@ def laufen(
     *,
     punkte: set[int] | None = None,
     modell: str | None = None,
+    runner: str | None = None,
     ausgabe: TextIO | None = None,
     laeufer: Laeufer = laeufer_standard,
     which: Which = shutil.which,
@@ -959,6 +1019,7 @@ def laufen(
     melden: Callable[..., bool] = melder.melden,
 ) -> list[Ergebnis]:
     """Gewählte Punkte (Vorgabe alle) prüfen, Zustand nach jedem Punkt speichern."""
+    eff_runner = runner or werkzeug.runner_von(konfig)
     gewaehlt = set(punkte) if punkte else set(range(1, 8))
     zustand = lade_zustand(repo)
     lauf_id = _jetzt() + "-" + uuid.uuid4().hex[:8]
@@ -975,12 +1036,13 @@ def laufen(
         speichere_zustand(repo, zustand)
 
     if 1 in gewaehlt:
-        merken(pruefe_login(laeufer=laeufer, which=which))
+        merken(pruefe_login(laeufer=laeufer, which=which, runner=eff_runner))
     if gewaehlt & {2, 5, 6}:
         lauf = wegwerf_lauf(
             repo,
             konfig,
             modell=modell,
+            runner=eff_runner,
             laeufer=laeufer,
             which=which,
             session_starter=session_starter,
@@ -998,7 +1060,13 @@ def laufen(
 
 
 def befehl(
-    repo: Path, *, punkte: list[int] | None, nur_zeigen: bool, modell: str | None, ausgabe: TextIO = sys.stdout
+    repo: Path,
+    *,
+    punkte: list[int] | None,
+    nur_zeigen: bool,
+    modell: str | None,
+    runner: str | None = None,
+    ausgabe: TextIO = sys.stdout,
 ) -> int:
     """Unterbefehl ``probesitz``: 0 = 7/7 ✓, 1 = mindestens ein ✗, 2 = Konfig/Repo unlesbar."""
     if not repo.is_dir():
@@ -1011,7 +1079,7 @@ def befehl(
         return EXIT_KONFIG
     if not nur_zeigen:
         ausgabe.write("Probesitz läuft — jeder Punkt ist eine echte Prüfung.\n")
-        laufen(repo, konfig, punkte=set(punkte) if punkte else None, modell=modell, ausgabe=ausgabe)
+        laufen(repo, konfig, punkte=set(punkte) if punkte else None, modell=modell, runner=runner, ausgabe=ausgabe)
         ausgabe.write("\n")
     zustand = lade_zustand(repo)
     ausgabe.write(zeige(zustand) + "\n")

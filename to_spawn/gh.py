@@ -367,24 +367,28 @@ def hauptzweig(repo: Path | None = None) -> str:
 
 
 def label_sicherstellen(
-    repo_pfad: Path,
+    repo_pfad: Path | None,
     label: str,
     farbe: str = "d93f0b",
     beschreibung: str = "Ticket wartet auf menschliche Abnahme (to-spawn)",
     timeout: float | None = None,
+    *,
+    repo_slug: str = "",
 ) -> bool:
     """Sorgt dafür, dass das Label im GitHub-Repo existiert — erst prüfen, dann anlegen (#257).
 
-    Reihenfolge: ``gh api repos/{owner}/{repo}/labels/<label>`` (``gh`` löst die
-    Platzhalter aus dem origin des ``repo_pfad``) → Exit 0 = vorhanden, nichts wird
-    geschrieben (Farbe/Beschreibung bleiben, wie sie sind). Nur wenn das Label fehlt,
-    ``gh label create`` ohne ``--force``.
+    Reihenfolge: ``gh api repos/<owner>/<repo>/labels/<label>`` (mit ``repo_slug`` genau dieses
+    Repo, sonst löst ``gh`` ``{owner}/{repo}`` aus dem origin des ``repo_pfad``) → Exit 0 =
+    vorhanden, nichts wird geschrieben (Farbe/Beschreibung bleiben, wie sie sind). Nur wenn das
+    Label fehlt, ``gh label create`` ohne ``--force``.
 
     ``timeout`` (Sekunden) gilt je ``gh``-Aufruf; überschritten → ``False``.
     ``False`` mit Warnung, wenn ``gh`` fehlt oder das Anlegen scheitert (kein origin,
     nicht eingeloggt) — der Aufrufer läuft weiter, das Label holt man von Hand nach.
     """
-    pfad = "repos/{owner}/{repo}/labels/" + urllib.parse.quote(label, safe="")
+    slug = repo_slug.strip()
+    ziel_teil = slug if slug else "{owner}/{repo}"
+    pfad = f"repos/{ziel_teil}/labels/" + urllib.parse.quote(label, safe="")
     code, _ausgabe = lauf(["api", pfad], cwd=repo_pfad, timeout=timeout)
     if code == 124:
         return False
@@ -393,11 +397,11 @@ def label_sicherstellen(
         return False
     if code == 0:
         return True
-    code, _ausgabe = lauf(
-        ["label", "create", label, "--color", farbe, "--description", beschreibung],
-        cwd=repo_pfad,
-        timeout=timeout,
-    )
+    erstellen = ["label", "create", label]
+    if slug:
+        erstellen += ["--repo", slug]
+    erstellen += ["--color", farbe, "--description", beschreibung]
+    code, _ausgabe = lauf(erstellen, cwd=repo_pfad, timeout=timeout)
     if code == 127:
         log.warning("gh fehlt — Label %s nicht angelegt (gh label create %s).", label, label)
         return False

@@ -412,13 +412,29 @@ def _fake_tmux(ordner: Path) -> Path:
 
     ordner.mkdir(parents=True, exist_ok=True)
     aufrufe = ordner / "tmux_aufrufe.txt"
+    fenster = ordner / "tmux_fenster.txt"
     code = (
         "import sys\n"
         "from pathlib import Path\n"
-        f"with Path({str(aufrufe)!r}).open('a', encoding='utf-8') as f:\n"
-        "    f.write(' '.join(sys.argv[1:]) + '\\n')\n"
-        "if sys.argv[1:2] in (['has-session'], ['list-windows']):\n"
-        "    raise SystemExit(1)\n"
+        "args = sys.argv[1:]\n"
+        f"aufrufe = Path({str(aufrufe)!r})\n"
+        f"fenster = Path({str(fenster)!r})\n"
+        "with aufrufe.open('a', encoding='utf-8') as f:\n"
+        "    f.write(' '.join(args) + '\\n')\n"
+        "cmd = args[0] if args else ''\n"
+        "vorhanden = [z for z in fenster.read_text(encoding='utf-8').splitlines() if z] if fenster.exists() else []\n"
+        "if cmd == 'has-session':\n"
+        "    raise SystemExit(0 if vorhanden else 1)\n"
+        "if cmd == 'list-windows':\n"
+        "    if not vorhanden:\n"
+        "        raise SystemExit(1)\n"
+        "    print('\\n'.join(vorhanden))\n"
+        "    raise SystemExit(0)\n"
+        "if cmd in ('new-session', 'new-window') and '-n' in args:\n"
+        "    idx = args.index('-n') + 1\n"
+        "    if idx < len(args):\n"
+        "        with fenster.open('a', encoding='utf-8') as f:\n"
+        "            f.write(args[idx] + '\\n')\n"
     )
     if sys.platform == "win32":
         # Skript außerhalb des PATH-Ordners, im PATH liegt nur tmux.exe — so treffen
@@ -466,7 +482,11 @@ def _spawn_srv_weg(tmp_path: Path, *args: str) -> tuple[subprocess.CompletedProc
 
     repo, weltdatei, umgebung = _aufbau(
         tmp_path,
-        konfig={"hauptzweig": "main", "worktree_basis": (tmp_path / "wt").as_posix()},
+        konfig={
+            "hauptzweig": "main",
+            "worktree_basis": (tmp_path / "wt").as_posix(),
+            "speicher": {"staffel_s": 0},
+        },
     )
     aufrufe = _fake_tmux(tmp_path / "bin")
     _fake_powershell_leer(tmp_path / "bin")
@@ -718,6 +738,46 @@ def test_fake_tmux_laeuft_ueber_path_aus_bash_und_python(tmp_path: Path) -> None
     protokoll = aufrufe.read_text(encoding="utf-8")
     assert "-n wache 900" in protokoll
     assert "list-sessions -F #{session_name}" in protokoll
+
+
+def test_spawn_srv_weg_ohne_feste_wartezeiten_und_mit_anlauf_fenster_nachweis(tmp_path: Path) -> None:
+    """#353: ``_spawn_srv_weg`` schläft keine 20-s-Staffel-Pausen, und ``_fake_tmux`` meldet gestartete Fenster
+    bei ``list-windows``, damit ``anlauf_bereit`` beim ersten Takt endet statt 50× ins 10-s-Limit zu laufen."""
+    import shutil
+
+    binaer = tmp_path / "bin"
+    _fake_tmux(binaer)
+    tmux_bin = shutil.which("tmux", path=str(binaer))
+    assert tmux_bin is not None
+    umgebung = {**os.environ, "PATH": f"{binaer}{os.pathsep}{os.environ['PATH']}"}
+
+    def _tmux(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [tmux_bin, *args],
+            env=umgebung,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+
+    assert _tmux("has-session", "-t", "=spec-900").returncode == 1
+    assert _tmux("list-windows", "-t", "=spec-900", "-F", "#W").returncode == 1
+
+    assert _tmux("new-session", "-d", "-s", "spec-900", "-n", "wache 900").returncode == 0
+    assert _tmux("new-window", "-t", "=spec-900", "-n", "bau 901").returncode == 0
+    assert _tmux("has-session", "-t", "=spec-900").returncode == 0
+    fenster = _tmux("list-windows", "-t", "=spec-900", "-F", "#W")
+    assert fenster.returncode == 0, fenster.stderr
+    assert fenster.stdout.splitlines() == ["wache 900", "bau 901"], fenster.stdout
+
+    weg_ordner = tmp_path / "weg"
+    weg_ordner.mkdir()
+    lauf, *_ = _spawn_srv_weg(weg_ordner, "--dry-run")
+    ausgabe = lauf.stdout + lauf.stderr
+    assert lauf.returncode == 0, ausgabe
+    assert "Staffel: 0 s" in ausgabe, ausgabe
 
 
 if __name__ == "__main__":

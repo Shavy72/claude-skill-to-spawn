@@ -43,7 +43,8 @@ def _ja_ausfuehren(
     assert ja_einrichten.sperre_eintragen(heim / ".claude", sys.executable) is True
     sh, _cmd = ja_einrichten.befehl_anlegen(heim / ".claude", sys.executable)
     env = {k: v for k, v in os.environ.items() if not k.startswith("TO_SPAWN_")}
-    env.update({"TO_SPAWN_REPO": str(welt["repo"]), "HOME": str(heim)})
+    # Windows: Path.home() liest USERPROFILE, nicht HOME — sonst fehlt dort die Sperre (#762).
+    env.update({"TO_SPAWN_REPO": str(welt["repo"]), "HOME": str(heim), "USERPROFILE": str(heim)})
     # Unter Windows startet ``!`` den Befehl in der Git-Bash; die Shebang-Datei direkt geht dort nicht (WinError 193).
     start = [bash_wahl.bash(), str(sh)] if os.name == "nt" else [str(sh)]
     return subprocess.run(
@@ -53,6 +54,7 @@ def _ja_ausfuehren(
         stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
     )
 
@@ -187,3 +189,26 @@ def test_zwei_offene_klasse_2_fragen_befehl_lehnt_sicher_ab(
     assert lauf.returncode != 0 and "2 offene Fragen" in lauf.stderr, lauf.stderr
     for i in ids:
         assert briefkasten.lesen("902", i, hauptbaum=welt["repo"]) == briefkasten.NUTZER
+
+
+def test_ja_ausfuehren_setzt_userprofile_auf_sperre_heim(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Windows: ``Path.home()`` liest ``USERPROFILE``, nicht ``HOME`` — Sperre liegt im Test-Heim (#762)."""
+    gesehen: dict[str, object] = {}
+
+    def fange_lauf(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        gesehen["env"] = kwargs.get("env")
+        gesehen["encoding"] = kwargs.get("encoding")
+        return subprocess.CompletedProcess(args[0], 0, "", "")
+
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "fremdes-heim"))
+    monkeypatch.setattr(subprocess, "run", fange_lauf)
+    annahme = f"Aufseher: Annahme nach 60 min · {briefkasten.ja_aufforderung(902)}"
+    _ja_ausfuehren({"repo": tmp_path}, tmp_path, annahme)
+    env = gesehen["env"]
+    assert isinstance(env, dict)
+    assert env["USERPROFILE"] == env["HOME"] == str(tmp_path / "heim")
+    assert (Path(env["USERPROFILE"]) / ".claude" / "settings.json").is_file()
+    assert gesehen["encoding"] == "utf-8"
