@@ -165,12 +165,16 @@ def schnell_ohne_test(pfade: Sequence[str] | None, adapter: str, grund: str) -> 
     Nur eine geänderte Code-Datei macht „0 Tests“ zum Gate-Fehler; reine Doku/Text bleibt ausgelassen.
     ``pfade is None`` (geänderte Dateien unbekannt) zählt wie eine Code-Änderung.
     """
-    datei = "Änderung unbekannt" if pfade is None else code_datei(pfade, adapter)
-    if datei is None:
-        return ""
+    if pfade is None:
+        anlass = "Änderung unbekannt"
+    else:
+        datei = code_datei(pfade, adapter)
+        if datei is None:
+            return ""
+        anlass = f"Code geändert ({datei})"
     return (
         f"schnell: keine Test-Auswahl möglich ({grund}; pruefung.schnell nicht eingerichtet), "
-        f"Code geändert ({datei}), 0 Tests gelaufen "
+        f"{anlass}, 0 Tests gelaufen "
         "→ Schlüssel pruefung.schnell in .to-spawn/config.json eintragen"
     )
 
