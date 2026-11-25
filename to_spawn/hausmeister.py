@@ -12,13 +12,18 @@ Ticket-Nummer → Ticket zu → 24 h → keine tmux-Sitzung ``spec-<N>`` → kei
 Ordner (cwd, exe, offene Dateien) → Prüfung des Ungesicherten → Sicherung → Gegenprobe →
 Log → löschen. Vorab: Namen aus :data:`GESCHUETZTE_ORDNER` bleiben immer.
 
-#1536/#163 — Behalten ist die Ausnahme mit echtem Grund. Ordner ganz ohne Git (kein
-``.git`` oder verwaister Worktree, dessen Hauptrepo fehlt) mit Ticket-Nummer im Namen
-werden geräumt, wenn alles gilt: kein Prozess darin, keine laufende Spec-Sitzung, kein
-offenes Ticket zur Nummer (alle Ticket-Repos der Maschine geprüft, fail-closed), nichts
-jünger als :data:`OHNE_GIT_ALTER_SEKUNDEN`, kein Geheimnis-Verdacht, keine fremde
-Datenbank, kein eingebettetes Repo und kein Lesefehler; ohne Ticket-Nummer im Namen
-bleiben sie immer (``fuer_david=True``).
+#1536/#163/#241 — Behalten ist die Ausnahme mit echtem Grund. Ordner ganz ohne Git (kein
+``.git`` oder verwaister Worktree, dessen Hauptrepo/Eintrag fehlt) mit Ticket-Nummer im
+Namen werden geräumt, wenn alles gilt: kein Prozess darin, keine laufende Spec-Sitzung,
+kein offenes Ticket zur Nummer (alle Ticket-Repos der Maschine geprüft, fail-closed),
+nichts jünger als :data:`OHNE_GIT_ALTER_SEKUNDEN`, kein Geheimnis-Verdacht, keine fremde
+Datenbank, kein eingebettetes Repo und kein Lesefehler. Ohne Ticket-Nummer im Namen
+werden solche Ordner (#241) zusätzlich nur dann geräumt, wenn ihr gesamter Nicht-Erzeugnis-
+Inhalt bytegleich einem Commit auf ``origin`` eines bekannten eigenen Hauptrepos ist; sonst
+bleiben sie (``fuer_david=True``).
+#225 — Gesperrte Worktrees (``locked``) bleiben als Regel (kein Fehler); eingetragene
+Worktrees ohne Ticket-Nummer außerhalb der Wurzeln (z. B. ``deploy-tmp``) bleiben still
+stehen (kein ``fuer_david``).
 Unterordner eines fremden Repos und unlesbare Git-Ordner bleiben. Je Takt schreibt :func:`aufraeumen_alles` eine Zeile
 nach :data:`KENNZAHL_DATEI` neben dem Log („x von y gelöscht, z bleiben“, Bleib-Gründe
 gezählt) — eigene Datei, damit Leser des Ordner-Logs nur Ordner-Zeilen sehen.
@@ -116,6 +121,7 @@ Zeile „gelöscht“ folgt hier erst nach dem Entfernen (je Ordner eine Zeile).
 from __future__ import annotations
 
 import glob
+import hashlib
 import json
 import logging
 import os
@@ -141,12 +147,12 @@ from to_spawn import (
     gh,
     hausmeister_windows,
     hindernis,
+    prozessbaum,
     temp_ordner,
     ticket_zustand,
     tmux_aufruf,
     uebergabe_sichern,
 )
-from to_spawn import prozessbaum
 from to_spawn import sperre as _sperre
 
 log = logging.getLogger("to_spawn.hausmeister")
@@ -541,23 +547,29 @@ def _rundgang(*, loeschen: bool, jetzt: float | None, docker: bool) -> Rundgang:
 
 
 def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> Rundgang:
+    wt_token = _WORKTREE_CACHE.set({})
+    origin_token = _ORIGIN_BAEUME_CACHE.set({})
     try:
-        kandidaten = _kandidaten()
-        anteil = _frei_anteil()
-        if _ist_platznot(anteil):
-            # ponytail: Schließzeit kommt hier und in den Regeln je einmal per gh; Cache, falls zu langsam.
-            zeiten = {k: _schliesszeit(k) for k in kandidaten}
-            kandidaten.sort(key=lambda k: (zeiten[k] is None, zeiten[k] or 0.0, str(k)))
-    except Exception as fehler:  # Vertrag: wirft nie
-        log.exception("Hausmeister: Aufräumen gescheitert (Ordnersuche/Reihenfolge)")
-        _zweige_im_takt(loeschen, jetzt)
-        return Rundgang(False, f"Ordnersuche gescheitert ({type(fehler).__name__}: {fehler})")
-    ergebnisse: list[Ergebnis] = []
-    for ordner in kandidaten:
-        erg = _aufraeumen(ordner, loeschen=loeschen, jetzt=jetzt, platznot=_ist_platznot(anteil))
-        ergebnisse.append(erg)
-        if erg.art != "bleibt" and not erg.trocken:
+        try:
+            kandidaten = _kandidaten()
             anteil = _frei_anteil()
+            if _ist_platznot(anteil):
+                # ponytail: Schließzeit kommt hier und in den Regeln je einmal per gh; Cache, falls zu langsam.
+                zeiten = {k: _schliesszeit(k) for k in kandidaten}
+                kandidaten.sort(key=lambda k: (zeiten[k] is None, zeiten[k] or 0.0, str(k)))
+        except Exception as fehler:  # Vertrag: wirft nie
+            log.exception("Hausmeister: Aufräumen gescheitert (Ordnersuche/Reihenfolge)")
+            _zweige_im_takt(loeschen, jetzt)
+            return Rundgang(False, f"Ordnersuche gescheitert ({type(fehler).__name__}: {fehler})")
+        ergebnisse: list[Ergebnis] = []
+        for ordner in kandidaten:
+            erg = _aufraeumen(ordner, loeschen=loeschen, jetzt=jetzt, platznot=_ist_platznot(anteil))
+            ergebnisse.append(erg)
+            if erg.art != "bleibt" and not erg.trocken:
+                anteil = _frei_anteil()
+    finally:
+        _ORIGIN_BAEUME_CACHE.reset(origin_token)
+        _WORKTREE_CACHE.reset(wt_token)
     _kennzahl_schreiben(ergebnisse, trocken=not loeschen)
     temp_ordner.aufraeumen(loeschen=loeschen, jetzt=jetzt)  # #136: Temp-Reste, wirft nie
     _zweige_im_takt(loeschen, jetzt)
@@ -1249,12 +1261,19 @@ def _zweig_fehler(remote: str, ort: Ort, loeschen: bool, fehler: Exception) -> Z
     return erg
 
 
+def _ist_git_repo(pfad: Path) -> bool:
+    """Normales Git-Repo (``.git``-Ordner) oder bare Repo (``HEAD``, ``objects``, ``refs``)."""
+    return (pfad / ".git").is_dir() or (
+        (pfad / "HEAD").is_file() and (pfad / "objects").is_dir() and (pfad / "refs").is_dir()
+    )
+
+
 def _hauptrepos() -> list[Path]:
     roh = os.environ.get("TO_SPAWN_HAUSMEISTER_HAUPTREPOS")
     if roh is not None:
         return [Path(p).expanduser() for p in roh.split()]
     pfade = (Path(p).expanduser() for e in _maschinen_repos() if (p := e["pfad"].strip()))
-    return [p for p in dict.fromkeys(pfade) if (p / ".git").is_dir()]
+    return [p for p in dict.fromkeys(pfade) if _ist_git_repo(p)]
 
 
 def _zweig_ticket(zweig: str) -> int | None:
@@ -1355,36 +1374,83 @@ def _refs(repo: Path, praefix: str, ab: str) -> list[str]:
     return [r[len(ab) :] for r in roh.split()]
 
 
-def _worktree_eintraege(repo: Path) -> list[tuple[str, str | None]]:
-    """(Arbeitsordner, Zweig oder ``None``) je Eintrag von ``git worktree list --porcelain``;
-    der erste Eintrag ist immer der Haupt-Arbeitsbaum des Repos."""
-    eintraege: list[tuple[str, str | None]] = []
+@dataclass(frozen=True)
+class _WorktreeEintrag:
+    """Ein Eintrag aus ``git worktree list --porcelain`` — einzige Parse-Stelle (#225)."""
+
+    pfad: str
+    zweig: str | None = None
+    gesperrt: bool = False
+    sperr_grund: str = ""
+    bare: bool = False
+
+
+#: #225: Worktree-Liste je Hauptrepo innerhalb eines Rundgangs einmal lesen (``None`` = kein Cache).
+_WORKTREE_CACHE: ContextVar[dict[str, tuple[_WorktreeEintrag, ...] | None] | None] = ContextVar(
+    "hausmeister_worktree_cache", default=None
+)
+#: #241: Origin-Bäume je Hauptrepo innerhalb eines Rundgangs einmal lesen (``None`` = kein Cache).
+_ORIGIN_BAEUME_CACHE: ContextVar[dict[str, tuple[str, dict[str, str], list[str]]] | None] = ContextVar(
+    "hausmeister_origin_baeume_cache", default=None
+)
+
+
+def _worktree_eintraege(repo: Path) -> list[_WorktreeEintrag]:
+    """Alle Einträge von ``git worktree list --porcelain``; der erste Eintrag ist immer der
+    Haupt-Arbeitsbaum bzw. das bare-Hauptrepo."""
+    eintraege: list[_WorktreeEintrag] = []
     for zeile in aufpasser.git_lauf(repo, "worktree", "list", "--porcelain").splitlines():
         if zeile.startswith("worktree "):
-            eintraege.append((zeile[len("worktree ") :], None))
-        elif zeile.startswith("branch refs/heads/") and eintraege:
-            eintraege[-1] = (eintraege[-1][0], zeile[len("branch refs/heads/") :])
+            eintraege.append(_WorktreeEintrag(zeile[len("worktree ") :]))
+        elif not eintraege:
+            continue
+        elif zeile.startswith("branch refs/heads/"):
+            eintraege[-1] = replace(eintraege[-1], zweig=zeile[len("branch refs/heads/") :])
+        elif zeile == "locked" or zeile.startswith("locked "):
+            eintraege[-1] = replace(
+                eintraege[-1],
+                gesperrt=True,
+                sperr_grund=zeile[len("locked") :].strip(),
+            )
+        elif zeile == "bare":
+            eintraege[-1] = replace(eintraege[-1], bare=True)
+    return eintraege
+
+
+def _worktree_eintraege_gecached(repo: Path) -> tuple[_WorktreeEintrag, ...] | None:
+    """Liest :func:`_worktree_eintraege` im Rundgang höchstens einmal je Hauptrepo (#225);
+    ``None`` bei Lesefehler (einmal geloggt)."""
+    cache = _WORKTREE_CACHE.get()
+    schluessel = _pfad_schluessel(repo)
+    if cache is not None and schluessel in cache:
+        return cache[schluessel]
+    try:
+        eintraege: tuple[_WorktreeEintrag, ...] | None = tuple(_worktree_eintraege(repo))
+    except (RuntimeError, OSError) as fehler:
+        log.warning("Hausmeister: worktree-Liste von %s unlesbar: %s", repo, _kurz(fehler))
+        eintraege = None
+    if cache is not None:
+        cache[schluessel] = eintraege
     return eintraege
 
 
 def _ausgecheckte(repo: Path) -> dict[str, str]:
-    """Zweig → Arbeitsordner aller in ``repo`` ausgecheckten Zweige (auch das Hauptrepo)."""
-    return {zweig: ordner for ordner, zweig in _worktree_eintraege(repo) if zweig}
+    """Zweig → Arbeitsordner aller in ``repo`` ausgecheckten Zweige (auch das Hauptrepo, immer frisch)."""
+    return {e.zweig: e.pfad for e in _worktree_eintraege(repo) if e.zweig}
 
 
 def _eingetragene_worktrees() -> list[Path]:
-    """#196: alle laut git eingetragenen Arbeitsordner der Hauptrepos, wo immer sie liegen
+    """#196/#225: alle laut git eingetragenen Arbeitsordner der Hauptrepos, wo immer sie liegen
     (auch außerhalb der Wurzeln, z. B. ``C:\\c\\dev\\…`` nach einem Pfad-Fehler) — ohne den
-    Haupt-Arbeitsbaum, nur vorhandene Ordner. Ein kaputtes Repo fällt mit Log-Zeile weg."""
+    Haupt-Arbeitsbaum bzw. das bare-Hauptrepo, nur vorhandene Ordner. Ein kaputtes Repo fällt
+    mit Log-Zeile weg; im Rundgang wird jedes Hauptrepo nur einmal gelesen."""
     gefunden: list[Path] = []
     for repo in _hauptrepos():
-        try:
-            eintraege = _worktree_eintraege(repo)
-        except (RuntimeError, OSError) as fehler:
-            log.warning("Hausmeister: worktree-Liste von %s unlesbar: %s", repo, _kurz(fehler))
+        eintraege = _worktree_eintraege_gecached(repo)
+        if not eintraege:
             continue
-        for ordner, _zweig in eintraege[1:]:
-            pfad = Path(os.path.abspath(ordner))
+        for eintrag in eintraege[1:]:
+            pfad = Path(os.path.abspath(eintrag.pfad))
             if pfad.is_dir():
                 gefunden.append(pfad)
     return gefunden
@@ -1476,6 +1542,10 @@ def _regeln(
 
     # 4 Ticket-Nummer aus Name und Zweig (None = keine, #1536)
     stand.ticket = ticket = _ticket_nummer(ordner, echt)
+    # 4a #225: eingetragene Worktrees ohne Ticket-Nummer außerhalb der Wurzeln (z. B. deploy-tmp)
+    # bleiben still stehen — nie löschen, nie in liste_fuer_david.
+    if ticket is None and not _in_wurzeln(echt):
+        raise _Bleibt(f"{OHNE_NUMMER} (außerhalb der Wurzeln)")
     # 4b #135: die Nummer zählt nur im Ticket-Repo selbst (skill-103 ist kein App-Ticket #103)
     slug = _origin_slug(echt)
     # #176: eigener Ordner ohne bestimmbares Ticket-Repo ⇒ bleibt (nie über „fremd, aber fertig“)
@@ -1549,7 +1619,7 @@ def _regeln(
 
 def _git_ordner_pruefen(echt: Path) -> bool | None:
     """Regeln 2/3; Rückgabe: verknüpfter Worktree (True), Klon (False) oder gar kein Git
-    (None, #1536: kein ``.git`` oder verwaister Worktree, dessen Git-Ordner fehlt)."""
+    (None, #1536/#241: kein ``.git`` oder verwaister Worktree ohne Eintrag im Hauptrepo)."""
     if _git_oder_none(echt, "rev-parse", "--is-inside-git-dir") == "true":
         raise _Bleibt("Git-Verwaltungsordner (Hauptrepo)")
     oben = _git_oder_none(echt, "rev-parse", "--show-toplevel")
@@ -1568,7 +1638,41 @@ def _git_ordner_pruefen(echt: Path) -> bool | None:
     url = _git_oder_none(echt, "config", "--get", "remote.origin.url") or ""
     if _origin_slug(echt).lower() not in _eigene_repos():
         raise _Bleibt(f"fremdes Repo ({url or 'ohne origin'})", fuer_david=True)
-    return ist_worktree
+    if ist_worktree:
+        return _worktree_eintrag_pruefen(echt)
+    return False
+
+
+def _worktree_eintrag_pruefen(echt: Path) -> bool | None:
+    """#225/#241: prüft einen Ordner mit ``.git``-Datei in der Worktree-Liste seines Hauptrepos.
+
+    - Gesperrt (``locked``) ⇒ bleibt als Regel (``fehler=False``).
+    - Nicht im Hauptrepo eingetragen (kopiert/verschoben vor ``worktree prune``) ⇒ ``None``
+      (Worktree-Waise, weiter in :func:`_ohne_git_regeln`).
+    - Haupt-Arbeitsbaum (``--separate-git-dir``) ⇒ ``False`` (wie Klon, Hauptrepo-Schutz greift).
+    """
+    try:
+        haupt = _hauptrepo(echt)
+    except (RuntimeError, OSError) as fehler:
+        raise _Bleibt(f"Hauptrepo des Worktrees nicht lesbar: {_kurz(fehler)}", fehler=True) from None
+    eintraege = _worktree_eintraege_gecached(haupt)
+    if eintraege is None:
+        raise _Bleibt("worktree-Liste des Hauptrepos nicht lesbar", fehler=True)
+    schluessel = _pfad_schluessel(echt)
+    for idx, eintrag in enumerate(eintraege):
+        if _pfad_schluessel(Path(os.path.abspath(eintrag.pfad))) != schluessel:
+            continue
+        if idx == 0:
+            if echt.name in _hauptrepo_namen():
+                raise _Bleibt("Hauptrepo")
+            if any(Path(os.path.abspath(e.pfad)).is_dir() for e in eintraege[1:]):
+                raise _Bleibt("Hauptrepo mit verknüpften Worktrees")
+            return False
+        if eintrag.gesperrt:
+            zusatz = f" — {eintrag.sperr_grund}" if eintrag.sperr_grund else ""
+            raise _Bleibt(f"gesperrt (locked){zusatz}")
+        return True
+    return None
 
 
 def _ohne_git(echt: Path) -> bool:
@@ -1621,6 +1725,202 @@ def _glob_zu_regex(muster: str) -> re.Pattern[str]:
 
 _OHNE_GIT_GEHEIMNIS_MUSTER = tuple(_glob_zu_regex(m) for m in OHNE_GIT_GEHEIMNISSE)
 _OHNE_GIT_DB_MUSTER = tuple(_glob_zu_regex(m) for m in aufpasser.NIE_HOCHLADEN)
+_OHNE_GIT_ERZEUGNIS_MUSTER = tuple(_glob_zu_regex(m) for m in ERZEUGNISSE)
+
+
+def _git_blob_sha(pfad: Path, groesse: int) -> bytes:
+    """Git-Blob-SHA-1 einer regulären Datei (gestreamt); bricht bei Größenänderung ab."""
+    h = hashlib.sha1(f"blob {groesse}\0".encode())
+    gelesen = 0
+    with pfad.open("rb") as f:
+        while block := f.read(65536):
+            gelesen += len(block)
+            h.update(block)
+    if gelesen != groesse:
+        raise OSError(f"Dateigröße während des Lesens geändert ({pfad.name})")
+    return h.digest()
+
+
+def _ist_wegwerf_begleiter(echt: Path, rel: str) -> bool:
+    """Bekannte Erzeugnisse (:data:`ERZEUGNISSE`) oder kleine Test-DBs (:func:`ist_test_db`),
+    die neben einem origin-Stand liegen dürfen (#241)."""
+    return any(m.match(rel) for m in _OHNE_GIT_ERZEUGNIS_MUSTER) or ist_test_db(echt, rel)
+
+
+def _git_baum_sha(echt: Path, *, ohne_erzeugnisse: bool) -> str | None:
+    """#241: berechnet den exakten Git-Tree-SHA-1 eines Ordners ohne Git (fail-closed bei OSError).
+
+    Eine ``.git``-Datei direkt in ``echt`` (Worktree-Waise) wird übersprungen. Mit
+    ``ohne_erzeugnisse=True`` fallen bekannte Erzeugnisse und kleine Test-DBs heraus.
+    Leerer Ordner oder unbekannte Dateitypen ⇒ ``None``.
+    """
+
+    def baum(d: Path) -> bytes | None:
+        eintraege: list[tuple[str, bytes]] = []
+        with os.scandir(d) as it:
+            items = list(it)
+        for e in items:
+            if d == echt and e.name == ".git" and e.is_file(follow_symlinks=False):
+                continue
+            info = e.stat(follow_symlinks=False)
+            art = info.st_mode
+            rel = Path(e.path).relative_to(echt).as_posix()
+            if stat.S_ISDIR(art):
+                sub = baum(Path(e.path))
+                if sub is not None:
+                    eintraege.append((e.name + "/", b"40000 " + e.name.encode("utf-8") + b"\0" + sub))
+            elif stat.S_ISLNK(art):
+                if ohne_erzeugnisse and _ist_wegwerf_begleiter(echt, rel):
+                    continue
+                ziel = os.readlink(e.path).encode("utf-8")
+                blob = hashlib.sha1(f"blob {len(ziel)}\0".encode() + ziel).digest()
+                eintraege.append((e.name, b"120000 " + e.name.encode("utf-8") + b"\0" + blob))
+            elif stat.S_ISREG(art):
+                if ohne_erzeugnisse and _ist_wegwerf_begleiter(echt, rel):
+                    continue
+                blob = _git_blob_sha(Path(e.path), info.st_size)
+                modus = b"100755" if (art & 0o111) else b"100644"
+                eintraege.append((e.name, modus + b" " + e.name.encode("utf-8") + b"\0" + blob))
+            else:
+                return None
+        if not eintraege:
+            return None
+        eintraege.sort(key=lambda x: x[0].encode("utf-8"))
+        inhalt = b"".join(raw for _, raw in eintraege)
+        return hashlib.sha1(f"tree {len(inhalt)}\0".encode() + inhalt).digest()
+
+    try:
+        roh = baum(echt)
+    except OSError as fehler:
+        raise _Bleibt(f"Ordner nicht lesbar: {_kurz(fehler)}", fehler=True) from None
+    return roh.hex() if roh is not None else None
+
+
+def _datei_blobs(echt: Path, *, ohne_erzeugnisse: bool) -> dict[str, str] | None:
+    """#241 (Windows-Rückfall ohne POSIX-Ausführbit): ``{rel_posix: blob_sha_hex}`` aller Dateien."""
+    blobs: dict[str, str] = {}
+    stapel = [echt]
+    try:
+        while stapel:
+            d = stapel.pop()
+            with os.scandir(d) as it:
+                items = list(it)
+            for e in items:
+                if d == echt and e.name == ".git" and e.is_file(follow_symlinks=False):
+                    continue
+                info = e.stat(follow_symlinks=False)
+                art = info.st_mode
+                rel = Path(e.path).relative_to(echt).as_posix()
+                if stat.S_ISDIR(art):
+                    stapel.append(Path(e.path))
+                elif stat.S_ISREG(art):
+                    if ohne_erzeugnisse and _ist_wegwerf_begleiter(echt, rel):
+                        continue
+                    blobs[rel] = _git_blob_sha(Path(e.path), info.st_size).hex()
+                elif stat.S_ISLNK(art):
+                    if ohne_erzeugnisse and _ist_wegwerf_begleiter(echt, rel):
+                        continue
+                    ziel = os.readlink(e.path).encode("utf-8")
+                    blobs[rel] = hashlib.sha1(f"blob {len(ziel)}\0".encode() + ziel).hexdigest()
+                else:
+                    return None
+    except OSError as fehler:
+        raise _Bleibt(f"Ordner nicht lesbar: {_kurz(fehler)}", fehler=True) from None
+    return blobs or None
+
+
+def _origin_baeume(repo: Path) -> tuple[str, dict[str, str], list[str]]:
+    """#241: ``(slug, {tree_sha: commit_sha}, server_shas)`` aller von ``ls-remote --heads origin``
+    erreichbaren Commits eines eigenen Hauptrepos; im Rundgang einmal je Hauptrepo gelesen."""
+    cache = _ORIGIN_BAEUME_CACHE.get()
+    schluessel = _pfad_schluessel(repo)
+    if cache is not None and schluessel in cache:
+        return cache[schluessel]
+    slug = _origin_slug(repo)
+    if slug.lower() not in _eigene_repos():
+        ergebnis: tuple[str, dict[str, str], list[str]] = ("", {}, [])
+        if cache is not None:
+            cache[schluessel] = ergebnis
+        return ergebnis
+    server_shas = list(dict.fromkeys(_server_koepfe(repo)))
+    if server_shas and any(
+        _git_oder_none(repo, "rev-parse", "--verify", "-q", f"{sha}^{{commit}}") is None for sha in server_shas
+    ):
+        try:
+            _git_ohne_frage(repo, "fetch", "-q", "--prune", "origin")
+        except RuntimeError as fehler:
+            raise _Bleibt(f"git fetch origin gescheitert: {_kurz(fehler)}", fehler=True) from None
+    baeume: dict[str, str] = {}
+    for i in range(0, len(server_shas), _REFLOG_HAPPEN):
+        happen = server_shas[i : i + _REFLOG_HAPPEN]
+        try:
+            roh = aufpasser.git_lauf(repo, "rev-list", "--ignore-missing", "--format=%T %H", *happen)
+        except RuntimeError as fehler:
+            raise _Bleibt(f"origin-Commits nicht lesbar: {_kurz(fehler)}", fehler=True) from None
+        for zeile in roh.splitlines():
+            if not zeile or zeile.startswith("commit "):
+                continue
+            baum_sha, sep, commit_sha = zeile.partition(" ")
+            if sep and baum_sha not in baeume:
+                baeume[baum_sha] = commit_sha
+    ergebnis = (slug, baeume, server_shas)
+    if cache is not None:
+        cache[schluessel] = ergebnis
+    return ergebnis
+
+
+def _ls_tree_blobs(repo: Path, commit: str) -> dict[str, str]:
+    """``{rel_posix: blob_sha}`` eines Commits über ``git ls-tree -r -z``."""
+    roh = aufpasser.git_lauf(repo, "ls-tree", "-r", "-z", commit)
+    blobs: dict[str, str] = {}
+    for eintrag in roh.split("\0"):
+        if not eintrag:
+            continue
+        meta, sep, pfad = eintrag.partition("\t")
+        teile = meta.split()
+        if sep and len(teile) >= 3 and teile[1] == "blob":
+            blobs[pfad] = teile[2]
+    return blobs
+
+
+def _inhalt_auf_origin(echt: Path) -> tuple[str, str, str | None] | None:
+    """#241: prüft, ob der Inhalt von ``echt`` bytegleich einem Commit auf ``origin`` eines
+    bekannten eigenen Hauptrepos ist. Rückgabe ``(slug, commit_sha, baum_sha_oder_None)``
+    oder ``None``; wirft ``_Bleibt(..., fehler=True)`` fail-closed bei Server-Lesefehler."""
+    sha_roh = _git_baum_sha(echt, ohne_erzeugnisse=False)
+    sha_ohne = _git_baum_sha(echt, ohne_erzeugnisse=True)
+    gesucht = tuple(dict.fromkeys(s for s in (sha_roh, sha_ohne) if s))
+    if not gesucht:
+        return None
+    blobs_kandidaten: list[dict[str, str]] | None = None
+    fehler_bleibt: _Bleibt | None = None
+    for repo in _hauptrepos():
+        try:
+            slug, baeume, server_shas = _origin_baeume(repo)
+        except _Bleibt as b:
+            if b.fehler and fehler_bleibt is None:
+                fehler_bleibt = b
+            continue
+        if not slug:
+            continue
+        for baum_sha in gesucht:
+            if commit := baeume.get(baum_sha):
+                return slug, commit, baum_sha
+        if _ist_windows() and server_shas:
+            if blobs_kandidaten is None:
+                b1 = _datei_blobs(echt, ohne_erzeugnisse=False)
+                b2 = _datei_blobs(echt, ohne_erzeugnisse=True)
+                blobs_kandidaten = [b for b in (b1, b2) if b is not None]
+            for sha in server_shas:
+                try:
+                    ziel_blobs = _ls_tree_blobs(repo, sha)
+                except RuntimeError:
+                    continue
+                if any(b == ziel_blobs for b in blobs_kandidaten):
+                    return slug, sha, None
+    if fehler_bleibt is not None:
+        raise fehler_bleibt
+    return None
 
 
 def _ist_ticket_nicht_vorhanden(fehlertext: str) -> bool:
@@ -1715,18 +2015,40 @@ def _ohne_git_baum_pruefen(echt: Path, jetzt: float) -> None:
 def _ohne_git_regeln(
     ordner: Path, echt: Path, trocken: bool, jetzt: float | None, stand: _Stand
 ) -> tuple[Ergebnis, tuple[Path, bool] | None]:
-    """#163: räumt einen verwaisten Ordner ohne eigenes Git nach allen Schutz-Regeln."""
+    """#163/#241: räumt einen verwaisten Ordner ohne eigenes Git nach allen Schutz-Regeln."""
     nr = _nummer(ordner.name, _name_muster())
-    if nr is None:
-        raise _Bleibt(
-            "kein eigener Git-Ordner und keine Ticket-Nummer (nicht sicherbar)",
-            fuer_david=True,
-        )
-    stand.ticket = nr
-    # Lokale Prüfungen vor der Netzabfrage: frische/aktive Ordner bleiben ohne gh-Aufruf.
-    _kein_prozess(echt)
     jetzt_ts = jetzt if jetzt is not None else time.time()
+    # Lokale Prüfungen immer zuerst (fail-closed bei Lesefehler; Prozesse, Alter, Geheimnisse,
+    # fremde DBs und eingebettete Repos halten den Ordner vor jeder Netzabfrage).
+    _kein_prozess(echt)
     _ohne_git_baum_pruefen(echt, jetzt_ts)
+    if nr is None:
+        treffer = _inhalt_auf_origin(echt)
+        if treffer is None:
+            raise _Bleibt(
+                "kein eigener Git-Ordner und keine Ticket-Nummer (nicht sicherbar)",
+                fuer_david=True,
+            )
+        slug, commit, baum_sha = treffer
+        grund = (
+            f"verwaister Ordner ohne Git (Inhalt gleich Commit {commit[:7]} auf origin von {slug}, "
+            "alt, kein Prozess, kein Geheimnis-Verdacht)"
+        )
+        if trocken:
+            return Ergebnis(ordner, "gelöscht", grund, None, trocken=True), None
+        _kein_prozess(echt, probe=True)
+        _ohne_git_baum_pruefen(echt, jetzt_ts)
+        if baum_sha is not None:
+            aktuell = {
+                _git_baum_sha(echt, ohne_erzeugnisse=False),
+                _git_baum_sha(echt, ohne_erzeugnisse=True),
+            }
+            if baum_sha not in aktuell:
+                raise _Bleibt("Ordner hat sich während der Prüfung geändert")
+        elif _inhalt_auf_origin(echt) is None:
+            raise _Bleibt("Ordner hat sich während der Prüfung geändert")
+        return Ergebnis(ordner, "gelöscht", grund, None, trocken=False), (echt, False)
+    stand.ticket = nr
     _keine_spec_sitzung(nr)
     _kein_offenes_ticket_ohne_git(nr)
     grund = (
@@ -2087,7 +2409,8 @@ def _echt_unter_home(pfad: Path) -> bool:
 def _versteckt_unter_home(pfad: Path) -> bool:
     """Ein Teil unterhalb des Home beginnt mit ``.`` (``~/.ssh``, ``~/a/.cache``)."""
     heim = config.heim_ordner().parts
-    rest = pfad.parts[len(heim) :] if pfad.parts[: len(heim)] == heim else pfad.parts
+    gleich = [os.path.normcase(t) for t in pfad.parts[: len(heim)]] == [os.path.normcase(t) for t in heim]
+    rest = pfad.parts[len(heim) :] if gleich else pfad.parts
     return any(teil.startswith(".") for teil in rest)
 
 
@@ -2095,7 +2418,13 @@ def _wurzel_erlaubt(muster: str) -> bool:
     """Wurzel-Muster der Liste: Vorgabe (z. B. ``C:/dev/wt-*``) oder fester Teil vor dem
     ersten Glob-Zeichen echt unter dem Home (``~/*``, ``/tmp/*`` fallen weg) und ohne
     versteckten Ordner im ganzen Muster, auch nach dem ersten Glob-Zeichen (``~/.ssh/*``,
-    ``~/x/wt-*/.ssh``: Schlüssel/Einstellungen, keine Worktrees; ``..`` fällt mit weg)."""
+    ``~/x/wt-*/.ssh``: Schlüssel/Einstellungen, keine Worktrees; ``..`` fällt mit weg).
+
+    Hinweis zum Wirkungsbereich (#196/#225): :func:`_im_bereich` nimmt zusätzlich jeden
+    laut git eingetragenen Worktree der bekannten Hauptrepos überall auf der Platte mit
+    (auch ``/tmp``, ``C:/dev/wt-<name>``, Prüf-/Deploy-Worktrees). Dort schützen nicht
+    die Wurzel-Grenzen, sondern allein die Wegwerf-Prüfung, die Sperr-Regel (``locked``),
+    das stille Stehenlassen ohne Ticket-Nummer außerhalb der Wurzeln und die Sicherung."""
     if muster in WURZELN_STANDARD:
         return True
     pfad = Path(os.path.expanduser(muster.strip()))
@@ -2120,18 +2449,27 @@ def _basis_muster(basis: str) -> str | None:
     return os.path.join(glob.escape(str(pfad)), "*")
 
 
+def _in_wurzeln(echt: Path) -> bool:
+    """True, wenn der aufgelöste Pfad ``echt`` auf ein konfiguriertes Wurzel-Muster passt."""
+    return any(echt.match(m) for m in _wurzeln())
+
+
 def _im_bereich(ordner: Path) -> bool:
     """Aufgelöster Pfad passt auf eine Wurzel und liegt in keinem versteckten Ordner — der
-    echte Pfad zählt, nicht der Mustertext (``[.]ssh``, Symlink auf ``.ssh``, #112). Laut git
-    eingetragene Arbeitsordner eines Hauptrepos zählen überall mit (#196, gleiche Quelle wie
-    :func:`_kandidaten`)."""
+    echte Pfad zählt, nicht der Mustertext (``[.]ssh``, Symlink auf ``.ssh``, #112).
+
+    Erweiterter Bereich (#196/#225): Zusätzlich zählt jeder laut git eingetragene Worktree
+    eines bekannten Hauptrepos überall (auch ``/tmp``, ``C:/dev/wt-<name>``, Prüf-/Deploy-
+    Worktrees; gleiche Quelle wie :func:`_kandidaten`). Schutz bieten die Wegwerf-Prüfung
+    samt Sicherung (``sicherung/<N>``), die Sperr-Regel (``locked``) sowie das stille
+    Stehenlassen von Worktrees ohne Ticket-Nummer außerhalb der Wurzeln."""
     try:
         echt = ordner.resolve()
     except OSError:
         return False
     if _versteckt_unter_home(echt):
         return False
-    if any(echt.match(m) for m in _wurzeln()):
+    if _in_wurzeln(echt):
         return True
     schluessel = _pfad_schluessel(echt)
     return any(_pfad_schluessel(p) == schluessel for p in _eingetragene_worktrees())
@@ -2222,11 +2560,11 @@ def _git_oder_none(cwd: Path, *args: str) -> str | None:
 
 
 def _hat_verknuepfte_worktrees(repo: Path) -> bool:
-    for zeile in aufpasser.git_lauf(repo, "worktree", "list", "--porcelain").splitlines():
-        if zeile.startswith("worktree "):
-            pfad = Path(zeile[len("worktree ") :])
-            if pfad.is_dir() and pfad.resolve() != repo:
-                return True
+    schluessel = _pfad_schluessel(repo)
+    for eintrag in _worktree_eintraege(repo):
+        pfad = Path(os.path.abspath(eintrag.pfad))
+        if pfad.is_dir() and _pfad_schluessel(pfad) != schluessel:
+            return True
     return False
 
 
@@ -2234,6 +2572,10 @@ def _hauptrepo(worktree: Path) -> Path:
     gemeinsam = Path(aufpasser.git_lauf(worktree, "rev-parse", "--git-common-dir").strip())
     if not gemeinsam.is_absolute():
         gemeinsam = (worktree / gemeinsam).resolve()
+    else:
+        gemeinsam = gemeinsam.resolve()
+    if _git_oder_none(gemeinsam, "rev-parse", "--is-bare-repository") == "true":
+        return gemeinsam
     return gemeinsam.parent
 
 
@@ -2276,7 +2618,7 @@ def _status(repo: Path, *pathspec: str) -> list[tuple[str, str]]:
 
 
 def _gleiche_kopie(haupt: Path | None, repo: Path, rel: str) -> bool:
-    if haupt is None:
+    if haupt is None or not (haupt / ".git").is_dir():
         return False
     hier, dort = repo / rel, haupt / rel
     try:
@@ -2643,13 +2985,12 @@ def halb_angelegt_entfernen(hauptrepo: Path, worktree: Path, neuer_zweig: str | 
 def _als_worktree_eingetragen(hauptrepo: Path, worktree: Path) -> bool:
     """True, wenn ``worktree`` in ``git worktree list`` von ``hauptrepo`` steht (kein Hauptordner)."""
     try:
-        liste = aufpasser.git_lauf(hauptrepo, "worktree", "list", "--porcelain")
+        eintraege = _worktree_eintraege(hauptrepo)
     except (RuntimeError, OSError) as fehler:
         log.warning("git worktree list in %s scheiterte: %s", hauptrepo, fehler)
         return False
-    pfade = [z[len("worktree ") :] for z in liste.splitlines() if z.startswith("worktree ")]
-    ziel = worktree.resolve()
-    return any(Path(x).resolve() == ziel for x in pfade[1:])
+    ziel = _pfad_schluessel(worktree)
+    return any(_pfad_schluessel(Path(os.path.abspath(e.pfad))) == ziel for e in eintraege[1:])
 
 
 # --- Löschen + Log --------------------------------------------------------------
