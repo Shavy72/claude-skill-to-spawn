@@ -16,7 +16,27 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-REVIEW = Path(__file__).resolve().parents[2] / "review"
+
+def _review_ordner() -> Path:
+    """Ort des Review-Werkzeugs: im Repo direkt daneben (``<repo>/review``),
+    installiert unter ``~/.claude/hooks/review/`` zwei Ebenen höher (``~/.claude/review``)."""
+    eltern = Path(__file__).resolve().parents
+    for ebene in (1, 2):
+        if ebene < len(eltern):
+            kandidat = eltern[ebene] / "review"
+            if (kandidat / "review_route.py").is_file():
+                return kandidat
+    return eltern[2] / "review"
+
+
+def _ohne_fenster() -> dict[str, Any]:
+    """Unter Windows ohne sichtbares Konsolenfenster (nie DETACHED_PROCESS)."""
+    if sys.platform == "win32":
+        return {"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {}
+
+
+REVIEW = _review_ordner()
 ROUTE = REVIEW / "review_route.py"
 BELEG = REVIEW / "review_beleg.py"
 DECKEL_S = 8
@@ -110,11 +130,13 @@ def befehl(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProc
     return subprocess.run(
         args,
         cwd=cwd,
+        check=False,
         capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",
         timeout=DECKEL_S,
+        **_ohne_fenster(),
     )
 
 
