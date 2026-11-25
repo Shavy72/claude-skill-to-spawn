@@ -177,7 +177,7 @@ def test_katalog_liest_plugins_agenten_mcp_und_ueberspringt_ablage(repo: Path, h
         ),
         encoding="utf-8",
     )
-    (repo / ".mcp.json").write_text(json.dumps({"mcpServers": {"postproxy": {}}}), "utf-8")
+    (repo / ".mcp.json").write_text(json.dumps({"mcpServers": {"n8n": {}}}), "utf-8")
 
     inv = _erstelle(repo, heim)
     namen = {w.name for w in inv.werkzeuge}
@@ -189,8 +189,8 @@ def test_katalog_liest_plugins_agenten_mcp_und_ueberspringt_ablage(repo: Path, h
     assert _werkzeug(inv, "firecrawl").kategorie == "recherche"
     assert _werkzeug(inv, "chrome-devtools").kategorie == "sehen"
     assert _werkzeug(inv, "graphify-mcp").kategorie == "kontext"
-    assert _werkzeug(inv, "postproxy").kategorie == "projekt"
-    assert _werkzeug(inv, "postproxy").quelle.endswith(".mcp.json")
+    assert _werkzeug(inv, "n8n").kategorie == "projekt"
+    assert _werkzeug(inv, "n8n").quelle.endswith(".mcp.json")
     assert _werkzeug(inv, "firecrawl").quelle == "~/.claude.json"
 
 

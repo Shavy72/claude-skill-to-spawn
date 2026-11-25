@@ -128,6 +128,7 @@ import glob
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -365,7 +366,7 @@ ERZEUGNISSE = (
     "data/reel_street/**/.thumb_*",
 )
 #: #1536: Datenbanken, die als Test-Kopie weg dürfen — Pfad relativ zum Arbeitsordner
-#: (samt ``-wal``/``-shm``). So legen App und Tests sie an (``account_db.DB_PATH`` u. a.).
+#: (samt ``-wal``/``-shm``). So legen App und Tests sie an (App-DB-Pfad u. a.).
 TEST_DB_PFADE = ("accounts.db", "data/funnel.db", "data/rum.db", "web/test.db")
 #: #1536: größer ist keine Test-Kopie mehr (Bau-Server 21.11.: größte 1,6 MB).
 TEST_DB_GRENZE_BYTES = 50 * 1024 * 1024
@@ -3419,6 +3420,160 @@ def helfer_ordner_loeschen(ort: Path, name: str) -> bool:
     _loeschen(ziel, ist_worktree=False)
     log.info("Hausmeister: Helfer-Temp %s gelöscht", ziel)
     return True
+
+
+#: #615: Festes Namensmuster der alten Helfer-Temp-Ordner direkt im Home (Rest aus #551).
+HELFER_ALTBESTAND_MUSTER = re.compile(r"^tmp-l[1-9]\d*-[a-z0-9][a-z0-9_-]*$")
+#: #615: Vorgabe-Mindestalter in Tagen für :func:`helfer_altbestand_aufraeumen`.
+HELFER_ALTBESTAND_TAGE = 1.0
+
+
+def _baum_alter_pruefen(ordner: Path, *, jetzt: float, mindestalter_s: float) -> None:
+    """Prüft ohne Symlink-Verfolgung, dass weder ``ordner`` noch ein Eintrag darin zu jung ist."""
+    try:
+        wurzel_info = os.lstat(ordner)
+    except OSError as fehler:
+        raise _Bleibt(f"Ordner nicht lesbar: {_kurz(fehler)}", fehler=True) from None
+    if jetzt - wurzel_info.st_mtime < mindestalter_s:
+        raise _Bleibt("frisch (jünger als Mindestalter)")
+    stapel = [ordner]
+    while stapel:
+        aktuell = stapel.pop()
+        try:
+            with os.scandir(aktuell) as it:
+                eintraege = list(it)
+        except OSError as fehler:
+            raise _Bleibt(f"Ordner nicht lesbar: {_kurz(fehler)}", fehler=True) from None
+        for eintrag in eintraege:
+            try:
+                info = eintrag.stat(follow_symlinks=False)
+            except OSError as fehler:
+                raise _Bleibt(
+                    f"Eintrag nicht lesbar ({eintrag.name}): {_kurz(fehler)}", fehler=True
+                ) from None
+            rel = Path(eintrag.path).relative_to(ordner).as_posix()
+            if jetzt - info.st_mtime < mindestalter_s:
+                raise _Bleibt(f"frisch ({rel})")
+            if stat.S_ISDIR(info.st_mode):
+                stapel.append(Path(eintrag.path))
+
+
+def helfer_altbestand_aufraeumen(
+    *,
+    loeschen: bool = False,
+    aelter_als_tage: float = HELFER_ALTBESTAND_TAGE,
+    jetzt: float | None = None,
+    heim: Path | None = None,
+) -> list[Ergebnis]:
+    """Räumt alte ``~/tmp-l<N>-…``-Helfer-Ordner direkt im Home sicher weg (#615).
+
+    Erlaubter Hausmeister-Weg statt Shell-Löschen mit Platzhalter: prüft festes
+    Namensmuster (:data:`HELFER_ALTBESTAND_MUSTER`), echten Ordner (kein Symlink,
+    eigener Besitzer, direkt im Home), kein ``.git``, Mindestalter im gesamten Baum,
+    keinen laufenden Prozess, TOCTOU-Identität ``(st_dev, st_ino)`` und schreibt die
+    Log-Zeile vor dem Löschen („ohne Log kein Löschen“). Vorgabe ist der Trockenlauf.
+    """
+    if isinstance(aelter_als_tage, bool) or not math.isfinite(aelter_als_tage) or aelter_als_tage < 1:
+        raise ValueError(
+            f"Helfer-Altbestand: --aelter-als-tage {aelter_als_tage!r} abgelehnt (endliche Zahl >= 1)"
+        )
+    basis = heim if heim is not None else config.heim_ordner()
+    if basis.is_symlink() or not basis.is_dir():
+        log.warning("Hausmeister: Helfer-Altbestand-Basis %s ist kein echter Ordner", basis)
+        return []
+    basis_echt = basis.resolve()
+    jetzt_ts = time.time() if jetzt is None else jetzt
+    mindestalter_s = aelter_als_tage * 86400
+    uid = os.getuid() if hasattr(os, "getuid") else None
+    geschuetzt = set(_geschuetzte_ordner())
+    trocken = not loeschen
+    ergebnisse: list[Ergebnis] = []
+
+    try:
+        with os.scandir(basis) as it:
+            eintraege = sorted(it, key=lambda e: e.name)
+    except OSError as fehler:
+        log.warning("Hausmeister: Helfer-Altbestand in %s nicht lesbar: %s", basis, fehler)
+        return [Ergebnis(basis, "bleibt", f"Home nicht lesbar: {_kurz(fehler)}", None, trocken=trocken, fehler=True)]
+
+    for eintrag in eintraege:
+        if not HELFER_ALTBESTAND_MUSTER.match(eintrag.name):
+            continue
+        ordner = Path(eintrag.path)
+        try:
+            info = os.lstat(ordner)
+        except OSError as fehler:
+            erg = Ergebnis(ordner, "bleibt", f"nicht prüfbar: {_kurz(fehler)}", None, trocken=trocken, fehler=True)
+            _log_schreiben(erg)
+            ergebnisse.append(erg)
+            continue
+        if stat.S_ISLNK(info.st_mode):
+            erg = Ergebnis(ordner, "bleibt", "Helfer-Altbestand: Symlink", None, trocken=trocken)
+            _log_schreiben(erg)
+            ergebnisse.append(erg)
+            continue
+        if not stat.S_ISDIR(info.st_mode):
+            continue
+        try:
+            if ordner.name in geschuetzt:
+                raise _Bleibt("geschützter Ordner")
+            if uid is not None and info.st_uid != uid:
+                raise _Bleibt("fremder Besitzer")
+            if ordner.resolve().parent != basis_echt:
+                raise _Bleibt("liegt aufgelöst nicht direkt im Home")
+            if os.path.lexists(ordner / ".git"):
+                raise _Bleibt("enthält .git — über regulären Hausmeister prüfen")
+            _baum_alter_pruefen(ordner, jetzt=jetzt_ts, mindestalter_s=mindestalter_s)
+            _kein_prozess(ordner)
+        except _Bleibt as b:
+            erg = Ergebnis(ordner, "bleibt", b.grund, None, trocken=trocken, fehler=b.fehler)
+            _log_schreiben(erg)
+            ergebnisse.append(erg)
+            continue
+
+        grund = f"Helfer-Altbestand (Muster tmp-l<N>-…, älter als {aelter_als_tage:g} Tag(e), kein Prozess)"
+        erg = Ergebnis(ordner, "gelöscht", grund, None, trocken=trocken)
+        if trocken:
+            _log_schreiben(erg)
+            ergebnisse.append(erg)
+            continue
+
+        try:
+            info_neu = os.lstat(ordner)
+            if stat.S_ISLNK(info_neu.st_mode) or not stat.S_ISDIR(info_neu.st_mode):
+                raise _Bleibt("Helfer-Altbestand: kein echter Ordner mehr (Symlink?)")
+            if (info_neu.st_dev, info_neu.st_ino) != (info.st_dev, info.st_ino):
+                raise _Bleibt("Helfer-Altbestand: Ordner während der Prüfung ersetzt")
+            if ordner.resolve().parent != basis_echt:
+                raise _Bleibt("liegt aufgelöst nicht direkt im Home")
+            _kein_prozess(ordner, probe=True)
+        except _Bleibt as b:
+            erg = Ergebnis(ordner, "bleibt", b.grund, None, trocken=False, fehler=b.fehler)
+            _log_schreiben(erg)
+            ergebnisse.append(erg)
+            continue
+        except OSError as fehler:
+            erg = Ergebnis(ordner, "bleibt", f"Gegenprobe gescheitert: {_kurz(fehler)}", None, trocken=False, fehler=True)
+            _log_schreiben(erg)
+            ergebnisse.append(erg)
+            continue
+
+        if not _log_schreiben(erg):
+            erg = replace(
+                erg,
+                art="bleibt",
+                grund="Hausmeister-Log nicht schreibbar — ohne Log kein Löschen",
+                fehler=True,
+            )
+            ergebnisse.append(erg)
+            continue
+        try:
+            temp_ordner_loeschen(ordner, erwartet=(info.st_dev, info.st_ino))
+        except (RuntimeError, OSError) as fehler:
+            erg = replace(erg, art="bleibt", grund=f"Löschen gescheitert: {_kurz(fehler)}", fehler=True)
+            _log_schreiben(erg)
+        ergebnisse.append(erg)
+    return ergebnisse
 
 
 def temp_ordner_loeschen(ordner: Path, *, erwartet: tuple[int, int] | None = None) -> None:

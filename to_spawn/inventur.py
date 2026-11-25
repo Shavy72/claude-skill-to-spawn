@@ -93,8 +93,10 @@ VORSCHLAEGE: dict[str, tuple[str, tuple[str, ...]]] = {
     "zweitmeinung": ("eine Zweitmeinung einrichten", ("codex-consult", "code-review", "council")),
 }
 
-# Projekt-Wörter: treffen immer ``projekt`` (erste Regel).
-PROJEKT_WOERTER: tuple[str, ...] = ("duoplus", "postproxy", "n8n", "adb", "airtable")
+# Projekt-Wörter: treffen immer ``projekt`` (erste Regel); private/repo-eigene Wörter
+# kommen zusätzlich aus ``.to-spawn/config.json`` (``inventur.projekt_woerter``) und der
+# privaten Review-Config ``~/.claude/review/config.json`` (#424).
+PROJEKT_WOERTER: tuple[str, ...] = ("duoplus", "n8n", "adb", "airtable")
 
 # Einordnungs-Regeln als Daten: (Kategorie, Schlüsselwörter). Reihenfolge = Vorrang.
 # Am echten Katalog nachgerechnet (Prüfpanel #209 F8): ``bauen`` steht früh mit engen
@@ -469,12 +471,46 @@ def _trifft(text: str, woerter: list[str], schluesselwoerter: tuple[str, ...]) -
     return False
 
 
-def ordne_ein(name: str, beschreibung: str, claude_md: str = "", repo_name: str = "") -> str:
+def _lade_extra_projektwoerter(repo: Path, claude_home: Path) -> tuple[str, ...]:
+    """Liest zusätzliche Projekt-Wörter aus Repo-Konfig und privater Review-Config (#424)."""
+    gesehen: dict[str, None] = {}
+
+    def _merke(eintraege: Iterable[object]) -> None:
+        for wert in eintraege:
+            if isinstance(wert, str) and (sauber := wert.strip().lower()):
+                gesehen.setdefault(sauber, None)
+
+    repo_cfg = _lies_json(repo / ".to-spawn" / "config.json")
+    if isinstance(repo_cfg, dict):
+        inv_cfg = repo_cfg.get("inventur")
+        if isinstance(inv_cfg, dict) and isinstance(inv_cfg.get("projekt_woerter"), list):
+            _merke(inv_cfg["projekt_woerter"])
+
+    review_cfg = _lies_json(claude_home / "review" / "config.json")
+    if isinstance(review_cfg, dict):
+        je_signal = review_cfg.get("projekt_woerter")
+        if isinstance(je_signal, dict):
+            for liste in je_signal.values():
+                if isinstance(liste, list):
+                    _merke(liste)
+
+    return tuple(gesehen)
+
+
+def ordne_ein(
+    name: str,
+    beschreibung: str,
+    claude_md: str = "",
+    repo_name: str = "",
+    extra_woerter: Iterable[str] = (),
+) -> str:
     """Kategorie-Schlüssel für ein Werkzeug (Ablauf siehe Modul-Doku)."""
     regeln = list(REGELN)
+    zusatz: list[str] = [w.strip().lower() for w in extra_woerter if w and w.strip()]
     if repo_name:
-        eigene = tuple({repo_name.lower(), repo_name.lower().split("-")[0]} - {""})
-        regeln[0] = ("projekt", PROJEKT_WOERTER + eigene)
+        zusatz.extend(sorted({repo_name.lower(), repo_name.lower().split("-")[0]} - {""}))
+    if zusatz:
+        regeln[0] = ("projekt", tuple(dict.fromkeys((*PROJEKT_WOERTER, *zusatz))))
     for text in (name, beschreibung):
         klein = text.lower()
         woerter = _woerter(klein)
@@ -970,9 +1006,12 @@ def erstelle(
             werkzeuge.append(Werkzeug(server, "mcp", "", "claude.ai-Connector (Historie)"))
 
     claude_md = _lies_text(repo / "CLAUDE.md")
+    extra_woerter = _lade_extra_projektwoerter(repo, claude_home)
     for w in werkzeuge:
         if not w.kategorie:
-            w.kategorie = ordne_ein(w.name, w.beschreibung, claude_md, repo.name)
+            w.kategorie = ordne_ein(
+                w.name, w.beschreibung, claude_md, repo.name, extra_woerter=extra_woerter
+            )
         w.genutzt = _nutzung(w, historie)
 
     befunde = list(katalog.befunde)

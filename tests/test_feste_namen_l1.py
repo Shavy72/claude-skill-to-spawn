@@ -168,7 +168,7 @@ AUSNAHMEN: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
     # Erkennung, kein Pfad
     ("to_spawn/inventur.py", "duoplus"): (
         (
-            "TER: tuple[str, ...] = (\"duoplus\", \"postproxy\", \"n8n\", \"a",
+            'TER: tuple[str, ...] = ("duoplus", "n8n", "adb", "airtable")',
         ),
         "PROJEKT_WÖRTER: Wortliste zur Erkennung von Projekt-Wissen",
     ),

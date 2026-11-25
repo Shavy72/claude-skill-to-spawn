@@ -304,12 +304,26 @@ def _aufraeumen(args: argparse.Namespace, ap: argparse.ArgumentParser) -> int:
         )
         print(f"{erg.zweig}: {erg.art} ({erg.grund}) [{'trocken' if erg.trocken else 'echt'}]")
         return 1 if erg.fehler else 0
-    if args.alles:
+    if args.aelter_als_tage is not None and not args.helfer_altbestand:
+        ap.error("--aelter-als-tage gilt nur mit --helfer-altbestand")
+    if args.helfer_altbestand:
+        tage = (
+            args.aelter_als_tage
+            if args.aelter_als_tage is not None
+            else hausmeister.HELFER_ALTBESTAND_TAGE
+        )
+        ergebnisse = hausmeister.helfer_altbestand_aufraeumen(
+            loeschen=args.loeschen,
+            aelter_als_tage=tage,
+        )
+    elif args.alles:
         ergebnisse = hausmeister.aufraeumen_alles(loeschen=args.loeschen)
     elif args.ordner:
         ergebnisse = [hausmeister.aufraeumen(args.ordner, loeschen=args.loeschen)]
     else:
-        ap.error("aufraeumen: Ordner, --alles, --aufgabe-einrichten oder --altbestand-liste angeben")
+        ap.error(
+            "aufraeumen: Ordner, --alles, --helfer-altbestand, --aufgabe-einrichten oder --altbestand-liste angeben"
+        )
     for erg in ergebnisse:
         modus = "trocken" if erg.trocken else "echt"
         print(f"{erg.ordner}: {erg.art} ({erg.grund}) [{modus}]")
