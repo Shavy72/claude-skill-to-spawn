@@ -21,9 +21,11 @@ from pathlib import Path
 import pytest
 from test_hausmeister_1368 import Welt, git, welt  # noqa: F401 — ``welt`` ist ein Fixture
 from test_hausmeister_l1_konfig import _home, _maschine, ohne_naehte  # noqa: F401 — Fixtures
+from test_hausmeister_ticket_repo_176 import APP, SKILL, WEGWERF, Repos
 
 from to_spawn import config, einrichten, gh, hausmeister, vorgaben
 
+SKILL_ROOT = Path(__file__).resolve().parent.parent
 PROBE_SLUG = "bau/duoplus-leit"
 
 
@@ -147,3 +149,139 @@ def test_im_bereich_symlink_auf_versteckten_ordner(monkeypatch: pytest.MonkeyPat
     link.symlink_to(heim / "x" / ".ssh", target_is_directory=True)
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_WURZELN", os.path.expanduser("~/x/*"))
     assert not hausmeister._im_bereich(link)
+
+
+# --- 5 #129: Zweig-Aufräumen mit Wegwerf-Eintrag, eine Slug-Regel, .review/ in .gitignore ---
+
+
+def _zweig_auf_origin(haupt: Path, hauptzweig: str, zweig: str) -> None:
+    """Legt einen gemergten Ticket-Zweig lokal und auf ``origin`` an, ohne ihn ausgecheckt zu lassen."""
+    git(haupt, "checkout", "-q", "-b", zweig)
+    datei = haupt / f"{zweig.replace('/', '_')}.txt"
+    datei.write_text("fertig\n", encoding="utf-8")
+    git(haupt, "add", datei.name)
+    git(haupt, "commit", "-q", "-m", f"arbeit {zweig}")
+    git(haupt, "push", "-q", "-u", "origin", zweig)
+    git(haupt, "checkout", "-q", hauptzweig)
+    git(haupt, "merge", "-q", "--ff-only", zweig)
+    git(haupt, "push", "-q", "origin", hauptzweig)
+
+
+def test_zweige_aufraeumen_mit_wegwerf_eintrag_verarbeitet_gesunde_repos(
+    welt: Welt,  # noqa: F811
+    ohne_naehte: None,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#129 (a): 2 gesunde Repos + 1 Wegwerf-Eintrag — gesunde Zweige werden geräumt, Wegwerf bleibt."""
+    mehr = Repos(welt, monkeypatch)
+    mehr.repo(SKILL)
+    mehr.repo(WEGWERF)
+    mehr.maschine([(APP, APP), (SKILL, SKILL), (WEGWERF, "")])
+    _zweig_auf_origin(mehr.haupt[APP], mehr.hauptzweig[APP], "ticket/301-test")
+    _zweig_auf_origin(mehr.haupt[SKILL], mehr.hauptzweig[SKILL], "ticket/302-test")
+    _zweig_auf_origin(mehr.haupt[WEGWERF], mehr.hauptzweig[WEGWERF], "ticket/303-test")
+    mehr.ticket(APP, 301, "CLOSED", 48)
+    mehr.ticket(SKILL, 302, "CLOSED", 48)
+    mehr.ticket(APP, 303, "CLOSED", 48)  # fremdes Ticket-Repo zählt für WEGWERF nicht
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_ZWEIGE_LOESCHEN", "1")
+    hausmeister._ABGELEHNT_GEMELDET.clear()
+
+    with caplog.at_level(logging.WARNING, logger=hausmeister.log.name):
+        erg = hausmeister.zweige_aufraeumen(loeschen=True, jetzt=welt.jetzt)
+
+    assert {(e.ort, e.zweig, e.art) for e in erg} == {
+        ("lokal", "ticket/301-test", "gelöscht"),
+        ("remote", "ticket/301-test", "gelöscht"),
+        ("lokal", "ticket/302-test", "gelöscht"),
+        ("remote", "ticket/302-test", "gelöscht"),
+        ("lokal", "ticket/303-test", "bleibt"),
+        ("remote", "ticket/303-test", "bleibt"),
+    }
+    assert "ticket/301-test" not in git(mehr.haupt[APP], "branch", "--format=%(refname:short)").split()
+    assert "ticket/301-test" not in git(mehr.haupt[APP], "ls-remote", "--heads", "origin")
+    assert "ticket/302-test" not in git(mehr.haupt[SKILL], "branch", "--format=%(refname:short)").split()
+    assert "ticket/302-test" not in git(mehr.haupt[SKILL], "ls-remote", "--heads", "origin")
+    assert "ticket/303-test" in git(mehr.haupt[WEGWERF], "branch", "--format=%(refname:short)").split()
+    assert "ticket/303-test" in git(mehr.haupt[WEGWERF], "ls-remote", "--heads", "origin")
+    meldungen = [r.getMessage() for r in caplog.records if WEGWERF in r.getMessage()]
+    assert len(meldungen) == 1, meldungen
+    assert "ticket_repo" in meldungen[0]
+
+
+@pytest.mark.parametrize(
+    ("url", "erwartet"),
+    [
+        ("https://github.com/A/b", "A/b"),
+        ("https://github.com/A/b.git", "A/b"),
+        ("https://github.com/A/b/", "A/b"),
+        ("https://github.com/A/b.git/", "A/b"),
+        ("git@github.com:A/b", "A/b"),
+        ("git@github.com:A/b.git", "A/b"),
+        ("git@github.com:A/b/", "A/b"),
+        ("ssh://git@github.com/A/b", "A/b"),
+        ("ssh://git@github.com/A/b.git", "A/b"),
+        ("ssh://git@github.com/A/b/", "A/b"),
+        ("/home/bau/duoplus-leit", ""),
+        (r"C:\Users\nutzer\org\fern.git", ""),
+        ("/srv/ghq/github.com/A/b.git", ""),
+        ("https://notgithub.com/A/b", ""),
+        ("http://github.com/A/b", ""),
+        ("file:///srv/git@github.com:A/b", ""),
+        ("https://evil.example/https://github.com/A/b", ""),
+    ],
+)
+def test_eine_slug_regel_in_gh_und_hausmeister(url: str, erwartet: str) -> None:
+    """#129 (b): ``gh`` und ``hausmeister`` liefern für jede URL-Form denselben Slug."""
+    assert gh._github_slug(url) == erwartet
+    assert hausmeister._slug(url) == erwartet
+
+
+def test_github_slug_aus_origin_mit_schraegstrich_am_ende(tmp_path: Path) -> None:
+    """#129 (b): ``https://github.com/A/b/`` wird auch über ``github_slug_aus_origin`` erkannt."""
+    repo = _repo_mit_origin(tmp_path / "slash", "https://github.com/A/b/")
+    assert gh.github_slug_aus_origin(repo) == "A/b"
+
+
+def test_hausmeister_hat_keine_eigene_slug_regex() -> None:
+    """#129 (b): ``hausmeister`` nutzt die eine Slug-Regel aus ``gh`` ohne eigene Regex."""
+    assert not hasattr(hausmeister, "_GITHUB_SLUG")
+    quelle = (SKILL_ROOT / "to_spawn" / "hausmeister.py").read_text(encoding="utf-8")
+    assert r"github\.com" not in quelle
+
+
+def test_review_ordner_in_gitignore(tmp_path: Path) -> None:
+    """#129 (c): ``.review/`` steht in ``.gitignore``; ``git status --short`` bleibt mit ``.review/`` leer."""
+    gitignore = (SKILL_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert ".review/" in [z.strip() for z in gitignore]
+    probe = tmp_path / "probe"
+    subprocess.run(["git", "init", "-q", str(probe)], check=True)
+    (probe / ".gitignore").write_text((SKILL_ROOT / ".gitignore").read_text(encoding="utf-8"), encoding="utf-8")
+    subprocess.run(["git", "-C", str(probe), "add", ".gitignore"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(probe),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=t@example.org",
+            "commit",
+            "-q",
+            "-m",
+            "init",
+        ],
+        check=True,
+    )
+    beleg = probe / ".review" / "beleg.md"
+    beleg.parent.mkdir()
+    beleg.write_text("beleg\n", encoding="utf-8")
+    status = subprocess.run(
+        ["git", "-C", str(probe), "status", "--short"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    ).stdout
+    assert status == ""

@@ -26,7 +26,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import config, gh
+from . import config, gh, prozessbaum
 
 log = logging.getLogger(__name__)
 
@@ -170,6 +170,7 @@ def schalte_an(repo: Path, gh_repo: str, spec: int, dry_run: bool) -> Ergebnis:
             errors="replace",
             timeout=ZEITLIMIT_S,
             check=False,
+            **prozessbaum.fensterlos(),
         )
     except (OSError, subprocess.TimeoutExpired) as fehler:
         log.warning("Staging-Schalter %s: Aufruf gescheitert: %s", name, fehler)

@@ -57,7 +57,7 @@ def lauf(befehl: list[str], ordner: Path) -> Lauf:
             encoding="utf-8",
             errors="replace",
             check=False,
-            **prozessbaum.ohne_fenster(),
+            **prozessbaum.fensterlos(),
         )
     except OSError as fehler:
         return Lauf(NICHT_GESTARTET, f"{befehl[0]}: {fehler}", time.monotonic() - start)
