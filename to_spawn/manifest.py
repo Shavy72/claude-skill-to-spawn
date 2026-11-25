@@ -473,7 +473,7 @@ def _hole_github(repo: Path, bericht: Bericht) -> dict[str, dict[str, Any] | Non
     ergebnis: dict[str, dict[str, Any] | None] = {}
     for nummer in bericht.tickets:
         daten = gh.ticket_daten(nummer, cwd=repo)
-        kanten = gh.blocked_by(slug, nummer, cwd=repo)
+        kanten = None if daten is None else gh.blocked_by(slug, nummer, cwd=repo)
         if daten is None or kanten is None:
             bericht.fehler.append(_github_fehler(bericht, f"für #{nummer}"))
             ergebnis[nummer] = None
