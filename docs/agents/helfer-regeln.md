@@ -6,7 +6,8 @@ Absender: Leit-Session Bau-System auf dem Bau-Server, im Auftrag des Menschen, n
 2. Temp nur über den Befehl anlegen, nie mit Platzhalter (`*`) löschen, Aufräumen nur über den Befehl (#551):
    - anlegen: `TMPDIR=$(python3 ~/.claude/skills/to-spawn/to_spawn.py helfer-temp anlegen <sitzung>-<issue>)` und dieses `TMPDIR` für jeden Test-Aufruf setzen,
    - aufräumen: `python3 ~/.claude/skills/to-spawn/to_spawn.py helfer-temp aufraeumen <sitzung>-<issue>`,
-   - alte Reste: `python3 ~/.claude/skills/to-spawn/to_spawn.py helfer-temp aufraeumen --aelter-als-tage 7`.
+   - alte Reste: `python3 ~/.claude/skills/to-spawn/to_spawn.py helfer-temp aufraeumen --aelter-als-tage 7`,
+   - Altbestand im Home (`~/tmp-l<N>-…`, #615): `python3 ~/.claude/skills/to-spawn/to_spawn.py aufraeumen --helfer-altbestand [--aelter-als-tage 1] [--loeschen]` (ohne `--loeschen` = Trockenlauf).
    Kein `rm`, kein `mkdir` im Home für Temp-Ordner.
 3. Rot-Beweis vor dem Fix: neuer oder geschärfter Test läuft erst rot (Ausgabe merken), dann Fix, dann grün.
 4. Nur gezielte Tests (einzelne Dateien, `python3 -m pytest <datei> -q`). Keine volle Suite auf dem Server – die Pflicht-Prüfung ist der Linux-Lauf bei GitHub.

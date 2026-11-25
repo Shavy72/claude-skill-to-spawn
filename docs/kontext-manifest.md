@@ -59,15 +59,15 @@ Skill-Vorlage `repo-scripts/_default.json`:
 Verfügbare MCP-Namen zur Auswahl im Manifest (Stand 2026-09-12, `bau.py` löst sie über
 `~/.claude.json` global + Projekt-Eintrag, Repo-`.mcp.json` und
 `~/.claude/toolbox/mcp-archive.json` auf): `claude-in-chrome` (Builtin),
-`chrome-devtools`, `firecrawl`, `perplexity`, `sensei`, `postproxy` (Projekt),
+`chrome-devtools`, `firecrawl`, `perplexity`, `sensei`, `projekt-api` (Projekt),
 `n8n-mcp`, `n8n-mcp-lite`, `context7`, `kapture`, `windows-mcp`, `scrape-creators`,
 `instagram-mcp`, `replicate`, `dataforseo`, `shadcn`, `stitch`, `supabase`.
 Nicht steuerbar: die claude.ai-Connectoren (Airtable, Gmail, Notion, …) — sie hängen
 am Login, nicht an `--mcp-config`.
 
 Projekt-Pflicht-Skills je Bereich (aus `CLAUDE.md`/`projekt-routing`), die ein Ticket
-bei Bedarf zusätzlich listet: `duoplus-api` (Cloud-Phone-API), `postproxy-api` /
-`postproxy-n8n` (Posting), `n8n-mastery` (Workflows), `mastery-knowledge` (Proxy/APIs),
+bei Bedarf zusätzlich listet: `duoplus-api` (Cloud-Phone-API), `projekt-api` /
+`projekt-n8n` (Posting), `n8n-mastery` (Workflows), `mastery-knowledge` (Proxy/APIs),
 `user-flow-lens` + `auto-polish` (UI-Fläche), `asteragon-reel-concept-scanner` (Reels).
 
 ## Ablauf: to-spec → to-tickets → to-spawn → `bau N`

@@ -413,6 +413,19 @@ def baue_parser() -> _Parser:
     p_aufr.add_argument("--loeschen", action="store_true", help="wirklich sichern und löschen")
     # Hausmeister am Laptop (#1373): alle Ordner, tägliche Windows-Aufgabe, Altbestand-Liste.
     p_aufr.add_argument("--alles", action="store_true", help="alle Ordner unter den Wurzeln")
+    # Helfer-Altbestand (#615): alte ~/tmp-l<N>-…-Ordner im Home sicher wegräumen.
+    p_aufr.add_argument(
+        "--helfer-altbestand",
+        action="store_true",
+        help="alte ~/tmp-l<N>-…-Ordner im Home aufräumen (#615; Vorgabe: Trockenlauf)",
+    )
+    p_aufr.add_argument(
+        "--aelter-als-tage",
+        type=helfer_temp._tage_arg,
+        default=None,
+        metavar="N",
+        help="mit --helfer-altbestand: Mindestalter in Tagen (Vorgabe: 1, >= 1)",
+    )
     p_aufr.add_argument(
         "--aufgabe-einrichten", action="store_true", help="tägliche Windows-Aufgabe einrichten"
     )
