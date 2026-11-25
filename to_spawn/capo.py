@@ -71,6 +71,7 @@ from . import (
 )
 from . import sperre as _sperre
 from .pruefplan import Moment
+from . import prozessbaum
 
 log = logging.getLogger("to_spawn.capo")
 
@@ -223,6 +224,7 @@ def _git(repo: Path, *args: str) -> tuple[int, str]:
             errors="replace",
             timeout=grenze,
             check=False,
+            **prozessbaum.fensterlos(),
         )
     except subprocess.TimeoutExpired:
         log.warning("git %s nach %s s abgebrochen.", args[:2], grenze)
@@ -702,7 +704,7 @@ def _staging_zeilen(vps: dict[str, Any]) -> list[str] | None:
         f"tail -n 200 {_server_pfad(pfad_text)}",
     ]
     try:
-        lauf = subprocess.run(befehl, capture_output=True, text=True, encoding="utf-8", timeout=30, check=False)
+        lauf = subprocess.run(befehl, capture_output=True, text=True, encoding="utf-8", timeout=30, check=False, **prozessbaum.fensterlos())
     except (OSError, subprocess.SubprocessError) as fehler:
         log.warning("Staging-Log über %s nicht lesbar: %s", host, fehler)
         raise _StagingUnlesbar from fehler
@@ -1184,6 +1186,7 @@ def tmux_fenster(spec: int) -> list[str] | None:
             befehl,
             capture_output=True,
             **konsole.UNTERPROZESS_TEXT,
+            **prozessbaum.fensterlos(),
             timeout=TMUX_ZEIT_S,
             check=False,
         )
@@ -2836,6 +2839,7 @@ def _abschluss_lauf(repo: Path, befehl: str, spec: int, *args: str) -> tuple[int
         env={**os.environ, "PYTHONIOENCODING": "utf-8"},
         timeout=ABLEGEN_ZEITLIMIT_S if befehl == "ablegen" else ABSCHLUSS_ZEITLIMIT_S,
         check=False,
+        **prozessbaum.fensterlos(),
     )
     return lauf.returncode, lauf.stdout.strip(), lauf.stderr.strip()
 

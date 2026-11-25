@@ -37,7 +37,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TextIO
 
-from . import bau_log, config, melder, nest, sitzung_env, starter
+from . import bau_log, config, melder, nest, prozessbaum, sitzung_env, starter
 
 log = logging.getLogger("to_spawn.probesitz")
 
@@ -150,6 +150,7 @@ def laeufer_standard(
             errors="replace",
             timeout=timeout,
             check=False,
+            **prozessbaum.fensterlos(),
         )
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(argv, 124, "", f"Zeitlimit {timeout}s überschritten")
