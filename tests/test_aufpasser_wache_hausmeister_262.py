@@ -137,3 +137,75 @@ def test_gestoerte_deploy_wache_sperrt_hausmeister(
     log_text = (zustand / "aufpasser.log").read_text(encoding="utf-8")
     assert "Lauf abgebrochen, nichts angefasst: Deploy-Wache:" in log_text, log_text
     assert "Hausmeister:" not in log_text, log_text
+
+
+def test_repo_ordner_nutzt_pane_start_path_als_rueckfall(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#262-Nachzug: Fehlt ``pane_current_path`` direkt nach ``tmux new-session -d``
+    oder zeigt auf einen Fremdordner, findet ``repo_ordner`` das Repo über ``pane_start_path``."""
+    repo = tmp_path / "repo"
+    (repo / ".to-spawn").mkdir(parents=True)
+    (repo / ".to-spawn" / "config.json").write_text("{}", encoding="utf-8")
+    fremd = tmp_path / "fremd"
+    fremd.mkdir()
+
+    a = aufpasser.Aufpasser(aufpasser.Einstellungen(zustand=tmp_path / "zustand"))
+
+    # Fall 1: pane_current_path leer (Start-Rennen direkt nach new-session -d).
+    monkeypatch.setattr(a, "tmux", lambda *_a, **_k: f"0\thalter\t\t1234\t@0\t%0\t{repo}\n")
+    fenster_leer = a.fenster("spec-9262", "9262")
+    assert len(fenster_leer) == 1
+    assert fenster_leer[0].pfad == str(repo)
+    assert a.repo_ordner(fenster_leer) == repo
+
+    # Fall 2: pane_current_path im Fremdordner (vor chdir oder nach cd weg), start_pfad im Repo.
+    monkeypatch.setattr(
+        a, "tmux", lambda *_a, **_k: f"0\thalter\t{fremd}\t1234\t@0\t%0\t{repo}\n"
+    )
+    fenster_fremd = a.fenster("spec-9262", "9262")
+    assert a.repo_ordner(fenster_fremd) == repo
+
+
+def test_echtes_tmux_findet_repo_trotz_weggewechseltem_pane_pfad(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Weg-Test mit echtem tmux: selbst wenn ``pane_current_path`` leer ist oder auf
+    ``/`` steht, liefert ``Aufpasser.repo_ordner`` über ``pane_start_path`` das Repo."""
+    from conftest import braucht_fehlt
+
+    if grund := braucht_fehlt("tmux"):
+        pytest.skip(f"braucht tmux: {grund}")
+
+    repo = tmp_path / "repo"
+    (repo / ".to-spawn").mkdir(parents=True)
+    (repo / ".to-spawn" / "config.json").write_text("{}", encoding="utf-8")
+
+    socket = f"wache262-pfad-{os.getpid()}"
+    sitzung = "spec-9262"
+    monkeypatch.delenv("TMUX", raising=False)
+    subprocess.run(
+        [
+            "tmux",
+            "-L",
+            socket,
+            "new-session",
+            "-d",
+            "-s",
+            sitzung,
+            "-n",
+            "halter",
+            "-c",
+            str(repo),
+            "cd / && exec sleep 30",
+        ],
+        check=True,
+    )
+    try:
+        a = aufpasser.Aufpasser(
+            aufpasser.Einstellungen(zustand=tmp_path / "zustand", tmux_socket=socket)
+        )
+        fenster = a.fenster(sitzung, "9262")
+        assert a.repo_ordner(fenster) == repo
+    finally:
+        subprocess.run(["tmux", "-L", socket, "kill-server"], check=False)

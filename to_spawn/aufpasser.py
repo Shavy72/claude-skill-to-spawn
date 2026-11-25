@@ -505,6 +505,7 @@ class Fenster:
     pane_pid: int
     window_id: str = ""
     pane_id: str = ""
+    start_pfad: str = ""
 
     @property
     def ziel(self) -> str:
@@ -1647,21 +1648,27 @@ class Aufpasser:
             "-t",
             f"={sitzung}",
             "-F",
-            "#{window_index}\t#{window_name}\t#{pane_current_path}\t#{pane_pid}\t#{window_id}\t#{pane_id}",
+            "#{window_index}\t#{window_name}\t#{pane_current_path}\t#{pane_pid}\t#{window_id}\t#{pane_id}\t#{pane_start_path}",
         ).splitlines():
             teile = zeile.split("\t")
-            if len(teile) != 6:
+            if len(teile) not in (6, 7):
                 continue
+            start_pfad = teile[6] if len(teile) == 7 else ""
+            # Direkt nach ``tmux new-session -d`` kann ``pane_current_path`` unter Last noch
+            # leer sein (Kindprozess hat tcgetpgrp/chdir noch nicht abgeschlossen);
+            # ``pane_start_path`` kennt tmux sofort beim Anlegen des Panes.
+            pfad = teile[2] or start_pfad
             liste.append(
                 Fenster(
                     sitzung,
                     spec,
                     teile[0],
                     teile[1],
-                    teile[2],
+                    pfad,
                     int(teile[3] or 0),
                     teile[4],
                     teile[5],
+                    start_pfad,
                 )
             )
         return liste
@@ -1688,10 +1695,14 @@ class Aufpasser:
         return belegt
 
     def repo_ordner(self, fenster: list[Fenster]) -> Path | None:
-        for f in fenster:
-            pfad = Path(f.pfad)
-            if (pfad / config.KONFIG_PFAD).is_file():
-                return pfad
+        for attr in ("pfad", "start_pfad"):
+            for f in fenster:
+                roh_pfad = getattr(f, attr, "")
+                if not roh_pfad:
+                    continue
+                pfad = Path(roh_pfad)
+                if (pfad / config.KONFIG_PFAD).is_file():
+                    return pfad
         if self.e.repo:
             return self.e.repo
         roh = os.environ.get("TO_SPAWN_REPO")
@@ -1720,12 +1731,13 @@ class Aufpasser:
                 kandidaten.append(echt)
 
         for f in fenster:
-            f_pfad = getattr(f, "pfad", None)
-            if not f_pfad:
-                continue
-            p = Path(f_pfad)
-            merk(p)
-            merk(_hauptklon_aus_worktree(p))
+            for attr in ("pfad", "start_pfad"):
+                f_pfad = getattr(f, attr, None)
+                if not f_pfad:
+                    continue
+                p = Path(f_pfad)
+                merk(p)
+                merk(_hauptklon_aus_worktree(p))
         merk(basis)
 
         def hat_manifest(ordner: Path) -> bool:
