@@ -322,7 +322,9 @@ def test_hook_exit2_blockt_werkzeug(tmp_path: Path) -> None:
     befunde = _probe(tmp_path, [_settings(tmp_path, _HOOK_EXIT2)])
     rot = [b for b in befunde if not b.ok]
     assert len(rot) == 1 and "aufraeumen" in rot[0].text, befunde
-    assert "Git-Sperre" in rot[0].text and "hook_" in rot[0].text
+    # Hook-Name ist auf 120 Zeichen gekürzt: bei langem tmp_path (Runner mit xdist) fällt der
+    # Skriptname weg, der Befehlsanfang bleibt (#553).
+    assert "Git-Sperre" in rot[0].text and f"Hook `{Path(sys.executable).as_posix()}" in rot[0].text
     assert all(b.bereich == "werkzeug" for b in befunde)
 
 
