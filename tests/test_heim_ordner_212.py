@@ -137,11 +137,34 @@ def test_heim_ordner_liest_home_oder_userprofile(
     b = tmp_path / "heim-b"
     monkeypatch.setenv("USERPROFILE", str(b))
     assert config.heim_ordner() == b
+    # HOME allein: unter Windows zieht conftest._HeimMonkeyPatch USERPROFILE mit → danach entfernen.
     monkeypatch.setenv("HOME", str(a))
+    monkeypatch.delenv("USERPROFILE", raising=False)
+    assert config.heim_ordner() == a
+    # Beide gesetzt: USERPROFILE nach HOME setzen, damit _HeimMonkeyPatch es unter Windows nicht überschreibt.
+    monkeypatch.setenv("USERPROFILE", str(b))
     if sys.platform == "win32":
         assert config.heim_ordner() == b
     else:
         assert config.heim_ordner() == a
+
+
+def test_heim_ordner_respektiert_umgebogenes_path_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Biegt ein Test ``Path.home`` um, respektiert :func:`config.heim_ordner` das
+    (z. B. ``test_maschine_standardort_unter_home``) und übersetzt ``RuntimeError`` klar."""
+    ziel = tmp_path / "umgebogen"
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: ziel))
+    assert config.heim_ordner() == ziel
+
+    def _kaputt(cls: type[Path]) -> Path:
+        raise RuntimeError("Could not determine home directory.")
+
+    monkeypatch.setattr(Path, "home", classmethod(_kaputt))
+    with pytest.raises(config.KeinHeimOrdner) as fehler:
+        config.heim_ordner()
+    assert "Heimat-Ordner" in str(fehler.value)
 
 
 def test_context_mode_claude_ordner_lazy_und_respektiert_config_dir(

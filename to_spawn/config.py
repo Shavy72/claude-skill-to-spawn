@@ -231,14 +231,33 @@ class KeinHeimOrdner(RuntimeError):
     """Heimat-Ordner nicht bestimmbar (weder ``HOME`` noch ``USERPROFILE`` gesetzt, #212)."""
 
 
+_KEIN_HEIM_MELDUNG = (
+    "Heimat-Ordner nicht bestimmbar: weder HOME noch USERPROFILE in der Umgebung gesetzt."
+)
+
+
+def _ist_path_home_umgebogen() -> bool:
+    """True, wenn ``Path.home`` ersetzt wurde (z. B. ``monkeypatch.setattr(Path, 'home', …)``, #212)."""
+    fn = getattr(Path, "home", None)
+    modul = getattr(fn, "__module__", "") or ""
+    return not (modul == "pathlib" or modul.startswith("pathlib."))
+
+
 def heim_ordner() -> Path:
     """Heimat-Ordner erst bei Gebrauch bestimmen — eine Tür für Windows und Linux (#212).
 
     Liest die Umgebung (Windows: ``USERPROFILE``, ``HOMEDRIVE``+``HOMEPATH``, ``HOME``;
     Linux/macOS: ``HOME``, ``USERPROFILE``). Fehlt alles, wirft :class:`KeinHeimOrdner`
     mit verständlicher Meldung — Windows und Linux gleich (kein Absturz beim Import und
-    kein stiller Rückfall auf ``/etc/passwd``).
+    kein stiller Rückfall auf ``/etc/passwd``). Wurde ``Path.home`` in einem Test
+    umgebogen, respektiert die Tür das und übersetzt ``RuntimeError`` in
+    :class:`KeinHeimOrdner`.
     """
+    if _ist_path_home_umgebogen():
+        try:
+            return Path.home()
+        except RuntimeError as fehler:
+            raise KeinHeimOrdner(_KEIN_HEIM_MELDUNG) from fehler
     if sys.platform == "win32":
         laufwerk_pfad = (
             os.environ.get("HOMEDRIVE", "").strip() + os.environ.get("HOMEPATH", "").strip()
@@ -258,9 +277,7 @@ def heim_ordner() -> Path:
     for wert in kandidaten:
         if wert:
             return Path(wert)
-    raise KeinHeimOrdner(
-        "Heimat-Ordner nicht bestimmbar: weder HOME noch USERPROFILE in der Umgebung gesetzt."
-    )
+    raise KeinHeimOrdner(_KEIN_HEIM_MELDUNG)
 
 
 def expand_heim(pfad: str | Path) -> Path:
