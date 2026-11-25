@@ -371,6 +371,35 @@ def wache_log(repo: Path, spec: int | str) -> Path:
     return Path(repo) / ".to-spawn" / f"fenster_wache_{spec}.log"
 
 
+def _fenster_log_pfad(repo: Path, spec: str, ticket: int | None) -> Path:
+    """Start-Log eines Fensters: :func:`capo.fenster_log` (Bau) oder :func:`wache_log` (Aufseher)."""
+    return capo.fenster_log(repo, ticket) if ticket is not None else wache_log(repo, spec)
+
+
+def _start_log_auszug(
+    datei: Path, ab_byte: int = 0, *, max_zeilen: int = 3, max_zeichen: int = 240
+) -> str:
+    """Lesbarer Auszug der neuen Zeilen eines Fenster-Logs ab ``ab_byte`` (#288).
+
+    Wurde die Datei seit ``ab_byte`` gekürzt oder neu angelegt, wird ab 0 gelesen.
+    Leer, wenn die Datei fehlt oder keine neuen nicht-leeren Zeilen enthält.
+    """
+    try:
+        daten = datei.read_bytes()
+    except OSError:
+        return ""
+    ausschnitt = daten[ab_byte:] if ab_byte <= len(daten) else daten
+    zeilen = [
+        z.strip()
+        for z in ausschnitt.decode("utf-8", errors="replace").splitlines()
+        if z.strip()
+    ]
+    if not zeilen:
+        return ""
+    text = " | ".join(zeilen[-max_zeilen:])
+    return text if len(text) <= max_zeichen else text[: max_zeichen - 1] + "…"
+
+
 def _hauptklon_aus_worktree(pfad: Path) -> Path | None:
     """Löst bei einem Git-Worktree (``.git``-Datei mit ``gitdir: …/.git/worktrees/<name>``) den Hauptklon auf."""
     git_pfad = pfad / ".git"
@@ -1372,6 +1401,8 @@ class Aufpasser:
         #: ab dem zweiten Start wartet der Tick ``staffel_s`` Sekunden, damit die
         #: Claude-Starts sich nicht stapeln. Am Tick-Anfang wieder 0.
         self._starts_in_tick = 0
+        #: Letzte Beobachtung, warum :meth:`_start_nachweisen` ``False`` lieferte (#288).
+        self._letzter_start_befund = ""
 
     # -- Werkzeuge ---------------------------------------------------------------
 
@@ -1922,10 +1953,18 @@ class Aufpasser:
 
     def _start_nachweisen(self, sitzung: str, name: str) -> bool:
         """Bis ``START_NACHWEIS_S`` prüfen, dass das Fenster bleibt und sein
-        Pane-Prozess lebt — erst dann gilt der Start (R6)."""
+        Pane-Prozess lebt — erst dann gilt der Start (R6).
+
+        Bei ``False`` hält :attr:`_letzter_start_befund` die konkrete tmux-/Prozess-Ursache (#288).
+        """
+        self._letzter_start_befund = ""
         frist = time.monotonic() + START_NACHWEIS_S
         while True:
             lebt = False
+            gefunden = False
+            pane_tot = False
+            pid_tot = 0
+            tmux_fehler = ""
             try:
                 for zeile in self.tmux(
                     "list-windows",
@@ -1936,10 +1975,26 @@ class Aufpasser:
                 ).splitlines():
                     teile = zeile.split("\t")
                     if len(teile) == 3 and teile[0] == name:
-                        lebt = teile[2] != "1" and _prozess_lebt(int(teile[1] or 0))
-            except (RuntimeError, ValueError):
+                        gefunden = True
+                        pid = int(teile[1] or 0)
+                        if teile[2] == "1":
+                            pane_tot = True
+                        elif _prozess_lebt(pid):
+                            lebt = True
+                        else:
+                            pid_tot = pid
+            except (RuntimeError, ValueError) as fehler:
+                tmux_fehler = str(fehler).strip()
                 lebt = False
             if not lebt:
+                if tmux_fehler:
+                    self._letzter_start_befund = f"tmux-Fehler: {tmux_fehler[:160]}"
+                elif pane_tot:
+                    self._letzter_start_befund = "Pane-Prozess sofort beendet (pane_dead=1)"
+                elif gefunden:
+                    self._letzter_start_befund = f"Pane-Prozess {pid_tot} lebt nicht mehr"
+                else:
+                    self._letzter_start_befund = "Fenster nach dem Start nicht mehr in tmux"
                 return False
             if time.monotonic() >= frist:
                 return True
@@ -2859,6 +2914,13 @@ class Aufpasser:
             except RuntimeError as fehler:
                 log.error("#%s: Ticket nicht lesbar, kein Start: %s", ticket, fehler)
                 return False
+            if ticket_zustand.fertig_gebaut(daten):
+                log.info(
+                    "#%s: %s — kein Start",
+                    ticket,
+                    ticket_zustand.wortlaut(daten),
+                )
+                return False
             gesperrt = daten["labels"] & STOPP_LABELS
             if gesperrt:
                 log.info(
@@ -2926,6 +2988,11 @@ class Aufpasser:
             pause = speicher.staffel_s(konfig)
             log.info("%s: Staffel — %d s Pause vor Fenster „%s“", sitzung, pause, name)
             time.sleep(pause)
+        log_pfad = _fenster_log_pfad(repo, spec, ticket)
+        try:
+            log_offset = log_pfad.stat().st_size if log_pfad.is_file() else 0
+        except OSError:
+            log_offset = 0
         try:
             self.fenster_starten(sitzung, name, cwd, befehl)
         except RuntimeError as fehler:
@@ -2940,12 +3007,24 @@ class Aufpasser:
                 self._start_schluessel(spec, ticket), []
             ).append(self.jetzt)
         if not self.e.trocken and not self._start_nachweisen(sitzung, name):
+            auszug = _start_log_auszug(log_pfad, log_offset)
+            if not auszug and log_pfad.is_file():
+                # Kurz warten, falls tee bei schnellem Ende die letzte Zeile noch flusht (#288).
+                time.sleep(0.2)
+                auszug = _start_log_auszug(log_pfad, log_offset)
+            if auszug:
+                grund_text = f" — Grund: {auszug} (Log: {log_pfad})"
+            elif self._letzter_start_befund:
+                hinweis = f" (Log: {log_pfad})" if log_pfad.is_file() else ""
+                grund_text = f" — Grund: {self._letzter_start_befund}{hinweis}"
+            else:
+                grund_text = ""
             self.melden(
                 spec,
                 repo,
                 f"{sitzung}/{name}",
                 "start_fehlgeschlagen",
-                f"{wer}: Start fehlgeschlagen (Fenster gleich wieder weg).",
+                f"{wer}: Start fehlgeschlagen (Fenster gleich wieder weg){grund_text}.",
             )
             return
         wie = f"mit Gespräch {sid[:8]}… fortgesetzt." if sid else "gestartet."
@@ -2990,12 +3069,17 @@ class Aufpasser:
         )
         # Aufseher-Fenster fehlt (R2): zuerst nachstarten (#418), solange die Spec (hier)
         # offene Tickets hat und die Auswahl einen Aufseher auf diesem Rechner erlaubt (#271).
-        if (
-            offen_hier
-            and f"wache {spec}" not in vorhanden
-            and self.start_erlaubt(spec, repo, None, sitzung=sitzung)
-        ):
-            self.fehlendes_fenster(sitzung, spec, repo, None)
+        # Gehört die Auswahl einem anderen Rechner oder gilt --ohne-wache, keinen zweiten
+        # Start versuchen und das in einer Zeile melden (#288).
+        if offen and f"wache {spec}" not in vorhanden:
+            if not auswahl.wache_erlaubt(repo, spec, auswahl=auswahl_stand, gelesen=True):
+                log.info(
+                    "spec %s: Aufseher läuft laut Auswahl nicht auf diesem Rechner (%s) — kein zweiter Start",
+                    spec,
+                    auswahl.beschreibung(auswahl_stand),
+                )
+            elif offen_hier and self.start_erlaubt(spec, repo, None, sitzung=sitzung):
+                self.fehlendes_fenster(sitzung, spec, repo, None)
         # Bau-Fenster nur für „noch nicht fertig gebaut“ (#279) innerhalb der Auswahl (#271);
         # der Aufseher oben bleibt, bis alle gewählten Tickets endgültig zu sind.
         bauen = self.zu_bauen(offen_hier)
