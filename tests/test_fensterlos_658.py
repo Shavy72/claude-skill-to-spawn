@@ -207,11 +207,12 @@ _ELTERN = textwrap.dedent(
 )
 
 
-def test_fensterlos_ohne_ctypes_windll_kein_absturz(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Simuliertes ``sys.platform == 'win32'`` unter Linux ohne ``ctypes.windll`` → ``{}``."""
+def test_fensterlos_ohne_windll_bei_simuliertem_win32(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Simuliertes ``win32`` ohne ``ctypes.windll`` (z. B. Tests unter Linux) stürzt nicht ab."""
     from to_spawn import prozessbaum
 
     monkeypatch.setattr(prozessbaum.sys, "platform", "win32")
+    monkeypatch.setattr(prozessbaum, "_WINDOWS", True)
     monkeypatch.delattr(prozessbaum.ctypes, "windll", raising=False)
     assert prozessbaum.fensterlos() == {}
 
