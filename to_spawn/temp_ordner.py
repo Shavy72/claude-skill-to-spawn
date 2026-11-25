@@ -53,7 +53,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from . import aufpasser, config, ticket_zustand
+from . import config, ticket_zustand
 
 log = logging.getLogger("to_spawn.temp_ordner")
 
@@ -264,7 +264,8 @@ def _baum_pruefen(ordner: Path, jetzt: float) -> None:
 
 def _repo_pruefen(repo: Path, rel: str, ist_worktree: bool, wurzel_ordner: Path) -> None:
     """Prüft ein Git-Repo im Temp-Ordner gegen das erreichbare Remote ``origin`` (fail-closed)."""
-    from . import hausmeister as hm
+    from . import aufpasser
+    from . import hausmeister as hm  # spät: beide ziehen mittelbar temp_ordner an
 
     try:
         eigen = {MARKER} if rel == "." else set()  # der Marker selbst ist keine Arbeit

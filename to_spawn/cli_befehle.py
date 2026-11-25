@@ -45,6 +45,7 @@ from to_spawn import (
     setup,
     spec_rand,
     speicher,
+    start_last,
     startklar,
     ticket_zustand,
     ticketstand,
@@ -373,6 +374,7 @@ def _anhaengen(args: argparse.Namespace) -> int:
         args.ticket,
         config.lade(repo),
         blockiert_von=_tickets(args.blockiert_von) or [],
+        abnahme=_tickets(args.abnahme) or [],
         schaetzung_k=args.schaetzung,
         umfang=args.umfang,
         dateien=args.datei,
@@ -524,6 +526,8 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         return waechter_takt.lauf(args)
     if args.befehl == "aufpasser":
         return aufpasser.lauf_mit_args(args)
+    if args.befehl == "start-last":
+        return start_last.lauf_mit_args(args)
     if args.befehl == "aufraeumen":
         return _aufraeumen(args, ap)
     if args.befehl == "sichern":

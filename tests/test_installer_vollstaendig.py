@@ -66,7 +66,8 @@ def test_install_sh_kopiert_jeden_wurzel_eintrag() -> None:
 
 
 def test_beide_installer_kopieren_gleiche_wurzel_eintraege() -> None:
-    """#329: ``install.sh`` und ``install.ps1`` pflegen dieselbe Kopierliste inkl. ``review``."""
+    """#329, #396: ``install.sh`` und ``install.ps1`` pflegen dieselbe Kopierliste inkl. ``review`` und ``review-dirigent``."""
     sh, ps1 = _kopiert_sh(), _kopiert_ps1()
     assert sh == ps1
     assert "review" in sh
+    assert "review-dirigent" in sh

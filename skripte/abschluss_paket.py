@@ -86,6 +86,8 @@ class Paket:
     bitwarden: str = ""
     tun: list[str] = field(default_factory=list)
     stand: str = "abnahme"
+    rundschau_datei: str = ""
+    rundschau_inhalt: dict[str, Any] = field(default_factory=dict)
 
 
 def abschluss_ordner() -> Path:
@@ -141,13 +143,48 @@ def tun_saetze(repo: Path, spec: int, tun: list[str], stand: str) -> list[str]:
     return saetze
 
 
-def markdown(spec: int, stage: str, rundschau: str, tests: str, saetze: list[str]) -> str:
+def _bau_tickets(repo: Path, spec: int) -> list[tuple[str, str]]:
+    """Bau-Tickets der Spec aus dem Manifest (ohne reine Abnahme-Tickets)."""
+    return [(nr, titel) for nr, titel in _tickets(repo, spec) if not titel.strip().lower().startswith("abnahme")]
+
+
+def _inhalt_zeile(inhalt: dict[str, Any]) -> str:
+    """Kurze Inhalts-Angabe der Rundschau (#367) oder leer, wenn nicht erhoben."""
+    if not inhalt or "bilder" not in inhalt:
+        return ""
+    bilder = int(inhalt.get("bilder", 0))
+    klick = int(inhalt.get("klickschritte", 0))
+    ent = "ja" if inhalt.get("entscheidungen") else "nein"
+    return f"{bilder} Folien mit Bild, {klick} Klick-Schrittfolgen, Entscheidungs-Folie: {ent}"
+
+
+def _rundschau_text(rundschau: str, rundschau_datei: str = "", rundschau_inhalt: dict[str, Any] | None = None) -> str:
+    """Rundschau-Zeile: Link plus Repo-Pfad und Inhalts-Angabe, wenn vorhanden (#367)."""
+    zusatz: list[str] = []
+    if rundschau_datei:
+        zusatz.append(f"Datei im Repo: {rundschau_datei}")
+    inhalt = _inhalt_zeile(rundschau_inhalt or {})
+    if inhalt:
+        zusatz.append(inhalt)
+    return f"{rundschau} ({' · '.join(zusatz)})" if zusatz else rundschau
+
+
+def markdown(
+    spec: int,
+    stage: str,
+    rundschau: str,
+    tests: str,
+    saetze: list[str],
+    *,
+    rundschau_datei: str = "",
+    rundschau_inhalt: dict[str, Any] | None = None,
+) -> str:
     """Alte Kurzform: 3 Links + was neu ist."""
     zeilen = [
         f"# Spec {spec} fertig — 3 Links",
         "",
         f"1. **Stage-App** (auch am Handy): {stage}",
-        f"2. **Rundschau**: {rundschau}",
+        f"2. **Rundschau**: {_rundschau_text(rundschau, rundschau_datei, rundschau_inhalt)}",
         f"3. **Test-Übersicht**: {tests}",
         "",
         "## Was ist neu",
@@ -179,7 +216,7 @@ def markdown_voll(p: Paket) -> str:
     zeilen = [
         f"# {betreff(p, True)}",
         "",
-        f"1. **Rundschau** (was gebaut wurde, in einfachen Worten): {p.rundschau}",
+        f"1. **Rundschau** (was gebaut wurde, in einfachen Worten): {_rundschau_text(p.rundschau, p.rundschau_datei, p.rundschau_inhalt)}",
         f"2. **Belegseiten** (je Ticket der Nachweis): {p.belege or '(noch keine)'}",
         f"3. **Test-Übersicht** (welche Prüfungen grün sind): {p.tests}",
         "4. **Direkt-Links** (springen an die richtige Stelle, auch am Handy):",
@@ -299,6 +336,8 @@ def _offen_daten(repo: Path, p: Paket) -> dict[str, Any]:
         "spec": p.spec,
         "stage": p.stage,
         "rundschau": p.rundschau,
+        "rundschau_datei": p.rundschau_datei,
+        "rundschau_inhalt": p.rundschau_inhalt,
         "tests": p.tests,
         "belege": p.belege,
         "direkt": [{"titel": t, "url": u} for t, u in p.direkt],
@@ -324,6 +363,8 @@ def _schreiben(md_datei: Path, text: str, offen: Path, daten: dict[str, Any]) ->
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    if argv[:1] == ["rundschau-auftrag"]:
+        return rundschau_auftrag(argv[1:])
     if argv[:1] == ["ablegen"]:
         return ablegen(argv[1:])
     if argv[:1] == ["nachsehen"]:
@@ -334,7 +375,19 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
     repo = _repo(a.repo)
     p, neue_form = _paket(a, ap, repo)
-    text = markdown_voll(p) if neue_form else markdown(p.spec, p.stage, p.rundschau, p.tests, p.saetze)
+    text = (
+        markdown_voll(p)
+        if neue_form
+        else markdown(
+            p.spec,
+            p.stage,
+            p.rundschau,
+            p.tests,
+            p.saetze,
+            rundschau_datei=p.rundschau_datei,
+            rundschau_inhalt=p.rundschau_inhalt,
+        )
+    )
     md_datei, offen = _md_datei(repo, p), _offen_datei(repo, p)
     konfig = config.lade(repo)
     titel = betreff(p, neue_form)
@@ -381,6 +434,133 @@ def _zeit(text: str | None, ap: argparse.ArgumentParser, schalter: str) -> datet
         ap.error(f"{schalter} „{text}“: erwartet ISO-Zeitpunkt wie 2026-10-06T10:00:00+02:00")
 
 
+def rundschau_auftrag_pfad(repo: Path, spec: int) -> Path:
+    """Ziel-Datei für den Rundschau-Auftrag einer Spec (#367)."""
+    return repo_ordner(repo, "agenten") / f"rundschau_auftrag_{spec}.md"
+
+
+def rundschau_ziel_rel(repo: Path, spec: int) -> str:
+    """Standard-Pfad der Rundschau-HTML-Datei im Repo (relativ als POSIX)."""
+    pfad = repo_ordner(repo, "agenten") / f"rundschau_{spec}.html"
+    try:
+        return pfad.relative_to(repo).as_posix()
+    except ValueError:
+        return pfad.as_posix()
+
+
+def rundschau_auftrag_text(
+    repo: Path, spec: int, stage: str, direkt: list[tuple[str, str]]
+) -> str:
+    """Markdown-Auftrag für die Abnahme-Rundschau einer Spec (#367)."""
+    ziel_html = rundschau_ziel_rel(repo, spec)
+    stage_zeile = stage or "(staging.url fehlt in .to-spawn/config.json)"
+    tickets = _tickets(repo, spec)
+    genutzt: set[int] = set()
+    ticket_bloecke: list[str] = []
+    for nr, titel in tickets:
+        titel_sauber = titel.strip() or "ohne Titel"
+        passend: list[str] = []
+        for idx, (d_titel, d_url) in enumerate(direkt):
+            if re.search(rf"(?<!\d)#{re.escape(nr)}(?!\d)", d_titel) or (
+                titel_sauber.lower() != "ohne titel" and titel_sauber.lower() in d_titel.lower()
+            ):
+                passend.append(f"{d_titel}: {d_url}")
+                genutzt.add(idx)
+        link_text = " · ".join(passend) if passend else (
+            f"{stage} (Route für #{nr} ergänzen)" if stage else "(Direkt-Link in die Staging-App ergänzen)"
+        )
+        if titel_sauber.lower().startswith("abnahme"):
+            ticket_bloecke.extend(
+                [
+                    f"### Ticket #{nr} — {titel_sauber} (Abnahme-Ticket)",
+                    f"- **Direkt-Link in die Staging-App**: {link_text}",
+                    "- **Hinweis**: gehört auf die Pflicht-Folie „Offenes“ (Teil 2, `data-art=\"offenes\"`).",
+                    "",
+                ]
+            )
+        else:
+            ticket_bloecke.extend(
+                [
+                    f"### Ticket #{nr} — {titel_sauber}",
+                    f"- **Direkt-Link in die Staging-App**: {link_text}",
+                    f'- **Pflicht-Folie**: Bild + Klick-Schritte (`data-ticket="{nr}"`)',
+                    "  - **Bild**: echter Screenshot aus Staging (Browser-Blick, mind. 200×120 px)",
+                    "  - **Klick-Schritte**: nummerierte Schrittfolge (`ol.klickschritte`) zum Nachklicken auf Staging",
+                    "",
+                ]
+            )
+    if not ticket_bloecke:
+        ticket_bloecke = ["- (keine Tickets im Manifest gefunden)", ""]
+    weitere = [
+        f"- {d_titel}: {d_url}" for idx, (d_titel, d_url) in enumerate(direkt) if idx not in genutzt
+    ]
+    weitere_block = ["### Weitere Direkt-Links", "", *weitere, ""] if weitere else []
+
+    ent_link = entscheidungen_link(repo, spec)
+    ent_zeilen = entscheidungs_zeilen(repo, spec)
+    if ent_zeilen:
+        ent_block = [
+            "| Ticket | was | warum | Quelle |",
+            "|---|---|---|---|",
+            *ent_zeilen,
+        ]
+    else:
+        ent_block = ["- Keine Entscheidungen in diesem Bau-Verlauf."]
+
+    zeilen = [
+        f"# Rundschau-Auftrag Spec {spec}",
+        "",
+        f"- **Stage-App**: {stage_zeile}",
+        f"- **Ziel-Datei im Repo**: `{ziel_html}` (Pflicht für `abschluss_paket.py ablegen --stand abnahme --rundschau-datei {ziel_html}`)",
+        "- **Aufbau**: Definition allein in `to_spawn/rundschau_deck.py` (Teil 1 Nutzer-Präsentation, Teil 2 Details mit Bild + Klick-Schritten + „Offenes“, Teil 3 Entscheidungs-Zeitstrahl).",
+        "",
+        "## Tickets und Pflicht-Folien (Bild + Klick-Schritte)",
+        "",
+        *ticket_bloecke,
+        *weitere_block,
+        "## Pflicht-Folie „Für dich entschieden“",
+        "",
+        f"Quelle: `{ent_link}`",
+        "",
+        *ent_block,
+        "",
+        "## Abgabe",
+        "",
+        f"1. Rundschau mit Skill `rundschau` und `skripte/rundschau_deck.py erzeugen` bauen und unter `{ziel_html}` im Repo speichern.",
+        f"2. Mit `skripte/abschluss_paket.py ablegen {spec} --stand abnahme … --rundschau-datei {ziel_html}` ablegen (prüft Bild + Klick-Schritte je Bau-Ticket, Entscheidungs-Folie und Repo-Pfad).",
+        "",
+    ]
+    return "\n".join(zeilen)
+
+
+def rundschau_auftrag(argv: list[str]) -> int:
+    """Schreibt den Rundschau-Auftrag einer Spec (#367) und gibt den Dateipfad auf stdout aus."""
+    if _geheimnis_abbruch(argv):
+        return 2
+    ap = argparse.ArgumentParser(
+        description="Rundschau-Auftrag einer Spec (Tickets, Direkt-Links, Pflicht-Folien, Entscheidungen)."
+    )
+    ap.add_argument("spec", type=int)
+    ap.add_argument("--stage", default="", help="Stage-App-Link (Vorgabe: staging.url aus .to-spawn/config.json)")
+    ap.add_argument("--direkt", action="append", default=[], help="Direkt-Link „<Titel>=<url>“ (mehrfach)")
+    ap.add_argument("--repo", type=Path, default=None)
+    ap.add_argument("--aus", type=Path, default=None, help="Ziel-Datei (Vorgabe docs/agents/rundschau_auftrag_<S>.md)")
+    a = ap.parse_args(argv)
+    direkt = _direkt(a.direkt, ap)
+    repo = _repo(a.repo)
+    konfig = config.lade(repo)
+    stage = a.stage.strip() or str((konfig.get("staging") or {}).get("url") or "").strip()
+    # Entscheidungs-Liste sicherstellen, damit die Pflicht-Folie „Für dich entschieden“ vollständig ist (#364/#367).
+    if entscheidungs_daten(repo, a.spec) or not capo.entscheidungs_datei(repo, a.spec).is_file():
+        capo.uebersicht(repo, a.spec, ticket_nummern(repo, a.spec))
+    ziel = a.aus or rundschau_auftrag_pfad(repo, a.spec)
+    ziel.parent.mkdir(parents=True, exist_ok=True)
+    ziel.write_text(rundschau_auftrag_text(repo, a.spec, stage, direkt), encoding="utf-8")
+    log.info("Rundschau-Auftrag geschrieben: %s", ziel)
+    sys.stdout.write(f"{ziel}\n")
+    return 0
+
+
 def ablegen(argv: list[str]) -> int:
     """Paket bauen und ablegen, nicht mailen. Eine schon abgelegte SPEC-FERTIG-Zeit bleibt."""
     if _geheimnis_abbruch(argv):
@@ -390,17 +570,24 @@ def ablegen(argv: list[str]) -> int:
     a = ap.parse_args(argv)
     repo = _repo(a.repo)
     p, neue_form = _paket(a, ap, repo)
+    rel_pfad = ""
+    info: dict[str, Any] = {}
     if a.dry_run:
-        maengel = []
+        maengel: list[str] = []
     elif a.rundschau_datei is None and p.stand == "abnahme" and not a.ohne_rundschau:
-        maengel = ["`--rundschau-datei <html>` fehlt: ohne Rundschau-Deck (drei Teile, #529) keine Abnahme."]
+        maengel = [
+            f"`--rundschau-datei <html>` fehlt: ohne Rundschau-Deck im Repo "
+            f"(z. B. {rundschau_ziel_rel(repo, p.spec)}, #367/#529) keine Abnahme."
+        ]
     elif a.rundschau_datei is not None:
-        maengel = _rundschau_maengel(repo, p.spec, a.rundschau_datei)
+        maengel, rel_pfad, info = _rundschau_pruefen(repo, p.spec, a.rundschau_datei)
     else:
         maengel = []
     if maengel:
         sys.stdout.write("Rundschau nicht bereit zur Abnahme:\n" + "\n".join(f"- {m}" for m in maengel) + "\n")
         return 4
+    if rel_pfad:
+        p = replace(p, rundschau_datei=rel_pfad, rundschau_inhalt=info)
     if a.ohne_rundschau and a.rundschau_datei is None and p.stand == "abnahme":
         p = replace(p, rundschau=f"nicht abnahmebereit (ohne Rundschau-Deck) — {p.rundschau}")
     datei = ablage_pfad(repo, p.spec, p.stand)
@@ -425,13 +612,36 @@ def entscheidungs_daten(repo: Path, spec: int) -> list[dict[str, str]]:
     return briefkasten.liste(sorted(ticket_nummern(repo, spec)), log_repo=repo, hauptbaum=repo)
 
 
+def _rundschau_pruefen(repo: Path, spec: int, datei: Path) -> tuple[list[str], str, dict[str, Any]]:
+    """Prüft Ort im Repo, Aufbau, Entscheidungen, Bilder & Klick-Schritte je Bau-Ticket (#367/#529)."""
+    kandidat = datei if datei.is_absolute() else (repo / datei)
+    if not kandidat.is_file() and not datei.is_absolute() and datei.is_file():
+        kandidat = datei
+    aufgeloest = kandidat.resolve()
+    try:
+        rel = aufgeloest.relative_to(repo.resolve()).as_posix()
+    except ValueError:
+        return (
+            [
+                f"Rundschau-Datei {datei} liegt außerhalb des Repos {repo.name} — "
+                f"im Repo ablegen (z. B. {rundschau_ziel_rel(repo, spec)})."
+            ],
+            "",
+            {},
+        )
+    try:
+        text = aufgeloest.read_text(encoding="utf-8")
+    except OSError as exc:
+        return [f"Rundschau-Datei nicht lesbar: {exc}"], rel, {}
+    bau = [nr for nr, _titel in _bau_tickets(repo, spec)]
+    maengel = rundschau_deck.pruefe(text, entscheidungs_daten(repo, spec), tickets=bau or None)
+    info = rundschau_deck.inhalt(text)
+    return maengel, rel, info
+
+
 def _rundschau_maengel(repo: Path, spec: int, datei: Path) -> list[str]:
     """Prüft die Rundschau-Datei (``rundschau_deck.pruefe``) gegen die Entscheidungen der Spec."""
-    try:
-        text = datei.read_text(encoding="utf-8")
-    except OSError as exc:
-        return [f"Rundschau-Datei nicht lesbar: {exc}"]
-    return rundschau_deck.pruefe(text, entscheidungs_daten(repo, spec))
+    return _rundschau_pruefen(repo, spec, datei)[0]
 
 
 def ticket_nummern(repo: Path, spec: int) -> list[int]:
@@ -508,7 +718,19 @@ def wirkungskreis(repo: Path, spec: int) -> str:
 
 def mail_text(repo: Path, p: Paket, neue_form: bool, konfig: dict[str, Any], system: str, befunde: str) -> str:
     """Die eine Mail: Spec-Teil → System-Teil (Rückblick) → Code-Befunde (Thermo)."""
-    heute = markdown_voll(p) if neue_form else markdown(p.spec, p.stage, p.rundschau, p.tests, p.saetze)
+    heute = (
+        markdown_voll(p)
+        if neue_form
+        else markdown(
+            p.spec,
+            p.stage,
+            p.rundschau,
+            p.tests,
+            p.saetze,
+            rundschau_datei=p.rundschau_datei,
+            rundschau_inhalt=p.rundschau_inhalt,
+        )
+    )
     eintraege = entscheidungs_zeilen(repo, p.spec)
     return "\n".join(
         [
