@@ -19,6 +19,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from . import config
+
 #: Plugin-Kennung in Claude Codes Registry (``<plugin>@<marketplace>``).
 PLUGIN = "context-mode@context-mode"
 #: Server-Name, den Claude Code dem Plugin-MCP gibt → gleiche Werkzeug-Namen. Pflicht, nicht Kür:
@@ -28,8 +30,46 @@ SERVER_NAME = "plugin_context-mode_context-mode"
 #: Einstiegsdatei des MCP-Servers im Plugin-Ordner.
 START = "start.mjs"
 INSTALL_BEFEHL = "claude plugin install context-mode@context-mode"
-#: Claude Codes Konfig-Ordner — ``CLAUDE_CONFIG_DIR`` gilt dort wie hier.
-CLAUDE_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+
+
+def claude_ordner() -> Path:
+    """Claude Codes Konfig-Ordner — ``CLAUDE_CONFIG_DIR`` gilt dort wie hier; erst bei Gebrauch (#212)."""
+    roh = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
+    if roh:
+        return config.expand_heim(roh)
+    return config.heim_ordner() / ".claude"
+
+
+class _LazyClaudeDir(os.PathLike[str]):
+    """Verzögerter Alias auf :func:`claude_ordner` — kein ``Path.home()`` beim Import (#212)."""
+
+    def __fspath__(self) -> str:
+        return os.fspath(claude_ordner())
+
+    def __truediv__(self, other: str | os.PathLike[str]) -> Path:
+        return claude_ordner() / other
+
+    def __eq__(self, other: object) -> bool:
+        return claude_ordner() == other
+
+    def __str__(self) -> str:
+        return str(claude_ordner())
+
+    def __repr__(self) -> str:
+        return f"CLAUDE_DIR({claude_ordner()!r})"
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(claude_ordner(), name)
+
+
+#: Rückwärtskompatibler Alias auf :func:`claude_ordner` (erst bei Gebrauch aufgelöst, #212).
+CLAUDE_DIR: Any = _LazyClaudeDir()
+
+
+def _ziel_ordner(claude_dir: Path | None) -> Path:
+    if claude_dir is not None:
+        return claude_dir
+    return claude_ordner() if isinstance(CLAUDE_DIR, _LazyClaudeDir) else CLAUDE_DIR
 
 
 class ContextModeFehlt(RuntimeError):
@@ -95,7 +135,7 @@ def _aus_cache(claude_dir: Path) -> Path | None:
 
 def plugin_wurzel(claude_dir: Path | None = None) -> Path | None:
     """Ordner des installierten Plugins (mit ``start.mjs``) oder None."""
-    ordner = claude_dir or CLAUDE_DIR
+    ordner = _ziel_ordner(claude_dir)
     return _aus_registry(ordner) or _aus_cache(ordner)
 
 
@@ -127,7 +167,7 @@ def pruefen(claude_dir: Path | None = None, streng: bool = False) -> Path:
     ``enabledPlugins`` nicht abgeschaltet sein. ``bau.py`` schreibt den Server selbst und
     braucht nur die Dateien.
     """
-    ordner = claude_dir or CLAUDE_DIR
+    ordner = _ziel_ordner(claude_dir)
     wurzel = plugin_wurzel(ordner)
     if wurzel is None:
         raise ContextModeFehlt(

@@ -976,7 +976,7 @@ def richte_parser_ein(unter: Any) -> None:
     nest_unter = p_nest.add_subparsers(dest="nest_befehl", required=True)
 
     p_on = nest_unter.add_parser("onboarding", help="~/.claude.json: Erststart + Vertrauen")
-    p_on.add_argument("--claude-json", type=Path, default=Path.home() / ".claude.json")
+    p_on.add_argument("--claude-json", type=Path, default=None, help="Vorgabe: ~/.claude.json")
     p_on.add_argument("--trust", action="append", default=[], help="Ordner (mehrfach)")
     p_on.add_argument("--theme", default="dark")
     p_on.add_argument("--kanal", default="terminal_bell", help="preferredNotifChannel")
@@ -1006,7 +1006,7 @@ def richte_parser_ein(unter: Any) -> None:
 
     p_mi = nest_unter.add_parser("mcp-import", help="MCP-Einträge in ~/.claude.json mischen")
     p_mi.add_argument("--quelle", type=Path, required=True)
-    p_mi.add_argument("--claude-json", type=Path, default=Path.home() / ".claude.json")
+    p_mi.add_argument("--claude-json", type=Path, default=None, help="Vorgabe: ~/.claude.json")
 
     p_aw = nest_unter.add_parser("auswahl", help="Namen für nest_push.sh")
     p_aw.add_argument("--art", choices=["skill", "mcp"], required=True)
@@ -1015,12 +1015,21 @@ def richte_parser_ein(unter: Any) -> None:
 
 def lauf(args: argparse.Namespace) -> int:
     """Führt ``to_spawn.py nest <unterbefehl>`` aus."""
-    heim = Path(os.environ.get("HOME") or Path.home())
     befehl = args.nest_befehl
     try:
         if befehl == "onboarding":
-            setze_onboarding(args.claude_json, list(args.trust), args.theme, args.kanal)
+            datei = args.claude_json or (config.heim_ordner() / ".claude.json")
+            setze_onboarding(datei, list(args.trust), args.theme, args.kanal)
             return 0
+        if befehl == "einstellungen":
+            uebernehme_einstellungen(args.quelle, args.ziel)
+            return 0
+        if befehl == "mcp-import":
+            datei = args.claude_json or (config.heim_ordner() / ".claude.json")
+            dazu = mcp_import(args.quelle, datei)
+            print(f"MCPs neu eingetragen: {', '.join(dazu) or '—'} (vorhandene bleiben)")
+            return 0
+        heim = config.heim_ordner()
         if befehl == "sandbox":
             repo = (args.repo or config.repo_wurzel()).resolve()
             git_hooks_einrichten(repo)
@@ -1042,16 +1051,9 @@ def lauf(args: argparse.Namespace) -> int:
             )
             print(bericht.text())
             return bericht.exit_code
-        if befehl == "einstellungen":
-            uebernehme_einstellungen(args.quelle, args.ziel)
-            return 0
         if befehl == "mcp-export":
             namen = mcp_export(heim / ".claude.json", list(args.namen), args.ziel)
             print(f"MCPs vorbereitet: {', '.join(namen) or '—'} (Schlüssel bleiben verdeckt)")
-            return 0
-        if befehl == "mcp-import":
-            dazu = mcp_import(args.quelle, args.claude_json)
-            print(f"MCPs neu eingetragen: {', '.join(dazu) or '—'} (vorhandene bleiben)")
             return 0
         if befehl == "auswahl":
             repo = (args.repo or config.repo_wurzel()).resolve()

@@ -40,7 +40,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from to_spawn import cli_befehle, cli_parser
+from to_spawn import cli_befehle, cli_parser, config
 
 ARGUMENTFEHLER_EXIT = cli_parser.ARGUMENTFEHLER_EXIT
 
@@ -52,7 +52,11 @@ def main(argv: list[str] | None = None) -> int:
             strom.reconfigure(encoding="utf-8", errors="replace")
     ap = cli_parser.baue_parser()
     args = ap.parse_args(argv)
-    return cli_befehle.verteilen(ap, args)
+    try:
+        return cli_befehle.verteilen(ap, args)
+    except config.KeinHeimOrdner as fehler:
+        print(f"FEHLER: {fehler}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

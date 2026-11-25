@@ -227,12 +227,63 @@ def repo_wurzel(start: Path | None = None) -> Path:
     return pfad
 
 
+class KeinHeimOrdner(RuntimeError):
+    """Heimat-Ordner nicht bestimmbar (weder ``HOME`` noch ``USERPROFILE`` gesetzt, #212)."""
+
+
+def heim_ordner() -> Path:
+    """Heimat-Ordner erst bei Gebrauch bestimmen — eine Tür für Windows und Linux (#212).
+
+    Liest die Umgebung (Windows: ``USERPROFILE``, ``HOMEDRIVE``+``HOMEPATH``, ``HOME``;
+    Linux/macOS: ``HOME``, ``USERPROFILE``). Fehlt alles, wirft :class:`KeinHeimOrdner`
+    mit verständlicher Meldung — Windows und Linux gleich (kein Absturz beim Import und
+    kein stiller Rückfall auf ``/etc/passwd``).
+    """
+    if sys.platform == "win32":
+        laufwerk_pfad = (
+            os.environ.get("HOMEDRIVE", "").strip() + os.environ.get("HOMEPATH", "").strip()
+            if os.environ.get("HOMEPATH", "").strip()
+            else ""
+        )
+        kandidaten = (
+            os.environ.get("USERPROFILE", "").strip(),
+            laufwerk_pfad,
+            os.environ.get("HOME", "").strip(),
+        )
+    else:
+        kandidaten = (
+            os.environ.get("HOME", "").strip(),
+            os.environ.get("USERPROFILE", "").strip(),
+        )
+    for wert in kandidaten:
+        if wert:
+            return Path(wert)
+    raise KeinHeimOrdner(
+        "Heimat-Ordner nicht bestimmbar: weder HOME noch USERPROFILE in der Umgebung gesetzt."
+    )
+
+
+def expand_heim(pfad: str | Path) -> Path:
+    """Löst führendes ``~`` / ``~/…`` über die eine Tür :func:`heim_ordner` auf (#212)."""
+    text = os.fspath(pfad)
+    if text == "~":
+        return heim_ordner()
+    if text.startswith(("~/", "~\\")):
+        return heim_ordner() / text[2:]
+    if text.startswith("~"):
+        return Path(text).expanduser()
+    return Path(text)
+
+
 def notiz_tresor() -> Path:
     """Ort des privaten Notiz-Tresors (Obsidian-Vault): ``$OBSIDIAN_VAULT``, sonst ``~/obsidian`` (#365).
 
     Einzige Quelle für :mod:`to_spawn.uebergabe_sichern` und :mod:`to_spawn.befugnis`.
     """
-    return Path(os.environ.get("OBSIDIAN_VAULT") or "~/obsidian").expanduser()
+    roh = os.environ.get("OBSIDIAN_VAULT", "").strip()
+    if roh:
+        return expand_heim(roh)
+    return heim_ordner() / "obsidian"
 
 
 def worktree_pfad(ticket: str | int, repo: Path | None = None) -> str:
@@ -654,8 +705,8 @@ def maschine_datei() -> Path:
     """Ort der Maschinen-Liste: ``TO_SPAWN_MASCHINE``, sonst ``~/.config/to-spawn/maschine.json``."""
     roh = os.environ.get("TO_SPAWN_MASCHINE")
     if roh:
-        return Path(roh).expanduser()
-    return Path.home() / ".config" / "to-spawn" / "maschine.json"
+        return expand_heim(roh)
+    return heim_ordner() / ".config" / "to-spawn" / "maschine.json"
 
 
 def _repo_eintrag(roh: Any) -> dict[str, str] | None:
