@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from to_spawn import anleitung, befugnis, config, hausmeister, nest, temp_ordner
+from to_spawn import anleitung, befugnis, config, hausmeister, hausmeister_windows, nest, temp_ordner
 from to_spawn.pruef import ausfuehren
 
 SKILL = Path(__file__).resolve().parent.parent
@@ -381,7 +381,11 @@ def test_ungesicherte_git_repos_und_gefaelschter_remote_ref_bleiben(
     weg_quelle = _quelle_anlegen(tmp_path / "weg-remote")
     ohne_server = wurzel / "t1006"
     _git(tmp_path, "clone", "-q", str(weg_quelle), str(ohne_server))
-    shutil.rmtree(weg_quelle)
+    # Windows setzt Schreibschutz auf .git/objects — denselben Handler wie im Hausmeister nutzen.
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(weg_quelle, onexc=hausmeister_windows.schreibschutz_weg)
+    else:
+        shutil.rmtree(weg_quelle, onerror=hausmeister_windows.schreibschutz_weg)
 
     # 5. Stash
     stash = klon("t1007")

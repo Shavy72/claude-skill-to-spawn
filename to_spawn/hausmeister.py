@@ -2472,6 +2472,26 @@ def helfer_ordner_loeschen(ort: Path, name: str) -> bool:
     return True
 
 
+def temp_ordner_loeschen(ordner: Path) -> None:
+    """Entfernt einen geprüften Temp-Rest (#136): verknüpfte Worktrees sauber über Git,
+    sonst über :func:`_loeschen` (mit Windows-Schreibschutz-Behandlung).
+
+    Die Prüfregeln liegen in :mod:`to_spawn.temp_ordner`; die eigentliche Löschung bleibt
+    allein hier, damit es im gesamten Skill genau eine Lösch-Stelle gibt.
+    """
+    git_marke = ordner / ".git"
+    if git_marke.is_file() and not git_marke.is_symlink():
+        try:
+            haupt = _hauptrepo(ordner)
+        except RuntimeError:
+            haupt = None
+        if haupt is not None and _als_worktree_eingetragen(haupt, ordner):
+            aufpasser.git_lauf(haupt, "worktree", "remove", "--force", str(ordner))
+            aufpasser.git_lauf(haupt, "worktree", "prune")
+            return
+    _loeschen(ordner, False)
+
+
 def altbestand_pfad() -> Path:
     """Liste des Laptop-Altbestands (E16), neben dem Hausmeister-Log."""
     return _log_pfad().parent / "altbestand.json"

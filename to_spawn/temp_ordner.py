@@ -355,7 +355,7 @@ def _weg(ordner: Path, wurzel: Path, ticket: int, grund: str, jetzt: float) -> s
     if not hm._log_schreiben(hm.Ergebnis(ordner, "gelöscht", grund, ticket, trocken=False)):
         return "bleibt: Hausmeister-Log nicht schreibbar — ohne Log kein Löschen"
     try:
-        _entfernen(ordner)
+        hm.temp_ordner_loeschen(ordner)
     except (RuntimeError, OSError) as fehler:
         log.warning("Temp-Rest %s: Löschen gescheitert (%s)", ordner, fehler)
         meldung = f"Löschen gescheitert: {fehler}"
@@ -363,20 +363,3 @@ def _weg(ordner: Path, wurzel: Path, ticket: int, grund: str, jetzt: float) -> s
         return f"bleibt: {meldung}"
     log.info("Temp-Rest gelöscht: %s (#%s)", ordner, ticket)
     return grund
-
-
-def _entfernen(ordner: Path) -> None:
-    """Entfernt ``ordner`` über den Hausmeister; verknüpfte Worktrees sauber über ``worktree remove``."""
-    from . import hausmeister as hm
-
-    git_marke = ordner / ".git"
-    if git_marke.is_file() and not git_marke.is_symlink():
-        try:
-            haupt = hm._hauptrepo(ordner)
-        except RuntimeError:
-            haupt = None
-        if haupt is not None and hm._als_worktree_eingetragen(haupt, ordner):
-            aufpasser.git_lauf(haupt, "worktree", "remove", "--force", str(ordner))
-            aufpasser.git_lauf(haupt, "worktree", "prune")
-            return
-    hm._loeschen(ordner, False)
