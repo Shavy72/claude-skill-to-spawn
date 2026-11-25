@@ -51,6 +51,7 @@ from to_spawn import (
     config,
     context_mode,
     gh,
+    konsole,
     nest,
     probesitz,
     prozessbaum,
@@ -251,8 +252,7 @@ def ticket_from_gh(ticket: str) -> tuple[str, str | None]:
     proc = subprocess.run(
         [gh, "issue", "view", ticket, "--json", "title,body"],
         capture_output=True,
-        text=True,
-        encoding="utf-8",
+        **konsole.UNTERPROZESS_DATEN,
         check=False,
         **prozessbaum.fensterlos(),
     )
@@ -279,7 +279,7 @@ def repo_aus_origin(fallback: str = "", repo: Path | None = None) -> str:
             ["git", "remote", "get-url", "origin"],
             cwd=str(repo or REPO),
             capture_output=True,
-            text=True,
+            **konsole.UNTERPROZESS_TEXT,
             check=False,
             **prozessbaum.fensterlos(),
         ).stdout.strip()
@@ -321,7 +321,9 @@ GH_REPO = repo_aus_origin("") or os.environ.get("TO_SPAWN_GH_REPO", "").strip()
 
 
 def _gh_json(gh: str, *args: str) -> object | None:
-    proc = subprocess.run([gh, *args], capture_output=True, text=True, encoding="utf-8", check=False, **prozessbaum.fensterlos())
+    proc = subprocess.run(
+        [gh, *args], capture_output=True, **konsole.UNTERPROZESS_DATEN, check=False, **prozessbaum.fensterlos()
+    )
     if proc.returncode != 0:
         log.warning("gh %s: %s", " ".join(args[:3]), proc.stderr.strip()[:200])
         return None
@@ -863,9 +865,7 @@ def _git_lauf(*args: str) -> subprocess.CompletedProcess[str]:
         ["git", *args],
         cwd=REPO,
         capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
+        **konsole.UNTERPROZESS_TEXT,
         check=False,
         **prozessbaum.fensterlos(),
     )

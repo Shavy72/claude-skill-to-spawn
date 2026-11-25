@@ -40,7 +40,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from to_spawn import bash_wahl, config, gh, prozessbaum
+from to_spawn import bash_wahl, config, gh, konsole, prozessbaum
 from to_spawn.manifest import manifest_im_repo, manifest_pfad
 
 log = logging.getLogger("to_spawn.startklar")
@@ -175,9 +175,7 @@ def _standard_laeufer(
         cwd=str(cwd),
         input=eingabe,
         capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
+        **konsole.UNTERPROZESS_TEXT,
         timeout=timeout,
         env={**os.environ, **zusatz},
     )
@@ -205,7 +203,7 @@ def _git_lauf(ordner: Path, *args: str) -> subprocess.CompletedProcess[str] | No
             ["git", *args],
             cwd=str(ordner),
             capture_output=True,
-            text=True,
+            **konsole.UNTERPROZESS_PFADE,
             timeout=GIT_TIMEOUT_S,
             check=False,
             **prozessbaum.fensterlos(),
@@ -303,7 +301,12 @@ def _ausfuehren(
     """Führt ``argv`` aus; gibt bei Fehler den (geschwärzten) Grund zurück, sonst ``None``."""
     try:
         ergebnis = subprocess.run(
-            list(argv), capture_output=True, text=True, timeout=timeout, check=False, **prozessbaum.fensterlos()
+            list(argv),
+            capture_output=True,
+            **konsole.UNTERPROZESS_TEXT,
+            timeout=timeout,
+            check=False,
+            **prozessbaum.fensterlos(),
         )
     except (OSError, subprocess.TimeoutExpired) as fehler:
         return _kurz(_schwaerzen(str(fehler), geheim))
@@ -355,7 +358,7 @@ def _fehlende_pakete(
         ergebnis = subprocess.run(
             [str(python), "-c", _PAKET_PROBE, *namen],
             capture_output=True,
-            text=True,
+            **konsole.UNTERPROZESS_TEXT,
             timeout=INTERPRETER_TIMEOUT_S,
             check=False,
             **prozessbaum.fensterlos(),

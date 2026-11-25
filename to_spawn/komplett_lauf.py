@@ -65,6 +65,7 @@ from to_spawn import (
     arbeitsstand,
     bau_log,
     config,
+    konsole,
     manifest,
     prozessbaum,
     pruefplan,
@@ -213,13 +214,7 @@ def lies_merker(klon: Path, spec: int) -> Merker | None:
 
 def _git(klon: Path, *args: str) -> subprocess.CompletedProcess[str] | None:
     try:
-        return subprocess.run(
-            ["git", "-C", str(klon), *args],
-            capture_output=True,
-            text=True,
-            check=False,
-            **prozessbaum.fensterlos(),
-        )
+        return konsole.lauf_daten(["git", "-C", str(klon), *args], check=False)
     except OSError as fehler:
         log.warning("komplett_lauf: git fehlt: %s", fehler)
         return None

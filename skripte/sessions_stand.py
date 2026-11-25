@@ -101,8 +101,7 @@ def prozesse_linux() -> list[Prozess]:
     out = subprocess.run(
         ["ps", "-ww", "-eo", "pid,ppid,lstart,comm,args", "--no-headers"],
         capture_output=True,
-        text=True,
-        errors="replace",
+        **konsole.UNTERPROZESS_TEXT,
         check=False,
         env={**os.environ, "LC_ALL": "C"},
         **prozessbaum.fensterlos(),
@@ -133,9 +132,7 @@ def prozesse_lesen() -> list[Prozess]:
     out = subprocess.run(
         ["powershell", "-NoProfile", "-Command", ps],
         capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
+        **konsole.UNTERPROZESS_TEXT,
         check=False,
         # Aus Takt/Leitstand ohne Konsole gestartet: sonst öffnet PowerShell je Aufruf ein Fenster.
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),

@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO
 
-from . import config, context_mode, probesitz, prozessbaum
+from . import config, context_mode, konsole, probesitz, prozessbaum
 
 log = logging.getLogger("to_spawn.setup")
 
@@ -150,7 +150,12 @@ def pruefe_start(programm: str, pfad: str) -> str | None:
         return None
     try:
         ergebnis = subprocess.run(
-            [pfad, arg], capture_output=True, text=True, timeout=5, check=False, **prozessbaum.fensterlos()
+            [pfad, arg],
+            capture_output=True,
+            **konsole.UNTERPROZESS_TEXT,
+            timeout=5,
+            check=False,
+            **prozessbaum.fensterlos(),
         )
     except (OSError, subprocess.SubprocessError) as fehler:
         return f"{programm} {arg} startet nicht: {fehler}"
