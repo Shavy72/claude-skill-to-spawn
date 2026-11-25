@@ -485,8 +485,9 @@ def _rm_treffer(b: str) -> re.Match[str] | None:
 def _push_treffer(b: str) -> re.Match[str] | None:
     """Jeder ``git push`` außer einem ausdrücklichen Push auf ``ticket/`` oder ``wip/`` (#383).
 
-    Bloßes ``git push``, ``HEAD``, ``--all``/``--mirror``/``--tags``/``--delete``, ``:ref`` (löschen),
-    ``+ref`` (erzwingen) und jedes fremde Ziel (inkl. ``main``/``master``) sind Klasse 2.
+    Ohne Ziel oder mit ``HEAD``, Lösch- oder Sammel-Schaltern (``--all``/``--mirror``/``--tags``/
+    ``--delete``/``-d``), ``:ref`` (löschen), ``+ref`` (erzwingen) und jedem fremden Ziel (inkl.
+    ``main``/``master``) ist der Aufruf Klasse 2.
     """
     for m in _PUSH.finditer(b):
         teile = re.split(r"\s+\d*[<>]", m.group(1))[0].split()  # Umleitung „2>…“ gehört nicht dazu
