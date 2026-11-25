@@ -38,14 +38,26 @@ log = logging.getLogger("to_spawn.pruef.pipeline_vorlage")
 #: Verbotenes Cache-Plugin für Stufe 1 (dynamisch zusammengesetzt, damit der Produktivcode sauber bleibt).
 _VERBOTENES_PLUGIN = "test" + "mon"
 
+#: Gemeinsame Kopf-Doku aller Pipeline-Vorlagen (#581, #797): Zielbild und klare Rolle des Bau-Servers.
+KOPF_DOKU_ZEILEN: tuple[str, ...] = (
+    "Zielbild der Pipeline-Vorlage (#581, #797):",
+    "- Triage neuer Befunde und Tickets vor dem Bau.",
+    "- Risikoarme Fixes gehen bei grüner CI automatisch durch.",
+    "- Restliche Änderungen gehen nur per Beweis (Prüf-Beleg / Freigabe) weiter.",
+    "- Nächtliche Audits (Stufe 3 / Nachtrunde) prüfen Qualität, Wackler und Mutationen.",
+    "Rolle des Bau-Servers:",
+    "- Ausschließlich Claude-Sessions und 'braucht Server'-Tests (@pytest.mark.braucht('server') / braucht_server).",
+    "- Alle übrigen Tests und Stufe-2-Komplettläufe laufen verteilt auf GitHub Actions (>= 2 Runner).",
+)
+
 
 @dataclass(frozen=True)
 class Eingabe:
-    """Eine dokumentierte Eingabe der ``workflow_call``-Vorlage Stufe 0+1."""
+    """Eine dokumentierte Eingabe einer ``workflow_call``-Vorlage."""
 
     name: str
     typ: str
-    vorgabe: str | bool
+    vorgabe: str | bool | int
     beschreibung: str
 
 
@@ -181,10 +193,17 @@ class Stufe1Ergebnis:
         return "\n".join(zeilen)
 
 
-def _yaml_skalar(wert: str | bool) -> str:
+def _yaml_skalar(wert: str | bool | int) -> str:
     if isinstance(wert, bool):
         return "true" if wert else "false"
+    if isinstance(wert, int):
+        return str(wert)
     return json.dumps(wert, ensure_ascii=False)
+
+
+def kopf_doku_kommentar() -> str:
+    """Rendert :data:`KOPF_DOKU_ZEILEN` als YAML-Kopf-Kommentar (eine Stelle für alle Stufen)."""
+    return "".join(f"# {zeile}\n" for zeile in KOPF_DOKU_ZEILEN)
 
 
 def vorlage_yaml() -> str:
@@ -203,6 +222,7 @@ def vorlage_yaml() -> str:
     eingaben_block = "\n".join(eingabe_zeilen)
     return (
         "# Wiederverwendbare Pipeline-Vorlage Stufe 0+1 (#580, #796).\n"
+        f"{kopf_doku_kommentar()}"
         "# Stufe 0: ruff, konfigurierbare Typ-Prüfung und AST-Diff-Test-Schutz.\n"
         "# Stufe 1: Ersatz-Lauf der statischen AST-Import-Graph-Testauswahl auf GitHub Actions.\n"
         "name: Pipeline Stufe 0+1\n"
@@ -670,6 +690,7 @@ def _parser() -> argparse.ArgumentParser:
     p1.add_argument("--json", dest="als_json", action="store_true", help="Ergebnis als JSON ausgeben")
 
     pv = unter.add_parser("vorlage", help="workflow_call-Vorlage oder Eigenanschluss ausgeben bzw. prüfen.")
+    pv.add_argument("--stufe", choices=("0-1", "2"), default="0-1", help="Zielstufe der Vorlage (Standard: 0-1)")
     pv.add_argument("--eigenanschluss", action="store_true", help="Eigenanschluss-Workflow statt Vorlage ausgeben")
     pv.add_argument("--ausgabe", type=Path, default=None, help="Zieldatei zum Schreiben der Vorlage")
     pv.add_argument("--pruefen", type=Path, default=None, help="Bestehende YAML-Vorlage gegen Vertrag prüfen")
@@ -683,6 +704,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
 
     if args.befehl == "vorlage":
+        if args.stufe == "2":
+            from to_spawn.pruef import pipeline_stufe2
+
+            weiter: list[str] = ["vorlage"]
+            if args.eigenanschluss:
+                weiter.append("--eigenanschluss")
+            if args.ausgabe is not None:
+                weiter.extend(["--ausgabe", str(args.ausgabe)])
+            if args.pruefen is not None:
+                weiter.extend(["--pruefen", str(args.pruefen)])
+            return pipeline_stufe2.main(weiter)
         if args.pruefen is not None:
             if not args.pruefen.is_file():
                 sys.stderr.write(f"Vorlage fehlt: {args.pruefen}\n")
