@@ -177,7 +177,7 @@ def wartende_nachstarten(
         if not tickets:
             schlafen(NACHSTART_TAKT_S if takt_s is None else takt_s)
             continue
-        umgebung = dict(os.environ if env is None else env, TO_SPAWN_REPO=str(repo))
+        umgebung = dict(os.environ if env is None else env, TO_SPAWN_REPO=str(repo), TO_SPAWN_NACHSTART="1")
         laeufe += 1
         try:
             lauf = bash_wahl.lauf(

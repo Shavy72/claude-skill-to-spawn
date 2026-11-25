@@ -286,15 +286,35 @@ def _ohne_log_repo(hook: str) -> None:
 def _starte_takt(repo: Path, ticket: str) -> None:
     """Nach ``session_ende`` den Aufseher-Takt der Spec abgelöst starten (#316).
 
-    Spec aus ``TO_SPAWN_SPEC`` (setzt ``bau.py``); ohne Spec nichts. Fehler nur loggen.
+    Spec aus ``TO_SPAWN_SPEC`` (setzt ``bau.py``); ohne Spec nichts. Bei ``--ohne-wache``
+    oder fremdem Rechner laut gespeicherter Auswahl wird kein Takt ausgelöst (#271).
+    Fehler nur loggen.
     """
     spec = os.environ.get("TO_SPAWN_SPEC", "").strip()
     if not spec.isdigit():
         return
     try:
-        from . import waechter_takt
+        from . import auswahl, waechter_takt
 
         ziel = Path(os.environ["TO_SPAWN_REPO"]) if os.environ.get("TO_SPAWN_REPO") else repo
+        stand_auswahl = auswahl.lesen(ziel, int(spec))
+        if not auswahl.wache_erlaubt(ziel, int(spec), auswahl=stand_auswahl, gelesen=True):
+            log.info(
+                "Aufseher-Takt #%s unterdrückt: laut Auswahl hier keine Wache (%s).",
+                spec,
+                auswahl.beschreibung(stand_auswahl),
+            )
+            return
+        if ticket.isdigit() and not auswahl.ticket_erlaubt(
+            ziel, int(spec), int(ticket), auswahl=stand_auswahl, gelesen=True
+        ):
+            log.info(
+                "Aufseher-Takt #%s unterdrückt: Ticket #%s außerhalb der Auswahl (%s).",
+                spec,
+                ticket,
+                auswahl.beschreibung(stand_auswahl),
+            )
+            return
         waechter_takt.starte_abgeloest(int(spec), ziel, f"session_ende #{ticket}")
     except Exception:  # noqa: BLE001 — der Hook darf die Bau-Session nie stören
         log.exception("Aufseher-Takt #%s nicht gestartet — Session läuft weiter.", spec)

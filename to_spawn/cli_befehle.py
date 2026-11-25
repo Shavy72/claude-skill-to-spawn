@@ -18,6 +18,7 @@ from to_spawn import (
     arbeitsstand,
     aufpasser,
     aufseher_stand,
+    auswahl,
     bau_log,
     befund,
     briefkasten,
@@ -590,6 +591,9 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
             sitzung=args.sitzung,
         )
 
+    if args.befehl == "auswahl":
+        return auswahl.lauf(args, _repo_aus_umgebung() or config.repo_wurzel())
+
     repo = config.repo_wurzel()
     if args.befehl == "inventur":
         # Nur lesen: legt keine Konfig an (kein config.sicherstellen).
@@ -635,6 +639,7 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
             konfig,
             ziel=args.ziel,
             tickets=_tickets(args.tickets),
+            ohne_wache=args.ohne_wache,
             dry_run=args.dry_run,
         )
     if args.befehl == "respawn":

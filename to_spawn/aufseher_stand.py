@@ -64,6 +64,7 @@ from typing import Any, Literal, NamedTuple
 
 from to_spawn import (
     aufpasser,
+    auswahl,
     bau_log,
     befugnis,
     briefkasten,
@@ -540,6 +541,9 @@ def sammeln(spec: int, q: Quellen, vorher: _Vorher) -> _Ergebnis:
         raise RuntimeError(f"Sub-Issues von Spec #{spec} nicht lesbar (gh)")
     if not kinder:
         raise RuntimeError(f"Spec #{spec} hat keine Sub-Issues — Spec-Nummer prüfen (gh)")
+    auswahl_stand = auswahl.lesen(q.repo, spec)
+    if auswahl_stand is not None:
+        kinder = auswahl.filtere_issues(kinder, auswahl_stand)
     jetzt = q.jetzt()
     fenster = None if q.pc_still else _fenster_liste(spec, q.tmux)
     lagen: list[TicketLage] = []
