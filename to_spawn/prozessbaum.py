@@ -27,6 +27,7 @@ import sys
 import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path, PureWindowsPath
 from typing import Any, NamedTuple
 
@@ -1048,6 +1049,39 @@ class ArbeitsordnerBefund(NamedTuple):
     grund: str = ""  #: bei ``None``: warum
 
 
+class _ArbeitsordnerEintrag(NamedTuple):
+    """Zwischengespeicherter Prozess-Befund (Kennung + End-Pfad) für einen Lauf (#259)."""
+
+    text: str | None
+    kennung: tuple[int, int] | None
+    endpfad: str | None
+    grund: str = ""
+    endpfad_fehler: OSError | None = None
+
+
+#: Lauf-Zwischenspeicher für :func:`arbeitsordner_in_windows` (gesetzt über :func:`arbeitsordner_lauf_cache`).
+#: ``None`` = kein Cache aktiv (jeder Aufruf liest frisch); nie über Läufe hinweg.
+_ARBEITSORDNER_CACHE: ContextVar[dict[str, dict[int, _ArbeitsordnerEintrag]] | None] = ContextVar(
+    "prozessbaum_arbeitsordner_cache",
+    default=None,
+)
+
+
+@contextmanager
+def arbeitsordner_lauf_cache(*, aktiv: bool = True) -> Iterator[None]:
+    """Aktiviert (``aktiv=True``) oder pausiert (``aktiv=False``, z. B. für Gegenproben)
+    den Lauf-Zwischenspeicher für :func:`arbeitsordner_in_windows` (#259).
+
+    Kennung und End-Pfad je Prozess werden beim ersten Aufruf im Lauf einmal ermittelt und
+    für weitere Zielordner desselben Laufs wiederverwendet. Gilt nur innerhalb des Blocks.
+    """
+    token = _ARBEITSORDNER_CACHE.set({} if aktiv else None)
+    try:
+        yield
+    finally:
+        _ARBEITSORDNER_CACHE.reset(token)
+
+
 def _kennung(griff: int) -> tuple[int, int]:
     """(Volume-Seriennummer, Datei-Index) eines offenen Ordner-Griffs; kein Ordner, kein
     Datei-Griff oder Fehler = ``OSError``. Braucht keine Zugriffsrechte am Griff (der
@@ -1113,16 +1147,28 @@ def _ordner_von(pfad: str) -> tuple[tuple[int, int], str]:
         kernel.CloseHandle(griff)
 
 
-def _liegt_darin(griff: int, ziel: tuple[tuple[int, int], str], kennungen: dict[str, tuple[int, int]]) -> bool:
-    r"""Ist der Ordner hinter ``griff`` das Ziel (Kennung, End-Pfad aus :func:`_ordner_von`) oder
-    liegt er darin? Gleiche Kennung ⇒ ja. Beide End-Pfade lokal ⇒ je Pfad-Teil, Groß/Klein egal
+def _liegt_darin_daten(
+    kennung: tuple[int, int],
+    endpfad: str | None,
+    ziel: tuple[tuple[int, int], str],
+    kennungen: dict[str, tuple[int, int]],
+    *,
+    endpfad_fehler: OSError | None = None,
+) -> bool:
+    r"""Prüft ``(kennung, endpfad)`` eines offenen Ordner-Griffs gegen ``ziel`` (Kennung, End-Pfad).
+
+    Gleiche Kennung ⇒ ja. Beide End-Pfade lokal ⇒ je Pfad-Teil, Groß/Klein egal
     (End-Pfade sind kanonisch; so muss kein Eltern-Ordner geöffnet werden — ``WindowsApps``
     etwa verweigert das). Sonst (Netz-Form, z. B. ``\\localhost\C$``: gleicher Ordner, anderer
     Text) werden die echten Eltern geöffnet und per Kennung verglichen. ``kennungen`` =
     Zwischenspeicher Eltern-Pfad → Kennung; Fehler = ``OSError``."""
-    if _kennung(griff) == ziel[0]:
+    if kennung == ziel[0]:
         return True
-    teile, wurzel = _pfad_teile(_endpfad(griff))
+    if endpfad is None:
+        if endpfad_fehler is not None:
+            raise endpfad_fehler
+        raise OSError("End-Pfad des Arbeitsordners nicht lesbar")
+    teile, wurzel = _pfad_teile(endpfad)
     ziel_teile, ziel_wurzel = _pfad_teile(ziel[1])
     if wurzel == ziel_wurzel == 4:
         return [t.casefold() for t in teile[: len(ziel_teile)]] == [t.casefold() for t in ziel_teile]
@@ -1133,6 +1179,15 @@ def _liegt_darin(griff: int, ziel: tuple[tuple[int, int], str], kennungen: dict[
         if kennungen[pfad] == ziel[0]:
             return True
     return False
+
+
+def _liegt_darin(griff: int, ziel: tuple[tuple[int, int], str], kennungen: dict[str, tuple[int, int]]) -> bool:
+    r"""Ist der Ordner hinter ``griff`` das Ziel (Kennung, End-Pfad aus :func:`_ordner_von`) oder
+    liegt er darin? Siehe :func:`_liegt_darin_daten`."""
+    kennung = _kennung(griff)
+    if kennung == ziel[0]:
+        return True
+    return _liegt_darin_daten(kennung, _endpfad(griff), ziel, kennungen)
 
 
 def _arbeitsordner_griff_windows(pid: int) -> int | None:
@@ -1228,6 +1283,91 @@ def _arbeitsordner_drin(
         kernel.CloseHandle(griff)
 
 
+def _arbeitsordner_kennung_endpfad(pid: int) -> tuple[tuple[int, int], str | None, OSError | None] | None:
+    """(Kennung, End-Pfad, End-Pfad-Fehler) der echten cwd von ``pid``; ``None`` = Prozess weg.
+
+    Der übernommene Griff wird immer geschlossen. Scheitert nur :func:`_endpfad`, bleiben
+    Kennung und Fehler erhalten: direkte Treffer erkennen den Ordner weiter, andere Ziele
+    werten fail-closed aus (#259)."""
+    kernel, _ = _win32()
+    griff = _arbeitsordner_griff_windows(pid)
+    if griff is None:
+        return None
+    try:
+        kennung = _kennung(griff)
+        try:
+            return kennung, _endpfad(griff), None
+        except OSError as fehler:
+            return kennung, None, fehler
+    finally:
+        kernel.CloseHandle(griff)
+
+
+def _arbeitsordner_momentaufnahme_windows() -> dict[int, _ArbeitsordnerEintrag]:
+    """Liest Text, Kennung und End-Pfad der cwd aller prüfbaren Prozesse einmalig für
+    :func:`arbeitsordner_lauf_cache` (#259)."""
+    eintraege: dict[int, _ArbeitsordnerEintrag] = {}
+    for pid in _momentaufnahme_windows():
+        if pid in (0, 4):  # Leerlauf- und System-Prozess: kein Benutzer-PEB
+            continue
+        try:
+            text = _arbeitsordner_windows(pid)
+        except OSError as fehler:
+            log.debug("cwd von Prozess %s unlesbar: %s", pid, fehler)
+            if _ist_weg_windows(pid):
+                continue  # während der Prüfung verschwunden oder beendet (#654)
+            if not isinstance(fehler, (_LeereCwd, _MsysZugriffVerweigert)) and _ist_fremd_windows(pid):
+                continue  # fremder Benutzer: wie nicht zu öffnen (#243, #552)
+            eintraege[pid] = _ArbeitsordnerEintrag(None, None, None, f"cwd unlesbar: {fehler}")
+            continue
+        if text is None:
+            continue  # nicht prüfbar (Grenze aus #243) oder schon beendet
+        try:
+            daten = _arbeitsordner_kennung_endpfad(pid)
+        except OSError as fehler:
+            log.debug("cwd-Ordner von Prozess %s nicht feststellbar: %s", pid, fehler)
+            if _ist_weg_windows(pid):
+                continue  # während der Prüfung verschwunden oder beendet (#654)
+            eintraege[pid] = _ArbeitsordnerEintrag(text, None, None, f"Ordner-Identität nicht lesbar: {fehler}")
+            continue
+        if daten is not None:
+            kennung, endpfad, endpfad_fehler = daten
+            eintraege[pid] = _ArbeitsordnerEintrag(text, kennung, endpfad, "", endpfad_fehler)
+    return eintraege
+
+
+def _bewerte_arbeitsordner(
+    eintraege: dict[int, _ArbeitsordnerEintrag],
+    ziel: tuple[tuple[int, int], str],
+    kennungen: dict[str, tuple[int, int]],
+) -> dict[int, ArbeitsordnerBefund]:
+    """Wertet zwischengespeicherte Prozess-Befunde gegen ``ziel`` aus (#259)."""
+    ergebnis: dict[int, ArbeitsordnerBefund] = {}
+    for pid, eintrag in eintraege.items():
+        if eintrag.text is None:
+            ergebnis[pid] = ArbeitsordnerBefund(None, None, eintrag.grund)
+            continue
+        if eintrag.kennung is None:
+            ergebnis[pid] = ArbeitsordnerBefund(eintrag.text, None, eintrag.grund)
+            continue
+        try:
+            drin = _liegt_darin_daten(
+                eintrag.kennung,
+                eintrag.endpfad,
+                ziel,
+                kennungen,
+                endpfad_fehler=eintrag.endpfad_fehler,
+            )
+        except OSError as fehler:
+            log.debug("cwd-Ordner von Prozess %s nicht feststellbar: %s", pid, fehler)
+            if _ist_weg_windows(pid):
+                continue  # während der Prüfung verschwunden oder beendet (#654)
+            ergebnis[pid] = ArbeitsordnerBefund(eintrag.text, None, f"Ordner-Identität nicht lesbar: {fehler}")
+            continue
+        ergebnis[pid] = ArbeitsordnerBefund(eintrag.text, drin)
+    return ergebnis
+
+
 def arbeitsordner_in_windows(ordner: str | Path) -> dict[int, ArbeitsordnerBefund]:
     """Steht ein Prozess in ``ordner``? PID → :class:`ArbeitsordnerBefund` aller prüfbaren
     Prozesse. ``drin`` kommt aus der Identität des Ordners, in dem der Prozess wirklich steht
@@ -1244,10 +1384,20 @@ def arbeitsordner_in_windows(ordner: str | Path) -> dict[int, ArbeitsordnerBefun
     beim Übernehmen des cwd-Griffs) ⇒ ``drin=None`` mit Grund (Aufrufer entscheidet fail-closed).
     ``ordner`` nicht zu öffnen oder Momentaufnahme unlesbar = ``OSError``.
 
+    Ist :func:`arbeitsordner_lauf_cache` aktiv, werden Kennung und End-Pfad je Prozess einmal
+    für diesen Lauf ermittelt und gegen jedes Ziel ausgewertet (#259).
+
     ponytail: unlesbarer Prozess eines fremden Benutzers mit cwd im Ordner bleibt unentdeckt
     (wie bei #243); offene Dateien fängt im echten Lauf die Umbenennungs-Probe."""
     ziel = _ordner_von(str(ordner))
     kennungen: dict[str, tuple[int, int]] = {}
+    cache = _ARBEITSORDNER_CACHE.get()
+    if cache is not None:
+        eintraege = cache.get("eintraege")
+        if eintraege is None:
+            eintraege = _arbeitsordner_momentaufnahme_windows()
+            cache["eintraege"] = eintraege
+        return _bewerte_arbeitsordner(eintraege, ziel, kennungen)
     ergebnis: dict[int, ArbeitsordnerBefund] = {}
     for pid in _momentaufnahme_windows():
         if pid in (0, 4):  # Leerlauf- und System-Prozess: kein Benutzer-PEB

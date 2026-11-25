@@ -138,7 +138,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Iterable, Sequence
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -576,11 +576,12 @@ def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> Rundgang:
             _zweige_im_takt(loeschen, jetzt)
             return Rundgang(False, f"Ordnersuche gescheitert ({type(fehler).__name__}: {fehler})")
         ergebnisse: list[Ergebnis] = []
-        for ordner in kandidaten:
-            erg = _aufraeumen(ordner, loeschen=loeschen, jetzt=jetzt, platznot=_ist_platznot(anteil))
-            ergebnisse.append(erg)
-            if erg.art != "bleibt" and not erg.trocken:
-                anteil = _frei_anteil()
+        with prozessbaum.arbeitsordner_lauf_cache() if _ist_windows() else nullcontext():
+            for ordner in kandidaten:
+                erg = _aufraeumen(ordner, loeschen=loeschen, jetzt=jetzt, platznot=_ist_platznot(anteil))
+                ergebnisse.append(erg)
+                if erg.art != "bleibt" and not erg.trocken:
+                    anteil = _frei_anteil()
     finally:
         _ORIGIN_BAEUME_CACHE.reset(origin_token)
         _WORKTREE_CACHE.reset(wt_token)
@@ -3205,7 +3206,8 @@ def _kein_prozess(ordner: Path, *, probe: bool = False) -> None:
     zusätzlich die Umbenennungs-Probe (siehe :mod:`to_spawn.hausmeister_windows`)."""
     if _ist_windows():
         try:
-            hausmeister_windows.kein_prozess(ordner)
+            with prozessbaum.arbeitsordner_lauf_cache(aktiv=False) if probe else nullcontext():
+                hausmeister_windows.kein_prozess(ordner)
             if probe:
                 hausmeister_windows.umbenennen_probe(ordner)
         except hausmeister_windows.Bleibt as b:
