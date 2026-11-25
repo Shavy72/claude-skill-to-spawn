@@ -643,6 +643,8 @@ def _speicher_immer_frei(
     (ordner / "sessions").mkdir()
     monkeypatch.setenv("TO_SPAWN_SPEICHER_SESSIONS", str(ordner / "sessions"))
     monkeypatch.setenv("TO_SPAWN_SPEICHER_PLATZ", str(ordner / "platz.json"))
+    # #761: Runden-Merker der Ort-Wahl ebenfalls isolieren, damit kein Test eine echte Server-Runde sieht.
+    monkeypatch.setenv("TO_SPAWN_ORT_WAHL_RUNDE", str(ordner / "ort-wahl-runde.json"))
 
 
 @pytest.fixture(autouse=True)

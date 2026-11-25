@@ -47,7 +47,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from to_spawn import prozessbaum
+
+from to_spawn import ort_wahl, prozessbaum
 
 log = logging.getLogger("to_spawn.inventur")
 
@@ -976,6 +977,7 @@ def erstelle(
             return shutil.which(befehl, path=pfad)
 
     projekt = lies_projekt(repo)
+    projekt["grosse_runde"] = ort_wahl.pruefe_repo_runde(repo).als_dict()
     historie = lies_historie(repo, claude_home, letzte)
     katalog = lies_katalog(repo, claude_home, home_json)
     werkzeuge = katalog.werkzeuge
@@ -1070,6 +1072,9 @@ def _tote_winkel(inventur: Inventur) -> list[str]:
     for kommando, anzahl in sorted(historie["kommandos"].items()):
         if kommando not in bekannt:
             hinweise.append(f"Kommando `/{kommando}` genutzt ({anzahl}×), aber nicht installiert")
+    runde = inventur.projekt.get("grosse_runde")
+    if isinstance(runde, dict) and runde.get("hinweis"):
+        hinweise.append(str(runde["hinweis"]))
     return hinweise
 
 

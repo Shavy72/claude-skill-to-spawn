@@ -80,6 +80,8 @@ PLATTE_TAKT_S = 900
 #: und :func:`auf_platte_warten` (``<wer> wartet auf Speicher auf der Platte …``).
 #: respawn erkennt daran auf dem Bildschirm, dass bau.py noch vor dem Claude-Start wartet.
 WARTE_TEXT = "wartet auf Speicher"
+#: Kernstück der Meldung, wenn eine große Testrunde auf dem Linux-Bau-Server läuft (#761, E34).
+GROSSE_RUNDE_TEXT = "große Testrunde läuft auf dem Bau-Server"
 
 
 def _meminfo_pfad() -> Path:
@@ -535,6 +537,15 @@ def _urteil(
     return frei, grund
 
 
+def _laufende_grosse_runde() -> dict[str, Any] | None:
+    """Läuft gerade eine große Testrunde über :mod:`to_spawn.ort_wahl` (nur Linux, #761)?"""
+    if sys.platform != "linux":
+        return None
+    from to_spawn import ort_wahl  # spät: ort_wahl importiert speicher
+
+    return ort_wahl.runde_aktiv()
+
+
 def _urteil_art(
     konfig: dict[str, Any] | None,
     frei: int | None,
@@ -548,6 +559,11 @@ def _urteil_art(
     Sitzung die Rechner- oder Gesamtgrenze füllen — dann wartet ein Starter, der selbst wartet.
     """
     linux = sys.platform == "linux"
+    if linux:
+        runde = _laufende_grosse_runde()
+        if runde is not None:
+            grund = str(runde.get("grund") or f"PID {runde.get('pid')}")
+            return False, f"{GROSSE_RUNDE_TEXT} ({grund}) — Bau-Tickets warten bis zum Rundenende", False
     werte = grenzen(konfig)
     if frei is None and (linux or os.environ.get("TO_SPAWN_SPEICHER_MEMINFO")):
         frei = frei_mib()
