@@ -173,6 +173,31 @@ def test_aufseher_prompts_folgen_umgebogenem_home_nach_import(
     assert erwarteter_tresor in wache.PROMPT
 
 
+def test_notiz_tresor_und_wache_prompt_trotz_umgebogenem_os_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``config.notiz_tresor`` und ``wache.prompt_bauen`` scheitern nie an umgebogenem ``os.name`` (#232).
+
+    Spiegelt ``test_prompt_linux_python3_und_aufpasser_serverpfad`` unter Windows: dort biegt der
+    Test ``os.name`` auf ``"posix"`` um — ``Path(...)`` wirft in Python 3.13 dann
+    ``UnsupportedOperation``.
+    """
+    from to_spawn import config
+
+    spec = importlib.util.spec_from_file_location("wache_osname_232", SKRIPTE / "wache.py")
+    assert spec is not None and spec.loader is not None
+    wache = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(wache)
+
+    erwartet = config.notiz_tresor().as_posix()
+    fremd_os = "nt" if os.name == "posix" else "posix"
+    monkeypatch.setattr(wache.os, "name", fremd_os)
+
+    assert config.notiz_tresor().as_posix() == erwartet
+    text = wache.prompt_bauen(900, "x/y", 1800, {"ssh_ziel": "bau-server", "server_repo": "/home/bau/r"})
+    assert erwartet in text
+
+
 def test_start_tests_fuehren_keine_privaten_hooks_aus_und_lassen_claude_json_unveraendert(
     tmp_path: Path,
 ) -> None:
