@@ -57,8 +57,8 @@ _ECHTES_HEIM: Path = Path.home().resolve()
 _START_USER_BASE: str = site.getuserbase()
 #: Vorher-Stand des echten Heimordners für den Prüfsummen-Wächter (#232): ``(claude_json, sha256, claude_dir_da)``.
 _HEIM_STAND = pytest.StashKey[tuple[Path, str | None, bool]]()
-#: Merker, dass der Windows-``schtasks``-Wächter (#789) in dieser Session aktiv ist.
-_SCHTASKS_WAECHTER = pytest.StashKey[bool]()
+#: Aktive Sperre des Windows-``schtasks``-Wächters (#789) im äußeren Leit-Prozess.
+_SCHTASKS_WAECHTER = pytest.StashKey[schtasks_test.WaechterSperre]()
 
 #: Zeitgrenze je Test in Sekunden (#68): ein hängender Test (unter Windows z. B.
 #: ``test_aufseher_abloesung_436``) darf die Suite nicht unbegrenzt aufhalten. Gilt nur,
@@ -360,9 +360,12 @@ def pytest_sessionstart(session: pytest.Session) -> None:
             _datei_sha256(claude_json),
             (_ECHTES_HEIM / ".claude").exists(),
         )
-    if not hasattr(session.config, "workerinput") and schtasks_test.ist_windows():
-        schtasks_test.verwaiste_raeumen()
-        session.config.stash[_SCHTASKS_WAECHTER] = True
+    option = getattr(session.config, "option", None)
+    if not hasattr(session.config, "workerinput") and not getattr(option, "collectonly", False):
+        waechter = schtasks_test.waechter_nehmen()
+        if waechter is not None:
+            session.config.stash[_SCHTASKS_WAECHTER] = waechter
+            schtasks_test.verwaiste_raeumen()
     ordner = session.config.stash.get(_EIGENER_BASETEMP, None)
     if ordner is None:
         return
@@ -402,17 +405,22 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
                 sys.stderr.write(f"\nFEHLER: {meldung}\n")
                 session.exitstatus = pytest.ExitCode.TESTS_FAILED
                 exitstatus = int(pytest.ExitCode.TESTS_FAILED)
-        if session.config.stash.get(_SCHTASKS_WAECHTER, False):
-            reste = schtasks_test.verwaiste_aufgaben()
-            if reste:
-                for name in reste:
-                    schtasks_test.loeschen(name)
-                meldung = f"schtasks-Wächter (#789): Testlauf ließ Windows-Aufgaben zurück (jetzt geräumt): {', '.join(reste)}"
-                _LOG.error("%s", meldung)
-                sys.stderr.write(f"\nFEHLER: {meldung}\n")
-                if exitstatus == 0:
-                    session.exitstatus = pytest.ExitCode.TESTS_FAILED
-                    exitstatus = int(pytest.ExitCode.TESTS_FAILED)
+        waechter = session.config.stash.get(_SCHTASKS_WAECHTER, None)
+        if waechter is not None:
+            try:
+                reste = schtasks_test.verwaiste_aufgaben()
+                if reste:
+                    for name in reste:
+                        schtasks_test.loeschen(name)
+                    meldung = f"schtasks-Wächter (#789): Testlauf ließ Windows-Aufgaben zurück (jetzt geräumt): {', '.join(reste)}"
+                    _LOG.error("%s", meldung)
+                    sys.stderr.write(f"\nFEHLER: {meldung}\n")
+                    if exitstatus == 0:
+                        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+                        exitstatus = int(pytest.ExitCode.TESTS_FAILED)
+            finally:
+                waechter.freigeben()
+                del session.config.stash[_SCHTASKS_WAECHTER]
     ordner = session.config.stash.get(_EIGENER_BASETEMP, None)
     if ordner is not None and exitstatus == 0:
         try:

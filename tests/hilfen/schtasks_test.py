@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import atexit
 import csv
+import ctypes
 import io
 import logging
 import os
@@ -50,6 +51,65 @@ _ZWECK_MUSTER = re.compile(r"[^A-Za-z0-9_-]+")
 
 #: Von diesem Prozess registrierte Test-Aufgaben, die spätestens bei Exit/Abbruch weg müssen.
 _AKTIVE_AUFGABEN: set[str] = set()
+
+#: Windows-Kernel-Mutex für genau einen aktiven ``schtasks``-Wächter je Anmelde-Sitzung (#789).
+WAECHTER_MUTEX_NAME = "Local\\to-spawn-schtasks-waechter"
+#: Win32-Fehlercode ``ERROR_ALREADY_EXISTS`` von ``CreateMutexW``.
+_FEHLER_EXISTIERT_BEREITS = 183
+
+
+class WaechterSperre:
+    """Hält die exklusive Windows-Wächter-Sperre bis ``pytest_sessionfinish`` (#789)."""
+
+    def __init__(self, freigeben_fn: Callable[[], None]) -> None:
+        self._freigeben_fn: Callable[[], None] | None = freigeben_fn
+
+    def freigeben(self) -> None:
+        """Gibt die Sperre idempotent frei."""
+        fn = self._freigeben_fn
+        if fn is not None:
+            self._freigeben_fn = None
+            fn()
+
+
+def _win_mutex_nehmen(name: str) -> WaechterSperre | None:
+    """Reserviert unter Windows exklusiv einen benannten Kernel-Mutex; bereits belegt → ``None``.
+
+    ``lpMutexAttributes=None`` verhindert Handle-Vererbung an Kindprozesse; bei hartem Abbruch
+    des Besitzers gibt der Windows-Kernel das Handle automatisch frei (keine Lock-Reste).
+    """
+    if sys.platform != "win32":
+        return WaechterSperre(lambda: None)
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+    kernel.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
+    kernel.CreateMutexW.restype = ctypes.c_void_p
+    kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel.CloseHandle.restype = ctypes.c_int
+    ctypes.set_last_error(0)
+    griff = kernel.CreateMutexW(None, False, name)
+    if not griff:
+        log.warning("Windows-Wächter-Mutex %r nicht anlegbar (Fehler %d)", name, ctypes.get_last_error())
+        return None
+    if ctypes.get_last_error() == _FEHLER_EXISTIERT_BEREITS:
+        kernel.CloseHandle(griff)
+        return None
+    schliessen = kernel.CloseHandle
+
+    def _freigeben() -> None:
+        schliessen(griff)
+
+    return WaechterSperre(_freigeben)
+
+
+def waechter_nehmen(name: str = WAECHTER_MUTEX_NAME) -> WaechterSperre | None:
+    """Übernimmt den maschinenweiten Windows-``schtasks``-Wächter exklusiv; schon aktiv → ``None``.
+
+    Schützt parallele xdist-Worker vor verschachtelten Kind-pytest-Läufen (z. B. ``test_pt_reste_177``,
+    ``test_testheim_232``) und vor parallelen zweiten Testläufen auf demselben Windows-Rechner (#789).
+    """
+    if not ist_windows():
+        return None
+    return _win_mutex_nehmen(name)
 
 
 def ist_windows() -> bool:

@@ -143,6 +143,7 @@ def test_sessionstart_raeumt_verwaiste_und_alt_test_aufgaben_unter_windows(monke
     )
     monkeypatch.setattr(st, "ist_windows", lambda: True)
     monkeypatch.setattr(st, "_lauf", fake)
+    monkeypatch.setattr(st, "_win_mutex_nehmen", lambda _name: st.WaechterSperre(lambda: None))
     monkeypatch.setattr(prozessbaum, "lebt", lambda pid: pid == 424242)
 
     vorher_verwaist = st.verwaiste_aufgaben()
@@ -165,6 +166,7 @@ def test_sessionfinish_raeumt_und_meldet_liegengebliebene_test_aufgabe(monkeypat
     fake = _FakeSchtasks({"to-spawn Hausmeister": "Bereit"})
     monkeypatch.setattr(st, "ist_windows", lambda: True)
     monkeypatch.setattr(st, "_lauf", fake)
+    monkeypatch.setattr(st, "_win_mutex_nehmen", lambda _name: st.WaechterSperre(lambda: None))
 
     session = _session()
     conftest.pytest_sessionstart(session)  # type: ignore[arg-type]
@@ -195,6 +197,82 @@ def test_linux_verhalten_unveraendert(monkeypatch: pytest.MonkeyPatch) -> None:
     conftest.pytest_sessionfinish(session, 0)  # type: ignore[arg-type]
 
     assert aufrufe == [], f"Unter Linux darf schtasks nie aufgerufen werden: {aufrufe}"
+
+
+def test_verschachtelter_session_lauf_raeumt_und_meldet_nichts_wenn_waechter_belegt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hält ein äußerer pytest-Lauf schon den Windows-Wächter, fasst ein Kind-pytest keine Aufgaben an (#789).
+
+    Stellt das Windows-CI-Wettrennen nach: Worker gw3 hat nach hartem Abbruch eine tote-PID-Aufgabe
+    stehen, während gw2 (z. B. ``test_pt_reste_177``) einen verschachtelten Kind-pytest-Lauf beendet.
+    """
+    st = _schtasks_test_modul()
+    fremde_waise = "to-spawn-test-p2184-kill 54a60881"
+    fake = _FakeSchtasks({fremde_waise: "Bereit"})
+    monkeypatch.setattr(st, "ist_windows", lambda: True)
+    monkeypatch.setattr(st, "_lauf", fake)
+    monkeypatch.setattr(prozessbaum, "lebt", lambda _pid: False)
+    monkeypatch.setattr(st, "_win_mutex_nehmen", lambda _name: None)
+
+    session = _session()
+    conftest.pytest_sessionstart(session)  # type: ignore[arg-type]
+    assert fremde_waise in fake.aufgaben, "Verschachtelter Lauf darf fremde Test-Aufgabe beim Start nicht löschen"
+
+    conftest.pytest_sessionfinish(session, 0)  # type: ignore[arg-type]
+    assert fremde_waise in fake.aufgaben, "Verschachtelter Lauf darf fremde Test-Aufgabe beim Ende nicht löschen"
+    assert session.exitstatus == 0, "Verschachtelter Lauf darf wegen fremder Test-Aufgabe nicht rot werden"
+    assert fake.aufrufe == [], f"Ohne Wächter-Sperre darf kein schtasks-Aufruf laufen: {fake.aufrufe}"
+
+
+def test_collect_only_aktiviert_keinen_schtasks_waechter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bei ``--collect-only`` laufen keine Tests → kein Wächter-Start, kein schtasks-Aufruf (#789)."""
+    st = _schtasks_test_modul()
+    fremde_waise = "to-spawn-test-p2184-kill 54a60881"
+    fake = _FakeSchtasks({fremde_waise: "Bereit"})
+    genommen: list[str] = []
+    monkeypatch.setattr(st, "ist_windows", lambda: True)
+    monkeypatch.setattr(st, "_lauf", fake)
+    monkeypatch.setattr(prozessbaum, "lebt", lambda _pid: False)
+    monkeypatch.setattr(st, "_win_mutex_nehmen", lambda name: genommen.append(name) or st.WaechterSperre(lambda: None))
+
+    session = SimpleNamespace(
+        config=SimpleNamespace(stash=pytest.Stash(), option=SimpleNamespace(collectonly=True)),
+        exitstatus=0,
+    )
+    conftest.pytest_sessionstart(session)  # type: ignore[arg-type]
+    conftest.pytest_sessionfinish(session, 0)  # type: ignore[arg-type]
+
+    assert genommen == [], "Bei --collect-only darf die Wächter-Sperre nicht belegt werden"
+    assert fake.aufrufe == [], f"Bei --collect-only darf schtasks nicht laufen: {fake.aufrufe}"
+    assert fremde_waise in fake.aufgaben
+    assert session.exitstatus == 0
+
+
+def test_sessionfinish_gibt_waechter_sperre_auch_bei_fund_wieder_frei(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``pytest_sessionfinish`` gibt die Wächter-Sperre immer frei — auch wenn Reste gemeldet werden (#789)."""
+    st = _schtasks_test_modul()
+    leck = st.neuer_name("freigabe")
+    fake = _FakeSchtasks()
+    freigegeben: list[str] = []
+    monkeypatch.setattr(st, "ist_windows", lambda: True)
+    monkeypatch.setattr(st, "_lauf", fake)
+    monkeypatch.setattr(
+        st,
+        "_win_mutex_nehmen",
+        lambda name: st.WaechterSperre(lambda: freigegeben.append(name)),
+    )
+
+    session = _session()
+    conftest.pytest_sessionstart(session)  # type: ignore[arg-type]
+    assert freigegeben == []
+    fake.aufgaben[leck] = "Bereit"
+
+    conftest.pytest_sessionfinish(session, 0)  # type: ignore[arg-type]
+
+    assert freigegeben == [st.WAECHTER_MUTEX_NAME]
+    assert session.exitstatus == pytest.ExitCode.TESTS_FAILED
+    assert conftest._SCHTASKS_WAECHTER not in session.config.stash
 
 
 def test_praefix_erkennung_und_csv_parser() -> None:
@@ -500,6 +578,38 @@ def test_windows_echt_harter_abbruch_und_altrest_werden_aufgeraeumt(tmp_path: Pa
         assert kill_name in st.offene_test_aufgaben()
         assert kill_name in st.verwaiste_aufgaben()
 
+        # Paralleler verschachtelter Kind-pytest-Lauf (wie test_pt_reste_177) darf weder die fremde
+        # Waise stehlen noch selbst wegen ihr scheitern (#789 Fixrunde 2).
+        kind_pt = tmp_path / "kind_pt"
+        kind_pt.mkdir()
+        (kind_pt / "conftest.py").write_text(
+            "import importlib.util\n"
+            f"_spec = importlib.util.spec_from_file_location('_echt_conftest_789_pt', {str(TESTS / 'conftest.py')!r})\n"
+            "_mod = importlib.util.module_from_spec(_spec)\n"
+            "_spec.loader.exec_module(_mod)\n"
+            "for _name in ('pytest_configure', 'pytest_sessionstart', 'pytest_sessionfinish', 'pytest_unconfigure'):\n"
+            "    if hasattr(_mod, _name):\n"
+            "        globals()[_name] = getattr(_mod, _name)\n",
+            encoding="utf-8",
+        )
+        (kind_pt / "test_harmlos.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+        kind_lauf = subprocess.run(
+            [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:xdist", str(kind_pt)],
+            cwd=str(kind_pt),
+            env=_kind_pytest_env(),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+            check=False,
+            **prozessbaum.fensterlos(),
+        )
+        assert kind_lauf.returncode == 0, (
+            f"Verschachtelter Kind-pytest brach ab:\n{kind_lauf.stdout}\n{kind_lauf.stderr}"
+        )
+        assert kill_name in st.verwaiste_aufgaben(), "Verschachtelter Kind-pytest hat fremde Waise abgeräumt"
+
         # Zusätzlich Alt-Präfix-Rest wie „to-spawn Hausmeister Test 71ce15“ anlegen.
         alt_erg = st._lauf(
             "/Create",
@@ -528,3 +638,38 @@ def test_windows_echt_harter_abbruch_und_altrest_werden_aufgeraeumt(tmp_path: Pa
         if kill_name:
             st.loeschen(kill_name)
         st.loeschen(alt_name)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows-Kernel-Mutex gibt es nur unter Windows")
+def test_windows_echt_waechter_mutex_exklusiv() -> None:
+    """Echter Windows-Kernel-Mutex: nur ein Prozess hält den Wächter, nach Freigabe wieder frei (#789)."""
+    st = _schtasks_test_modul()
+    mutex_name = f"Local\\to-spawn-schtasks-probe-{uuid.uuid4().hex[:12]}"
+    sperre = st.waechter_nehmen(mutex_name)
+    assert sperre is not None
+    try:
+        # Zweiter Versuch im selben Prozess und in einem Kindprozess liefert None.
+        assert st.waechter_nehmen(mutex_name) is None
+        probe_code = (
+            f"import sys; sys.path.insert(0, {str(SKILL)!r}); sys.path.insert(0, {str(TESTS / 'hilfen')!r}); "
+            f"import schtasks_test; assert schtasks_test.waechter_nehmen({mutex_name!r}) is None"
+        )
+        probe = subprocess.run(
+            [sys.executable, "-c", probe_code],
+            cwd=str(SKILL),
+            env=_kind_pytest_env(),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+            **prozessbaum.fensterlos(),
+        )
+        assert probe.returncode == 0, probe.stdout + probe.stderr
+    finally:
+        sperre.freigeben()
+
+    erneut = st.waechter_nehmen(mutex_name)
+    assert erneut is not None, "Nach freigeben() muss der Mutex wieder frei sein"
+    erneut.freigeben()
