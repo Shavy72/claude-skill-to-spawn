@@ -68,7 +68,7 @@ def _bau_schalter(befehl: str, ticket: int) -> list[str]:
     assert teile[:2] == ["bash", "-lc"], befehl
     for stueck in teile[2].split("; "):
         woerter = shlex.split(stueck)
-        if len(woerter) > 2 and woerter[1].endswith("/skripte/bau.py"):
+        if len(woerter) > 2 and Path(woerter[1]).as_posix().endswith("/skripte/bau.py"):
             assert woerter[2] == str(ticket), befehl
             return woerter[3:]
     raise AssertionError(f"kein bau.py-Aufruf: {befehl}")

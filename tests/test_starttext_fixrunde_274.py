@@ -58,6 +58,7 @@ def _lauf(repo: Path, tmp_path: Path, *, bau: Path = BAU, dry_run: bool = True) 
         [sys.executable, str(bau), "7", *(["--dry-run"] if dry_run else []), "--print-prompt"],
         capture_output=True,
         text=True,
+        encoding="utf-8",  # bau.py schreibt UTF-8; unter Windows wäre sonst cp1252 die Vorgabe
         env=env,
         cwd=repo,
         timeout=120,
