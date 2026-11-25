@@ -38,12 +38,6 @@ def sh(*args: str, cwd: Path | None = None) -> str:
     return r.stdout.strip()
 
 
-def wt_basis_vorgabe(repo: Path) -> str:
-    """Basis-Ordner der Ticket-Worktrees laut ``config.worktree_pfad`` (Konfig ``worktree_basis``,
-    sonst Plattform-Regel) — dieselbe Regel wie ``bau.py``."""
-    return str(Path(config.worktree_pfad("0", repo)).parent.as_posix())
-
-
 def server_head(konfig: dict) -> str:
     """Kurz-SHA des Repos auf dem Server — nur wenn ``ssh_ziel`` und ``server_repo`` gesetzt sind, sonst leer."""
     ziel = str(konfig.get("ssh_ziel") or "").strip()
@@ -96,7 +90,6 @@ def main() -> int:
             file=sys.stderr,
         )
         return 2
-    wt_basis = a.wt_basis or wt_basis_vorgabe(repo)
     haupt = f"origin/{gh.hauptzweig(repo)}"
 
     sh("git", "fetch", "-q", "origin", cwd=repo)
@@ -121,7 +114,9 @@ def main() -> int:
         assert isinstance(kommentare, list)
         letzter = kommentare[0] if kommentare else None
         kom = f"{alter(letzter['created_at'])} „{letzter['body'].strip().splitlines()[0][:70]}“" if letzter else "—"
-        wt = Path(wt_basis).expanduser() / f"wt-{n}"
+        # Ohne --wt-basis die eine Regel (``config.worktree_pfad``, Ausweich-Ordner #641).
+        wt = Path(a.wt_basis) / f"wt-{n}" if a.wt_basis else Path(config.worktree_pfad(n, repo))
+        wt = wt.expanduser()
         wt_info = "-"
         if wt.is_dir():
             try:

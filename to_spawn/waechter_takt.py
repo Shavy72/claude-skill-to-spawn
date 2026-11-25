@@ -105,7 +105,7 @@ def _schluessel(text: str) -> str:
 def _zeilen(repo: Path, ref: str | None, ticket: int, wt_basis: str) -> list[dict[str, Any]]:
     """Bau-Log-Zeilen des Tickets: Hauptzweig + Laufdateien (Worktree, Repo)."""
     zeilen = capo.log_vom_ref(repo, ref, ticket) if ref else []
-    for _quelle, pfad in capo.laufdateien(repo, capo.worktree_ordner(ticket, wt_basis), ticket):
+    for _quelle, pfad in capo.laufdateien(repo, capo.worktree_ordner(ticket, wt_basis, repo), ticket):
         zeilen += capo.lauf_zeilen(pfad) or []
     return zeilen
 

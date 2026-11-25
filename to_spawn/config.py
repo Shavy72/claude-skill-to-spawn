@@ -239,8 +239,18 @@ def worktree_pfad(ticket: str | int, repo: Path | None = None) -> str:
         return f"{Path(basis).expanduser().as_posix().rstrip('/')}/wt-{ticket}"
     # Gesetztes BAU_WT_DIR gilt auf jeder Plattform (Tests/Leiter/Aufpasser auf dem PC
     # sähen sonst C:/dev statt des vorgegebenen Ordners); ohne es die Plattform-Vorgabe.
-    basis = os.environ.get("BAU_WT_DIR") or ("C:/dev" if sys.platform == "win32" else "~/wt")
-    return f"{Path(basis).expanduser().as_posix().rstrip('/')}/wt-{ticket}"
+    if os.environ.get("BAU_WT_DIR"):
+        return f"{Path(os.environ['BAU_WT_DIR']).expanduser().as_posix().rstrip('/')}/wt-{ticket}"
+    # Plattform-Vorgabe (#641): ``<basis>/wt-<N>``, außer der Ordner gehört einem anderen Repo —
+    # dann ``<basis>/<Repo-Name>/wt-<N>`` (= ``worktree_basis_vorgabe``). Ein einmal angelegter
+    # Ausweich-Ordner gewinnt immer, damit Leser ihn auch nach dem Aufräumen des anderen finden.
+    # ponytail: Weiche hängt am Zustand beim ersten Aufruf; fest wäre ``worktree_basis`` je Repo.
+    eigen = repo or Path.cwd()
+    flach = Path("C:/dev" if sys.platform == "win32" else "~/wt").expanduser() / f"wt-{ticket}"
+    ausweich = Path(worktree_basis_vorgabe(eigen)).expanduser() / f"wt-{ticket}"
+    if ausweich.is_dir() or _fremder_besitzer(flach, eigen):
+        return ausweich.as_posix()
+    return flach.as_posix()
 
 
 def _adresse_normal(url: str) -> str:
@@ -296,17 +306,16 @@ def worktree_fremd(ticket: str | int, repo: Path | None = None) -> str | None:
     eines anderen Repos ist; sonst ``None`` (Ordner fehlt, eigenes Repo, anderer Klon
     desselben Repos, oder kein Git-Ordner — dann entscheidet der Start wie bisher).
     Laufende ``wt-<N>`` des eigenen Repos werden so weiter gefunden (kein neuer Pfad).
-    ponytail: verweigert nur, weicht nicht aus; Ausweg ``worktree_basis`` je Repo (Einrichter).
+    Ohne ``worktree_basis``/``BAU_WT_DIR`` weicht :func:`worktree_pfad` selbst aus (#641); dann
+    greift die Weigerung nur noch bei gleichem Repo-Namen. Mit gesetzter Basis verweigert sie.
     """
     if repo is None and os.environ.get("TO_SPAWN_REPO"):
         repo = Path(os.environ["TO_SPAWN_REPO"]).expanduser()
     wt = Path(worktree_pfad(ticket, repo)).expanduser()
-    if not wt.is_dir():
+    fremd = _fremder_besitzer(wt, repo or Path.cwd())
+    if fremd is None:
         return None
-    besitzer = _repo_kennung(wt)
-    eigen = _repo_kennung(repo or Path.cwd())
-    if besitzer is None or eigen is None or besitzer == eigen:
-        return None
+    besitzer, eigen = fremd
     return (
         f"Ordner {wt} ist schon Worktree eines anderen Repos ({besitzer}), nicht {eigen} — "
         "gleiche Ticket-Nummer, gleicher Ordner. Erst das andere Ticket beenden oder in "
@@ -318,8 +327,38 @@ def worktree_fremd(ticket: str | int, repo: Path | None = None) -> str | None:
 def worktree_basis_vorgabe(repo: Path) -> str:
     """Startwert für ``worktree_basis`` beim Anlegen der Konfig: ``~/wt/<Repo-Name>``
     (Windows ``C:/dev/<Repo-Name>``) — nur ein Vorschlag, die Datei darf ihn ändern."""
-    name = repo_wurzel(repo).name
+    name = _hauptrepo_name(repo_wurzel(repo))
     return f"C:/dev/{name}" if sys.platform == "win32" else f"~/wt/{name}"
+
+
+def _hauptrepo_name(wurzel: Path) -> str:
+    """Name des Hauptrepos — auch, wenn ``wurzel`` ein Worktree ist (``.git``-Datei mit
+    ``gitdir: <haupt>/.git/worktrees/<x>``); sonst der Ordnername (#641)."""
+    git = wurzel / ".git"
+    if git.is_file():
+        try:
+            zeile = git.read_text(encoding="utf-8").strip()
+        except OSError as fehler:
+            log.warning(".git in %s nicht lesbar: %s", wurzel, fehler)
+            return wurzel.name
+        if zeile.startswith("gitdir:"):
+            gitdir = Path(zeile.removeprefix("gitdir:").strip())
+            gitdir = gitdir if gitdir.is_absolute() else wurzel / gitdir
+            if gitdir.parent.name == "worktrees":
+                return gitdir.parent.parent.parent.name
+    return wurzel.name
+
+
+def _fremder_besitzer(wt: Path, repo: Path) -> tuple[str, str] | None:
+    """(Besitzer, eigene Kennung), wenn ``wt`` ein Git-Ordner eines anderen Repos ist (#499);
+    sonst ``None`` (Ordner fehlt, eigenes Repo, anderer Klon, kein Git-Ordner)."""
+    if not wt.is_dir():
+        return None
+    besitzer = _repo_kennung(wt)
+    eigen = _repo_kennung(repo)
+    if besitzer is None or eigen is None or besitzer == eigen:
+        return None
+    return besitzer, eigen
 
 
 #: Zeilen, die ``sicherstellen`` in die Repo-``.gitignore`` schreibt: Laufdateien und
