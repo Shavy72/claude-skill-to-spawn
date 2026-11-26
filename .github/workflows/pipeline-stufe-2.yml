@@ -135,14 +135,14 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update -q && sudo apt-get install -y -q tmux
 
-      - name: Test-Abhängigkeiten installieren (inkl. pytest-split + pytest-xdist)
+      - name: Test-Abhängigkeiten installieren (inkl. pytest-split, pytest-xdist + ruff)
         env:
           ANFORDERUNGEN: ${{ inputs.anforderungen }}
         run: |
           if [ -n "$ANFORDERUNGEN" ] && [ -f "$ANFORDERUNGEN" ]; then
-            python -m pip install -q -r "$ANFORDERUNGEN" pytest-split pytest-xdist
+            python -m pip install -q -r "$ANFORDERUNGEN" pytest-split pytest-xdist ruff
           else
-            python -m pip install -q pytest pytest-split pytest-xdist
+            python -m pip install -q pytest pytest-split pytest-xdist ruff
           fi
 
       - name: git-Identität für Tests

@@ -551,3 +551,89 @@ def test_workflow_dateien_im_repo_stimmen_mit_stufe2_vorlage_ueberein() -> None:
     anforderungen = (SKILL / "tests" / "requirements.txt").read_text(encoding="utf-8")
     pakete = {z.split("#", 1)[0].strip().lower() for z in anforderungen.splitlines() if z.strip()}
     assert "ruff" in pakete
+
+
+def test_stufe2_workflows_im_repo_eingehaengt_und_aktuell() -> None:
+    """#581: Vorlage und Eigenanschluss Stufe 2 liegen unter .github/workflows/ und entsprechen dem Generator."""
+    vorlage = SKILL / ".github" / "workflows" / "pipeline-stufe-2.yml"
+    eigen = SKILL / ".github" / "workflows" / "pipeline-stufe-2-eigen.yml"
+    assert vorlage.is_file(), f"Stufe-2-Vorlage fehlt: {vorlage}"
+    assert eigen.is_file(), f"Stufe-2-Eigenanschluss fehlt: {eigen}"
+
+    vorlage_text = vorlage.read_text(encoding="utf-8")
+    eigen_text = eigen.read_text(encoding="utf-8")
+
+    assert vorlage_text == pipeline_stufe2.vorlage_stufe2_yaml()
+    assert eigen_text == pipeline_stufe2.eigenanschluss_stufe2_yaml(teile=2)
+    assert pipeline_stufe2.pruefe_stufe2_vorlage_text(vorlage_text) == []
+    # In GitHub Actions (CI=true) verlangen u. a. test_pruef_sofort_3b und test_ruff_format_190 ruff.
+    assert "pytest-split pytest-xdist ruff" in vorlage_text
+    assert "uses: ./.github/workflows/pipeline-stufe-2.yml" in eigen_text
+    assert "teile: 2" in eigen_text
+    assert 'auslassungen: ".github/workflows/auslassungen.txt"' in eigen_text
+    assert "mit-staging-app: false" in eigen_text
+    assert "server-marker-ausschliessen: true" in eigen_text
+
+
+def test_stufe2_eigenanschluss_verbietet_pull_request_und_push(tmp_path: Path) -> None:
+    """#581: Stufe 2 läuft genau einmal je Spec vor Live — Eigenanschluss nur per workflow_dispatch, nie pull_request/push."""
+    eigen_pfad = SKILL / ".github" / "workflows" / "pipeline-stufe-2-eigen.yml"
+    assert eigen_pfad.is_file(), f"Stufe-2-Eigenanschluss fehlt: {eigen_pfad}"
+
+    for quelle, text in (
+        ("Generator", pipeline_stufe2.eigenanschluss_stufe2_yaml(teile=2)),
+        ("Repo-Workflow", eigen_pfad.read_text(encoding="utf-8")),
+    ):
+        assert "workflow_dispatch:" in text, f"{quelle}: workflow_dispatch fehlt"
+        assert "pull_request" not in text, f"{quelle}: verbotener Auslöser pull_request im Stufe-2-Eigenanschluss"
+        assert "\n  push:" not in text, f"{quelle}: verbotener Auslöser push im Stufe-2-Eigenanschluss"
+        assert pipeline_stufe2.pruefe_eigenanschluss_stufe2_text(text) == []
+        try:
+            import yaml  # type: ignore[import-untyped]
+        except ImportError:
+            continue
+        daten = yaml.safe_load(text)
+        assert isinstance(daten, dict)
+        on_block = daten.get("on") if "on" in daten else daten.get(True)
+        assert isinstance(on_block, dict), f"{quelle}: on-Block muss Mapping sein"
+        assert set(on_block) == {"workflow_dispatch"}, f"{quelle}: unerlaubte Auslöser {set(on_block)!r}"
+
+    mit_pr = pipeline_stufe2.eigenanschluss_stufe2_yaml(teile=2).replace(
+        "  workflow_dispatch:\n",
+        "  workflow_dispatch:\n  pull_request:\n",
+    )
+    befunde_pr = pipeline_stufe2.pruefe_eigenanschluss_stufe2_text(mit_pr)
+    assert any("pull_request" in b for b in befunde_pr)
+
+    mit_push = pipeline_stufe2.eigenanschluss_stufe2_yaml(teile=2).replace(
+        "  workflow_dispatch:\n",
+        "  workflow_dispatch:\n  push:\n    branches: [main]\n",
+    )
+    befunde_push = pipeline_stufe2.pruefe_eigenanschluss_stufe2_text(mit_push)
+    assert any("push" in b for b in befunde_push)
+
+    # CLI --eigenanschluss --pruefen akzeptiert den sauberen Workflow und lehnt pull_request/push ab.
+    ok_cli = _cli(
+        "to_spawn.pruef.pipeline_stufe2",
+        "vorlage",
+        "--eigenanschluss",
+        "--pruefen",
+        str(eigen_pfad),
+        cwd=SKILL,
+        extra_env={"PYTHONIOENCODING": "cp1252"},
+    )
+    assert ok_cli.returncode == 0, ok_cli.stdout + ok_cli.stderr
+
+    kaputt_pfad = tmp_path / "eigen_mit_push.yml"
+    kaputt_pfad.write_text(mit_push, encoding="utf-8")
+    rot_cli = _cli(
+        "to_spawn.pruef.pipeline_stufe2",
+        "vorlage",
+        "--eigenanschluss",
+        "--pruefen",
+        str(kaputt_pfad),
+        cwd=SKILL,
+        extra_env={"PYTHONIOENCODING": "cp1252"},
+    )
+    assert rot_cli.returncode == 1
+    assert "push" in rot_cli.stderr
