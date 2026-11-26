@@ -473,3 +473,241 @@ def test_autouse_raeumung_laeuft_erst_nach_monkeypatch_undo(tmp_path: Path) -> N
         check=False,
     )
     assert lauf.returncode == 0, lauf.stdout + lauf.stderr
+
+
+# --- #355 Nachfix L233 (Linux-Teil): roter Suite-Basetemp, grünes tmp_path, isoliertes TMPDIR ---
+
+
+@pytest.mark.braucht("posix")
+@pytest.mark.skipif(not _HAT_XDIST, reason="pytest-xdist fehlt")
+def test_suite_sh_raeumt_eigenen_basetemp_auch_bei_rotem_lauf(tmp_path: Path) -> None:
+    """Weg-Test (#355, L233): ``bash skripte/suite.sh`` räumt auf Linux seinen eigenen
+    ``pt-*``-Basetemp auch bei Exit 1 vollständig ab, sodass die Temp-Wurzel nicht wächst."""
+    import shutil
+    import subprocess
+
+    skill = Path(__file__).resolve().parent.parent
+    klon = tmp_path / "klon"
+    (klon / "skripte").mkdir(parents=True)
+    (klon / "tests").mkdir()
+    shutil.copy(skill / "skripte" / "suite.sh", klon / "skripte" / "suite.sh")
+    (klon / "conftest.py").write_text("", encoding="utf-8")
+    (klon / "to_spawn").symlink_to(skill / "to_spawn", target_is_directory=True)
+    (klon / "tests" / "hilfen").symlink_to(skill / "tests" / "hilfen", target_is_directory=True)
+    (klon / "tests" / "conftest.py").write_text(
+        f"import importlib.util\n"
+        f"_s = importlib.util.spec_from_file_location('_c355_suite', {str(skill / 'tests' / 'conftest.py')!r})\n"
+        f"_m = importlib.util.module_from_spec(_s)\n"
+        f"_s.loader.exec_module(_m)\n"
+        f"for _n in dir(_m):\n"
+        f"    if not _n.startswith('__'):\n"
+        f"        globals()[_n] = getattr(_m, _n)\n",
+        encoding="utf-8",
+    )
+    (klon / "tests" / "test_mini_suite.py").write_text(
+        "import os\n"
+        "import tempfile\n"
+        "from pathlib import Path\n\n"
+        "def test_gruen_mit_temp_resten(tmp_path: Path) -> None:\n"
+        "    for i in range(25):\n"
+        "        (tmp_path / f'datei_{i}.txt').write_text('x', encoding='utf-8')\n"
+        "    with tempfile.NamedTemporaryFile(\n"
+        "        'w', prefix='probesitz-1-', suffix='.log', delete=False, encoding='utf-8'\n"
+        "    ) as log_datei:\n"
+        "        log_datei.write('probe')\n"
+        "    (Path(os.environ['TMPDIR']) / 'claude-empty-probe').write_text('', encoding='utf-8')\n\n"
+        "def test_rot_in_suite(tmp_path: Path) -> None:\n"
+        "    (tmp_path / 'fehler.txt').write_text('rot', encoding='utf-8')\n"
+        "    assert False, 'absichtlich rot'\n",
+        encoding="utf-8",
+    )
+    platte = tmp_path / "platte-temp"
+    platte.mkdir()
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith(("PYTEST_", "TO_SPAWN_")) and k not in ("TMPDIR", "TEMP", "TMP")
+    }
+    env["PYTHONPATH"] = os.pathsep.join([str(skill), env.get("PYTHONPATH", "")]).rstrip(os.pathsep)
+    env["TO_SPAWN_TEMP_ORDNER"] = str(platte)
+
+    lauf = subprocess.run(
+        ["bash", str(klon / "skripte" / "suite.sh"), "-n", "2"],
+        cwd=str(klon),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=90,
+        check=False,
+    )
+    assert lauf.returncode == 1, lauf.stdout + lauf.stderr
+    reste = sorted(p.name for p in platte.iterdir())
+    assert reste == [], f"Rote Suite ließ Reste in der Temp-Wurzel zurück: {reste}"
+
+
+@pytest.mark.braucht("posix")
+def test_gruener_test_raeumt_tmp_path_und_isoliert_tmpdir_von_temp_wurzel(tmp_path: Path) -> None:
+    """Weg-Test (#355, L233): unter Linux isoliert ``tests/conftest.py`` ``TMPDIR``/``TEMP``/``TMP``
+    und ``tempfile.tempdir`` je Test unter ``basetemp`` und räumt nach grünem Test auch dessen
+    ``tmp_path`` sofort ab — weder ``probesitz-1-*.log``, ``claude-empty-*``, ``srt-mux-*.sock``
+    noch verschachtelte ``pt-*``-Kindläufe landen in der äußeren Temp-Wurzel."""
+    import subprocess
+    import sys
+
+    skill = Path(__file__).resolve().parent.parent
+    mini = tmp_path / "mini_iso"
+    mini.mkdir()
+    (mini / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    (mini / "conftest.py").write_text(
+        f"import importlib.util\n"
+        f"_s = importlib.util.spec_from_file_location('_c355_iso', {str(skill / 'tests' / 'conftest.py')!r})\n"
+        f"_m = importlib.util.module_from_spec(_s)\n"
+        f"_s.loader.exec_module(_m)\n"
+        f"for _n in dir(_m):\n"
+        f"    if not _n.startswith('__'):\n"
+        f"        globals()[_n] = getattr(_m, _n)\n",
+        encoding="utf-8",
+    )
+    spur_tmp = tmp_path / "gruen_tmp_path.txt"
+    spur_log = tmp_path / "gruen_probesitz_log.txt"
+    spur_rot = tmp_path / "rot_tmp_path.txt"
+    kind_conftest = (
+        "import importlib.util\n"
+        f"_s = importlib.util.spec_from_file_location('_ck355', {str(skill / 'tests' / 'conftest.py')!r})\n"
+        "_m = importlib.util.module_from_spec(_s)\n"
+        "_s.loader.exec_module(_m)\n"
+        "for _n in ('pytest_configure', 'pytest_sessionstart', 'pytest_sessionfinish'):\n"
+        "    globals()[_n] = getattr(_m, _n)\n"
+    )
+    (mini / "test_iso.py").write_text(
+        f"import os\n"
+        f"import subprocess\n"
+        f"import sys\n"
+        f"import tempfile\n"
+        f"from pathlib import Path\n\n"
+        f"def test_1_gruen_erzeugt_reste(tmp_path: Path) -> None:\n"
+        f"    (tmp_path / 'gross.txt').write_text('daten', encoding='utf-8')\n"
+        f"    Path({str(spur_tmp)!r}).write_text(str(tmp_path), encoding='utf-8')\n"
+        f"    with tempfile.NamedTemporaryFile(\n"
+        f"        'w', prefix='probesitz-1-', suffix='.log', delete=False, encoding='utf-8'\n"
+        f"    ) as log_f:\n"
+        f"        log_f.write('log')\n"
+        f"        Path({str(spur_log)!r}).write_text(log_f.name, encoding='utf-8')\n"
+        f"    tdir = Path(os.environ['TMPDIR'])\n"
+        f"    (tdir / 'claude-empty-1').write_text('', encoding='utf-8')\n"
+        f"    (tdir / 'srt-mux-1.sock').write_text('', encoding='utf-8')\n"
+        f"    (tdir / 'claude-http-1.sock').write_text('', encoding='utf-8')\n"
+        f"    kind = tmp_path / 'kind'\n"
+        f"    kind.mkdir()\n"
+        f"    (kind / 'pytest.ini').write_text('[pytest]\\n', encoding='utf-8')\n"
+        f"    (kind / 'conftest.py').write_text({kind_conftest!r}, encoding='utf-8')\n"
+        f"    (kind / 'test_kind_rot.py').write_text('def test_rot():\\n    assert False\\n', encoding='utf-8')\n"
+        f"    k_env = {{k: v for k, v in os.environ.items() if not k.startswith(('PYTEST_', 'TO_SPAWN_'))}}\n"
+        f"    k_env['PYTHONPATH'] = {str(skill)!r}\n"
+        f"    k_lauf = subprocess.run(\n"
+        f"        [sys.executable, '-m', 'pytest', str(kind), '-q', '-p', 'no:cacheprovider', '-p', 'no:xdist'],\n"
+        f"        cwd=str(kind),\n"
+        f"        env=k_env,\n"
+        f"        capture_output=True,\n"
+        f"        text=True,\n"
+        f"        timeout=60,\n"
+        f"        check=False,\n"
+        f"    )\n"
+        f"    assert k_lauf.returncode == 1, k_lauf.stdout + k_lauf.stderr\n\n"
+        f"def test_2_gruenes_tmp_path_und_log_sind_schon_weg() -> None:\n"
+        f"    alt_tmp = Path(Path({str(spur_tmp)!r}).read_text(encoding='utf-8'))\n"
+        f"    alt_log = Path(Path({str(spur_log)!r}).read_text(encoding='utf-8'))\n"
+        f"    assert not alt_tmp.exists(), f'Grünes tmp_path blieb liegen: {{alt_tmp}}'\n"
+        f"    assert not alt_log.exists(), f'probesitz-Log blieb liegen: {{alt_log}}'\n\n"
+        f"def test_3_rot_behaelt_kleines_artefakt(tmp_path: Path) -> None:\n"
+        f"    (tmp_path / 'rot.txt').write_text('rot', encoding='utf-8')\n"
+        f"    Path({str(spur_rot)!r}).write_text(str(tmp_path), encoding='utf-8')\n"
+        f"    assert False, 'absichtlich rot'\n",
+        encoding="utf-8",
+    )
+    aussen_tmp = tmp_path / "aussen-temp"
+    aussen_tmp.mkdir()
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTEST_", "TO_SPAWN_"))}
+    env["PYTHONPATH"] = os.pathsep.join([str(skill), env.get("PYTHONPATH", "")]).rstrip(os.pathsep)
+    env["TMPDIR"] = env["TEMP"] = env["TMP"] = str(aussen_tmp)
+
+    lauf = subprocess.run(
+        [sys.executable, "-m", "pytest", str(mini), "-q", "-p", "no:cacheprovider", "-p", "no:xdist"],
+        cwd=str(mini),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=90,
+        check=False,
+    )
+    assert lauf.returncode == 1, lauf.stdout + lauf.stderr
+    assert "test_2_gruenes_tmp_path_und_log_sind_schon_weg" not in lauf.stdout, lauf.stdout + lauf.stderr
+    aussen_eintraege = sorted(p.name for p in aussen_tmp.iterdir())
+    assert len(aussen_eintraege) == 1 and aussen_eintraege[0].startswith("pt-"), (
+        f"Äußere Temp-Wurzel hat fremde/doppelte Reste: {aussen_eintraege}"
+    )
+    rot_pfad = Path(spur_rot.read_text(encoding="utf-8"))
+    assert (rot_pfad / "rot.txt").is_file(), "Fehler-Artefakt des roten Direkt-Laufs bleibt klein erhalten"
+
+
+@pytest.mark.braucht("posix")
+def test_umzug_212_sperrdatei_bleibt_nicht_in_temp_wurzel(tmp_path: Path) -> None:
+    """Weg-Test (#355, L233): ``tests/test_umzug_212.py`` legt seine Sperrdatei im Lauf-Basetemp
+    statt in der äußeren Temp-Wurzel ab — nach dem Lauf liegt dort kein ``to-spawn-test-umzug-212.lock``."""
+    import subprocess
+    import sys
+
+    skill = Path(__file__).resolve().parent.parent
+    aussen_tmp = tmp_path / "aussen-umzug"
+    aussen_tmp.mkdir()
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTEST_", "TO_SPAWN_"))}
+    env["PYTHONPATH"] = os.pathsep.join([str(skill), env.get("PYTHONPATH", "")]).rstrip(os.pathsep)
+    env["TMPDIR"] = env["TEMP"] = env["TMP"] = str(aussen_tmp)
+
+    lauf = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "-p",
+            "no:xdist",
+            "tests/test_umzug_212.py::test_hook_umzug_ohne_umgebung_still",
+        ],
+        cwd=str(skill),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert lauf.returncode == 0, lauf.stdout + lauf.stderr
+    reste = sorted(p.name for p in aussen_tmp.iterdir())
+    assert reste == [], f"test_umzug_212 hinterließ Reste in der Temp-Wurzel: {reste}"
+
+
+@pytest.mark.braucht("posix")
+def test_suite_py_linux_aktiviert_basetemp_raeumen_bei_rot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Linux-Teil von ``skripte/suite.py`` setzt ``TO_SPAWN_SUITE_BASETEMP_RAEUMEN=1`` (#355)."""
+    import importlib.util
+
+    skill = Path(__file__).resolve().parent.parent
+    spec = importlib.util.spec_from_file_location("suite_py_rot_355", skill / "skripte" / "suite.py")
+    assert spec and spec.loader
+    modul = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(modul)
+
+    (tmp_path / "conftest.py").write_text("", encoding="utf-8")
+    monkeypatch.delenv("TO_SPAWN_SUITE_BASETEMP_RAEUMEN", raising=False)
+    gesehen: dict[str, object] = {}
+
+    def fake_lauf(befehl: list[str], wurzel: Path, *, env: object = None) -> int:
+        gesehen["env"] = env
+        return 1
+
+    monkeypatch.setattr(modul, "_datei_lauf", fake_lauf)
+    assert modul.main(["--wurzel", str(tmp_path)]) == 1
+    env = gesehen["env"]
+    assert isinstance(env, dict) and env.get("TO_SPAWN_SUITE_BASETEMP_RAEUMEN") == "1", env

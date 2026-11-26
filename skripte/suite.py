@@ -194,6 +194,8 @@ def main(argv: Sequence[str] | None = None, *, wurzel: Path = _SKILL) -> int:
             temp_umg = temp_ordner.umgebung()
             if temp_umg:
                 umg = {**os.environ, **temp_umg}
+        if sys.platform != "win32" and "TO_SPAWN_SUITE_BASETEMP_RAEUMEN" not in os.environ:
+            umg = {**(os.environ if umg is None else umg), "TO_SPAWN_SUITE_BASETEMP_RAEUMEN": "1"}
         return _datei_lauf([*basis, *parallel, *pfade, *extra], ziel_wurzel, env=umg)
 
     ziele = sammle_dateien(ziel_wurzel, pfade)

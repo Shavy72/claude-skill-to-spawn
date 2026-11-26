@@ -4,7 +4,8 @@
 # (collect_ignore = ["review-hook", "probe"], #214/#426) wird nicht installiert, ohne sie bricht das Skript ab.
 # Windows: delegiert an skripte/suite.py (je Testdatei im Job-Objekt über to_spawn/sitzungsjob.py).
 # Linux/macOS: -n 4 --dist worksteal = vier Worker mit Arbeits-Ausgleich (pytest-xdist, steht in tests/requirements.txt).
-# Ohne vorgegebenes TMPDIR lenkt der Linux-Teil Test-Temp über to_spawn.temp_ordner.pfad() auf die Platte statt tmpfs (#355/#136).
+# Ohne vorgegebenes TMPDIR lenkt der Linux-Teil Test-Temp über to_spawn.temp_ordner.pfad() auf die Platte statt tmpfs (#355/#136)
+# und räumt den eigenen pt-*-Basetemp auch bei Exit != 0 ab (TO_SPAWN_SUITE_BASETEMP_RAEUMEN=0 hält ihn zum Nachsehen).
 # Zusätzliche Argumente gehen an pytest (z. B. --durations=25 oder -n 6 zum Überschreiben der Worker-Zahl).
 # Exit-Code = Exit-Code von pytest (64 = nicht im Klon, kein pytest-Code).
 set -euo pipefail
@@ -23,4 +24,5 @@ if [ -z "${TMPDIR:-}" ] && [ -f to_spawn/temp_ordner.py ]; then
         export TMPDIR="$_TO_SPAWN_TEMP" TEMP="$_TO_SPAWN_TEMP" TMP="$_TO_SPAWN_TEMP"
     fi
 fi
+export TO_SPAWN_SUITE_BASETEMP_RAEUMEN="${TO_SPAWN_SUITE_BASETEMP_RAEUMEN:-1}"
 exec python -m pytest -q -p no:cacheprovider -n 4 --dist worksteal "$@"
