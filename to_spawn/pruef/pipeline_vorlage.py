@@ -12,7 +12,10 @@ Bündelt das Wissen für die GitHub-Actions-Vorlage Stufe 0+1 an genau einer Ste
   Python-Standardbibliothek gegen den Vertrag (Eingaben, Beschreibungen, Stufen, keine
   verbotenen Cache-Plugins).
 - :func:`stufe0_lauf` / :func:`stufe1_lauf` — plattformübergreifende Ausführung für Linux
-  und Windows (CLI: ``python -m to_spawn.pruef.pipeline_vorlage {stufe0,stufe1,vorlage}``).
+  und Windows (CLI: ``python -m to_spawn.pruef.pipeline_vorlage {basis-ref,stufe0,stufe1,vorlage}``).
+- :func:`bestimme_basis_ref` / :func:`basis_ref_schritt_yaml` — zentrale Basis-Ref-Wahl für
+  CI-Workflows (#830: bei ``pull_request`` + Merge-Commit als HEAD gilt ``HEAD^1`` statt
+  veraltetem ``pull_request.base.sha``).
 """
 
 from __future__ import annotations
@@ -37,6 +40,9 @@ log = logging.getLogger("to_spawn.pruef.pipeline_vorlage")
 
 #: Verbotenes Cache-Plugin für Stufe 1 (dynamisch zusammengesetzt, damit der Produktivcode sauber bleibt).
 _VERBOTENES_PLUGIN = "test" + "mon"
+
+#: GitHub-Null-SHA bei neuen Zweigen in ``push``-Ereignissen (``github.event.before``).
+_NULL_SHA = "0" * 40
 
 #: Gemeinsame Kopf-Doku aller Pipeline-Vorlagen (#581, #797): Zielbild und klare Rolle des Bau-Servers.
 KOPF_DOKU_ZEILEN: tuple[str, ...] = (
@@ -206,6 +212,108 @@ def kopf_doku_kommentar() -> str:
     return "".join(f"# {zeile}\n" for zeile in KOPF_DOKU_ZEILEN)
 
 
+def _eltern_commits(repo: Path, ref: str = "HEAD") -> tuple[str, ...]:
+    """Liefert die Eltern-SHAs eines Commits (leer bei Fehler oder Wurzel-Commit)."""
+    code, raus = sofort._git(repo, "rev-list", "--parents", "-n", "1", ref)
+    if code != 0:
+        return ()
+    teile = raus.strip().split()
+    return tuple(teile[1:]) if len(teile) > 1 else ()
+
+
+def _ref_ist_commit(repo: Path, ref: str) -> bool:
+    """Prüft per ``git rev-parse``, ob ``ref`` auf einen vorhandenen Commit zeigt."""
+    code, _ = sofort._git(repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+    return code == 0
+
+
+def bestimme_basis_ref(
+    repo: Path,
+    *,
+    eingabe_basis: str = "",
+    ereignis: str = "",
+    pr_basis: str = "",
+    push_vorher: str = "",
+    ziel: str = "HEAD",
+) -> str:
+    """Bestimmt die Git-Basis-Ref für CI-Diffs (Stufe 0, Stufe 1, Stufe 3; #830).
+
+    Reihenfolge:
+    1. Explizite Eingabe (``inputs.basis-ref``) hat immer Vorrang.
+    2. Bei ``pull_request`` und Merge-Commit (>= 2 Eltern) als ``ziel``:
+       ``<ziel>^1`` (erster Elternteil = aktueller Zielzweig-Stand im GitHub-Merge-Commit,
+       statt veraltetem ``github.event.pull_request.base.sha``).
+    3. Sonst bisherige Reihenfolge: ``pr_basis``, ``push_vorher`` (ungleich Null-SHA),
+       ``<ziel>~1`` (falls vorhanden), sonst ``<ziel>``.
+    """
+    eingabe = eingabe_basis.strip()
+    if eingabe:
+        return eingabe
+
+    ereignis_sauber = ereignis.strip()
+    pr_sauber = pr_basis.strip()
+    push_sauber = push_vorher.strip()
+    wurzel = config.repo_wurzel(repo)
+
+    ist_pr = ereignis_sauber == "pull_request" or (not ereignis_sauber and bool(pr_sauber))
+    if ist_pr:
+        eltern = _eltern_commits(wurzel, ziel)
+        erstes_eltern = f"{ziel}^1"
+        if len(eltern) >= 2 and _ref_ist_commit(wurzel, erstes_eltern):
+            return erstes_eltern
+
+    if pr_sauber:
+        return pr_sauber
+
+    if push_sauber and push_sauber != _NULL_SHA:
+        return push_sauber
+
+    vorgaenger = f"{ziel}~1"
+    if _ref_ist_commit(wurzel, vorgaenger):
+        return vorgaenger
+
+    return ziel
+
+
+def basis_ref_schritt_yaml(name: str = "Basis-Ref bestimmen") -> str:
+    """Erzeugt den gemeinsamen Workflow-Schritt zur Basis-Ref-Bestimmung (#830)."""
+    return (
+        f"      - name: {name}\n"
+        "        env:\n"
+        "          SKILL_PFAD: ${{ inputs.skill-pfad }}\n"
+        "          EINGABE_BASIS: ${{ inputs.basis-ref }}\n"
+        "          EREIGNIS_NAME: ${{ github.event_name }}\n"
+        "          PR_BASIS: ${{ github.event.pull_request.base.sha }}\n"
+        "          PUSH_VORHER: ${{ github.event.before }}\n"
+        "        run: |\n"
+        '          if [ -n "${PYTHONPATH:-}" ]; then\n'
+        '            SEP=":"\n'
+        '            [ "${RUNNER_OS:-}" = "Windows" ] && SEP=";"\n'
+        '            export PYTHONPATH="${SKILL_PFAD}${SEP}${PYTHONPATH}"\n'
+        "          else\n"
+        '            export PYTHONPATH="${SKILL_PFAD}"\n'
+        "          fi\n"
+        "          python -m to_spawn.pruef.pipeline_vorlage basis-ref \\\n"
+        "            --repo . \\\n"
+        '            --eingabe-basis "$EINGABE_BASIS" \\\n'
+        '            --ereignis "$EREIGNIS_NAME" \\\n'
+        '            --pr-basis "$PR_BASIS" \\\n'
+        '            --push-vorher "$PUSH_VORHER" \\\n'
+        '            --github-env "$GITHUB_ENV"\n'
+    )
+
+
+def _schreibe_github_env(ziel: Path | str | None, basis: str) -> None:
+    if not ziel:
+        return
+    if "\n" in basis or "\r" in basis:
+        raise ValueError(f"Ungültige Basis-Ref mit Zeilenumbruch: {basis!r}")
+    pfad = Path(ziel)
+    pfad.parent.mkdir(parents=True, exist_ok=True)
+    with pfad.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(f"BASIS_REF={basis}\n")
+
+
 def vorlage_yaml() -> str:
     """Erzeugt die wiederverwendbare ``workflow_call``-Vorlage für Stufe 0+1."""
     eingabe_zeilen: list[str] = []
@@ -261,24 +369,7 @@ def vorlage_yaml() -> str:
         '            python -m pip install -q -r "$ANFORDERUNGEN"\n'
         "          fi\n"
         "\n"
-        "      - name: Basis-Ref bestimmen\n"
-        "        env:\n"
-        "          EINGABE_BASIS: ${{ inputs.basis-ref }}\n"
-        "          PR_BASIS: ${{ github.event.pull_request.base.sha }}\n"
-        "          PUSH_VORHER: ${{ github.event.before }}\n"
-        "        run: |\n"
-        '          if [ -n "$EINGABE_BASIS" ]; then\n'
-        '            BASIS="$EINGABE_BASIS"\n'
-        '          elif [ -n "$PR_BASIS" ]; then\n'
-        '            BASIS="$PR_BASIS"\n'
-        '          elif [ -n "$PUSH_VORHER" ] && [ "$PUSH_VORHER" != "0000000000000000000000000000000000000000" ]; then\n'
-        '            BASIS="$PUSH_VORHER"\n'
-        "          elif git rev-parse --verify --quiet HEAD~1 >/dev/null; then\n"
-        '            BASIS="HEAD~1"\n'
-        "          else\n"
-        '            BASIS="HEAD"\n'
-        "          fi\n"
-        '          echo "BASIS_REF=$BASIS" >> "$GITHUB_ENV"\n'
+        f"{basis_ref_schritt_yaml()}"
         "\n"
         "      - name: Stufe 0 ausführen\n"
         "        env:\n"
@@ -337,24 +428,7 @@ def vorlage_yaml() -> str:
         '          git config --global user.email "ci@example.invalid"\n'
         "          git config --global init.defaultBranch main\n"
         "\n"
-        "      - name: Basis-Ref bestimmen\n"
-        "        env:\n"
-        "          EINGABE_BASIS: ${{ inputs.basis-ref }}\n"
-        "          PR_BASIS: ${{ github.event.pull_request.base.sha }}\n"
-        "          PUSH_VORHER: ${{ github.event.before }}\n"
-        "        run: |\n"
-        '          if [ -n "$EINGABE_BASIS" ]; then\n'
-        '            BASIS="$EINGABE_BASIS"\n'
-        '          elif [ -n "$PR_BASIS" ]; then\n'
-        '            BASIS="$PR_BASIS"\n'
-        '          elif [ -n "$PUSH_VORHER" ] && [ "$PUSH_VORHER" != "0000000000000000000000000000000000000000" ]; then\n'
-        '            BASIS="$PUSH_VORHER"\n'
-        "          elif git rev-parse --verify --quiet HEAD~1 >/dev/null; then\n"
-        '            BASIS="HEAD~1"\n'
-        "          else\n"
-        '            BASIS="HEAD"\n'
-        "          fi\n"
-        '          echo "BASIS_REF=$BASIS" >> "$GITHUB_ENV"\n'
+        f"{basis_ref_schritt_yaml()}"
         "\n"
         "      - name: Stufe 1 Import-Graph-Testauswahl ausführen\n"
         "        env:\n"
@@ -421,6 +495,8 @@ def pruefe_vorlage_text(text: str) -> list[str]:
         befunde.append("Abschnitt 'workflow_call:' fehlt")
     if not re.search(r"(?m)^permissions:\s*$", text) or "contents: read" not in text:
         befunde.append("minimale Berechtigung 'permissions: contents: read' fehlt")
+    if "pull_request_target" in text:
+        befunde.append("verbotener Auslöser 'pull_request_target' gefunden")
 
     zeilen = text.splitlines()
     for eingabe in EINGABEN:
@@ -439,6 +515,8 @@ def pruefe_vorlage_text(text: str) -> list[str]:
         befunde.append("Job 'stufe-0:' fehlt")
     if not re.search(r"(?m)^  stufe-1:\s*$", text):
         befunde.append("Job 'stufe-1:' fehlt")
+    if "to_spawn.pruef.pipeline_vorlage basis-ref" not in text:
+        befunde.append("Basis-Ref-Aufruf ('to_spawn.pruef.pipeline_vorlage basis-ref') fehlt")
     if "to_spawn.pruef.pipeline_vorlage stufe0" not in text and "to_spawn.pruef.sofort" not in text:
         befunde.append("Stufe-0-Aufruf fehlt")
     if "to_spawn.pruef.pipeline_vorlage stufe1" not in text and "to_spawn.pruef.import_graph" not in text:
@@ -667,6 +745,15 @@ def _parser() -> argparse.ArgumentParser:
     )
     unter = parser.add_subparsers(dest="befehl", required=True)
 
+    pb = unter.add_parser("basis-ref", help="Git-Basis-Ref für CI-Diffs (inkl. PR-Merge-Commit HEAD^1) bestimmen.")
+    pb.add_argument("--repo", type=Path, default=Path("."), help="Repo-Ordner")
+    pb.add_argument("--eingabe-basis", default="", help="Explizite Eingabe aus inputs.basis-ref")
+    pb.add_argument("--ereignis", default="", help="GitHub-Ereignisname (github.event_name)")
+    pb.add_argument("--pr-basis", default="", help="PR-Basis-SHA (github.event.pull_request.base.sha)")
+    pb.add_argument("--push-vorher", default="", help="Vorheriger SHA bei push (github.event.before)")
+    pb.add_argument("--ziel", default="HEAD", help="Git-Ziel-Ref (Standard: HEAD)")
+    pb.add_argument("--github-env", default="", help="Optionaler Pfad zu GITHUB_ENV für BASIS_REF=...")
+
     p0 = unter.add_parser("stufe0", help="Stufe 0 (ruff, Typ-Prüfung, Test-Schutz) ausführen.")
     p0.add_argument("--repo", type=Path, default=Path("."), help="Repo-Ordner")
     p0.add_argument("--basis", default="HEAD~1", help="Git-Basis-Ref")
@@ -707,6 +794,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     """CLI-Einstiegspunkt für lokale Nutzung und GitHub Actions."""
     konsole.utf8_ausgabe()
     args = _parser().parse_args(argv)
+
+    if args.befehl == "basis-ref":
+        basis = bestimme_basis_ref(
+            args.repo,
+            eingabe_basis=args.eingabe_basis,
+            ereignis=args.ereignis,
+            pr_basis=args.pr_basis,
+            push_vorher=args.push_vorher,
+            ziel=args.ziel,
+        )
+        try:
+            _schreibe_github_env(args.github_env or None, basis)
+        except (OSError, ValueError) as fehler:
+            log.warning("BASIS_REF konnte nicht nach %s geschrieben werden: %s", args.github_env, fehler)
+            sys.stderr.write(f"Basis-Ref-Fehler: {fehler}\n")
+            return leiter.GATE_FEHLER
+        sys.stdout.write(f"{basis}\n")
+        return 0
 
     if args.befehl == "vorlage":
         if args.stufe in ("2", "3", "nachtrunde"):

@@ -1526,18 +1526,7 @@ def vorlage_stufe3_yaml() -> str:
         '            python -m pip install -q -r "$ANFORDERUNGEN"\n'
         "          fi\n"
         "\n"
-        "      - name: Basis-Ref für Diff-Mutationstest bestimmen\n"
-        "        env:\n"
-        "          EINGABE_BASIS: ${{ inputs.basis-ref }}\n"
-        "        run: |\n"
-        '          if [ -n "$EINGABE_BASIS" ]; then\n'
-        '            BASIS="$EINGABE_BASIS"\n'
-        "          elif git rev-parse --verify --quiet HEAD~1 >/dev/null; then\n"
-        '            BASIS="HEAD~1"\n'
-        "          else\n"
-        '            BASIS="HEAD"\n'
-        "          fi\n"
-        '          echo "BASIS_REF=$BASIS" >> "$GITHUB_ENV"\n'
+        f"{pipeline_vorlage.basis_ref_schritt_yaml('Basis-Ref für Diff-Mutationstest bestimmen')}"
         "\n"
         "      - name: Diff-Mutationstest ausführen (nur Bericht/Vorschläge)\n"
         "        continue-on-error: true\n"
