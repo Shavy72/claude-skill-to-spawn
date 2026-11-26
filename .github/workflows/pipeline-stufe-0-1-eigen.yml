@@ -1,0 +1,25 @@
+# Eigenanschluss des Skill-Repos an die Pipeline-Vorlage Stufe 0+1 (#580, #796).
+name: Pipeline Stufe 0+1 (Eigenanschluss)
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pipeline-stufe-0-1-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pipeline-stufe-0-1:
+    uses: ./.github/workflows/pipeline-stufe-0-1.yml
+    with:
+      python-version: "3.13"
+      anforderungen: "tests/requirements.txt"
+      auslassungen: ".github/workflows/auslassungen.txt"
+      betriebssysteme: '["ubuntu-latest", "windows-latest"]'
+      skill-pfad: "."

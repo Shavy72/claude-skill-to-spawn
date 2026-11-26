@@ -88,7 +88,8 @@ def test_platz_frei_obergrenze_sessions() -> None:
 
 
 def test_platz_frei_nicht_linux_kein_urteil(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(speicher.sys, "platform", "win32")
+    """Nicht unterstütztes System (weder Linux noch Windows, #284): kein Urteil, Start erlaubt."""
+    monkeypatch.setattr(speicher.sys, "platform", "darwin")
     monkeypatch.delenv("TO_SPAWN_SPEICHER_MEMINFO", raising=False)
     monkeypatch.delenv("TO_SPAWN_SPEICHER_PROC", raising=False)
     frei, text = speicher.platz_frei(_KONFIG, frei=None, sessions=None)

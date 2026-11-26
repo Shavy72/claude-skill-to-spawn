@@ -380,6 +380,25 @@ class TestStufe3VorlageUndRunde:
         befunde = aufraeumen.pruefe_stufe3_vorlage_text(kaputt)
         assert befunde
 
+    def test_repo_workflow_stufe3_vorlage_vorhanden_und_synchron(self) -> None:
+        repo_wurzel = Path(__file__).resolve().parents[1]
+        pfad = repo_wurzel / ".github" / "workflows" / "pipeline-stufe-3.yml"
+        assert pfad.is_file(), f"Stufe-3-Vorlage fehlt: {pfad}"
+        inhalt = pfad.read_text(encoding="utf-8")
+        assert aufraeumen.pruefe_stufe3_vorlage_text(inhalt) == []
+        assert inhalt == aufraeumen.vorlage_stufe3_yaml()
+        assert aufraeumen.main(["vorlage", "--pruefen", str(pfad)]) == 0
+        assert pipeline_vorlage.main(["vorlage", "--stufe", "3", "--pruefen", str(pfad)]) == 0
+
+    def test_repo_workflow_stufe3_eigenanschluss_vorhanden_und_synchron(self) -> None:
+        repo_wurzel = Path(__file__).resolve().parents[1]
+        pfad = repo_wurzel / ".github" / "workflows" / "pipeline-stufe-3-eigen.yml"
+        assert pfad.is_file(), f"Stufe-3-Eigenanschluss fehlt: {pfad}"
+        inhalt = pfad.read_text(encoding="utf-8")
+        assert aufraeumen.pruefe_eigenanschluss_stufe3_text(inhalt) == []
+        assert inhalt == aufraeumen.eigenanschluss_stufe3_yaml()
+        assert aufraeumen.main(["vorlage", "--eigenanschluss", "--pruefen", str(pfad)]) == 0
+
     def test_aufraeum_runde_buendelt_doppelte_quarantaene_und_mutation(self, tmp_path: Path) -> None:
         repo = _beispiel_repo(tmp_path)
         # Wackler-Spur für Teil 2 anlegen

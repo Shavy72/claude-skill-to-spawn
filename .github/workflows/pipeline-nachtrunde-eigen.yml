@@ -1,0 +1,47 @@
+# Eigenanschluss des Skill-Repos an die Nachtrunden-Vorlage (#582).
+# Zielbild der Pipeline-Vorlage (#581, #797):
+# - Triage neuer Befunde und Tickets vor dem Bau.
+# - Risikoarme Fixes gehen bei grüner CI automatisch durch.
+# - Restliche Änderungen gehen nur per Beweis (Prüf-Beleg / Freigabe) weiter.
+# - Nächtliche Audits (Stufe 3 / Nachtrunde) prüfen Qualität, Wackler und Mutationen.
+# Rolle des Bau-Servers:
+# - Ausschließlich Claude-Sessions und 'braucht Server'-Tests (@pytest.mark.braucht('server') / braucht_server).
+# - Alle übrigen Tests und Stufe-2-Komplettläufe laufen verteilt auf GitHub Actions (>= 2 Runner).
+name: Nachtrunde
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+    inputs:
+      immer-laufen:
+        description: "Commit-Vorabprüfung überspringen und Stufe 2 erzwingen."
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+concurrency:
+  group: nachtrunde-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  nachtrunde:
+    uses: ./.github/workflows/pipeline-nachtrunde.yml
+    with:
+      immer-laufen: ${{ inputs.immer-laufen == true }}
+      workflow-datei: "pipeline-nachtrunde-eigen.yml"
+      python-version: "3.13"
+      teile: 2
+      xdist-worker: "auto"
+      test-pfade: "tests"
+      anforderungen: "tests/requirements.txt"
+      auslassungen: ".github/workflows/auslassungen.txt"
+      betriebssysteme: "[\"ubuntu-latest\", \"windows-latest\"]"
+      mit-staging-app: false
+      server-marker-ausschliessen: true
+      skill-pfad: "."

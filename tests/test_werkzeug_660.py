@@ -16,7 +16,7 @@ import sys
 import time
 import types
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import pytest
 
@@ -27,6 +27,7 @@ from to_spawn import (
     cli_parser,
     config,
     context_mode,
+    leiter,
     probesitz,
     setup,
     speicher,
@@ -550,7 +551,6 @@ def test_agy_staffel_handoff_erkennt_frischen_handoff_mit_marker(tmp_path: Path)
     assert werkzeug.agy_staffel_handoff([ordner], "660", seit=seit, schon_uebergeben=fp) is None
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="Linux-Teil (#660)")
 def test_sessions_stand_und_aufseher_stand_lesen_agy_kontext(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / ".to-spawn").mkdir()
     (tmp_path / ".to-spawn" / "config.json").write_text(json.dumps({"runner": "agy"}), encoding="utf-8")
@@ -708,3 +708,123 @@ def test_probesitz_wegwerf_lauf_werte_bau_log_und_parser_mit_runner_agy(
     assert "--runner" in gesehen_argv
     assert gesehen_argv[gesehen_argv.index("--runner") + 1] == "agy"
     assert gesehen_argv[gesehen_argv.index("--model") + 1] == "gemini-4-neon-high"
+
+
+# --- Windows-Teil (#660): URIs, Kontext-Anzeigen, Bau-Log & Staffel-Handoff -
+
+
+def test_agy_uri_und_db_pfad_windows(tmp_path: Path) -> None:
+    ziel_win = PureWindowsPath(r"C:\Users\Nutzer\wt-660")
+    ziel_uri = "file:///C:/Users/Nutzer/wt-660"
+    assert werkzeug._uri_passt_zu_ordner("file:///C:/Users/Nutzer/wt-660", ziel_win, ziel_uri, windows=True)
+    assert werkzeug._uri_passt_zu_ordner("file:///c%3A/Users/Nutzer/wt-660", ziel_win, ziel_uri, windows=True)
+    assert werkzeug._uri_passt_zu_ordner("file:///c:/users/nutzer/wt-660/", ziel_win, ziel_uri, windows=True)
+    assert not werkzeug._uri_passt_zu_ordner("file:///C:/Users/Nutzer/wt-999", ziel_win, ziel_uri, windows=True)
+
+    leer_win = PureWindowsPath(r"C:\Users\Mein Profil\wt 660")
+    assert werkzeug._uri_passt_zu_ordner(
+        "file:///c%3A/Users/Mein%20Profil/wt%20660",
+        leer_win,
+        "file:///C:/Users/Mein%20Profil/wt%20660",
+        windows=True,
+    )
+    unc_win = PureWindowsPath(r"\\server\freigabe\wt-660")
+    assert werkzeug._uri_passt_zu_ordner(
+        "file://server/freigabe/wt-660",
+        unc_win,
+        "file://server/freigabe/wt-660",
+        windows=True,
+    )
+
+    # DB-Pfad mit Leerzeichen muss unter SQLite URI-Modus (file:///...%20...?mode=ro) lesbar sein.
+    wt = tmp_path / "wt 660"
+    wt.mkdir()
+    agy_ordner = tmp_path / "agy home"
+    uri = wt.resolve().as_uri()
+    if sys.platform == "win32":
+        # Kleinbuchstaben-Laufwerk + %3A wie bei Electron/VS Code/Antigravity unter Windows.
+        uri = uri[:8] + uri[8].lower() + "%3A" + uri[10:]
+    _schreibe_agy_db(
+        agy_ordner,
+        [("conv-win", [uri], "2026-11-26 11:00:00.000000+00:00", "CASCADE_RUN_STATUS_IDLE", "")],
+    )
+    assert werkzeug.agy_gespraech_fuer_ordner(wt, agy_ordner=agy_ordner) == "conv-win"
+
+
+def test_kontext_anzeigen_lesen_agy_auch_unter_win32(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / ".to-spawn").mkdir()
+    (tmp_path / ".to-spawn" / "config.json").write_text(json.dumps({"runner": "agy"}), encoding="utf-8")
+    wt = tmp_path / "wt-660"
+    wt.mkdir()
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(werkzeug, "agy_spitze_k", lambda pfad, **_k: 184.5 if Path(pfad) == wt else None)
+
+    stand = _lade_skript("sessions_stand_660_win", SKRIPTE / "sessions_stand.py", monkeypatch, repo=tmp_path)
+    monkeypatch.setattr(stand.config, "worktree_pfad", lambda _t: str(wt))
+    assert stand.token_text("660", tmp_path) == "184,5k"
+
+    monkeypatch.setattr(aufseher_stand.config, "worktree_pfad", lambda _t, _r=None: str(wt))
+    assert aufseher_stand._log_lage(660, tmp_path) == ("184,5k", "—", "—", 0)
+
+    umwelt = leiter._EchteUmwelt(tmp_path, types.SimpleNamespace())  # type: ignore[arg-type]
+    monkeypatch.setattr(leiter.leitstand, "leiter_respawn", lambda _t: None)
+    assert umwelt._kontext_k(660, wt) == 184.5
+
+
+def test_bau_agy_windows_bau_log_und_staffel_handoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import os
+
+    orig_env = dict(os.environ)
+    try:
+        bau = _bau_fixture(tmp_path, monkeypatch, {"runner": "agy", "staffel": {"aktiv": True}})
+        wt = tmp_path / "wt-660"
+        wt.mkdir()
+        handoff_dir = wt / "docs" / "handoffs"
+        handoff_dir.mkdir(parents=True)
+
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(bau.starter, "finde", lambda name: str(tmp_path / f"{name}.exe"))
+        monkeypatch.setattr(bau, "worktree_pfad", lambda _t: str(wt))
+        monkeypatch.setattr(bau, "handoff_dirs", lambda _t: [str(handoff_dir)])
+        monkeypatch.setattr(bau, "blocker_schranke", lambda *_a, **_k: None)
+        monkeypatch.setattr(bau, "auf_speicher_warten", lambda *_a, **_k: None)
+        monkeypatch.setattr(bau.nest, "git_hooks_einrichten", lambda _r: None)
+        monkeypatch.setattr(bau.terminal_maus, "maus_ruhig", lambda: None)
+        monkeypatch.setattr(bau, "umzug_anfragen_aufraeumen", lambda _t: tmp_path / "umzug-anfrage.json")
+        monkeypatch.setattr(
+            bau.startstelle,
+            "weiter_entscheidung",
+            lambda _t, _r: bau.startstelle.Entscheidung(True, 0, "", "", ""),
+        )
+        monkeypatch.setattr(bau.ticket_zustand, "lesen", lambda _t, _r: {"state": "open"})
+        monkeypatch.setattr(bau.ticket_zustand, "fertig_gebaut", lambda _d: False)
+
+        nachtraege: list[int] = []
+
+        def _nachtragen(_repo: Path, _ticket: str, _wt: Path, **kw: object) -> dict[str, object]:
+            nachtraege.append(int(kw["runde"]))
+            return {"typ": "session_ende", "runner": "agy"}
+
+        monkeypatch.setattr(bau.werkzeug, "agy_bau_log_nachtragen", _nachtragen)
+
+        runden: list[list[str]] = []
+
+        def _starte_session(cmd: list[str], _umzug: Path) -> tuple[int, None]:
+            runden.append(list(cmd))
+            if len(runden) == 1:
+                datei = handoff_dir / "HANDOFF_2026-11-26_660.md"
+                datei.write_text("# Handoff #660\nStaffel: weiter\nRunde 1 fertig.\n", encoding="utf-8")
+                zukunft = time.time() + 5
+                os.utime(datei, (zukunft, zukunft))
+            return 0, None
+
+        monkeypatch.setattr(bau, "starte_session", _starte_session)
+        monkeypatch.setattr(sys, "argv", ["bau.py", "660"])
+        assert bau.main() == 0
+        assert len(runden) == 2
+        assert nachtraege == [1, 2]
+        eintraege = bau_log.lese(wt, "660")
+        assert any(z.get("typ") == "handoff" and z.get("runner") == "agy" for z in eintraege)
+    finally:
+        os.environ.clear()
+        os.environ.update(orig_env)

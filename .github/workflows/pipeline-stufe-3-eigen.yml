@@ -1,0 +1,36 @@
+# Wöchentlicher Eigenanschluss des Skill-Repos an Pipeline-Vorlage Stufe 3 (#581, #800).
+# Zielbild der Pipeline-Vorlage (#581, #797):
+# - Triage neuer Befunde und Tickets vor dem Bau.
+# - Risikoarme Fixes gehen bei grüner CI automatisch durch.
+# - Restliche Änderungen gehen nur per Beweis (Prüf-Beleg / Freigabe) weiter.
+# - Nächtliche Audits (Stufe 3 / Nachtrunde) prüfen Qualität, Wackler und Mutationen.
+# Rolle des Bau-Servers:
+# - Ausschließlich Claude-Sessions und 'braucht Server'-Tests (@pytest.mark.braucht('server') / braucht_server).
+# - Alle übrigen Tests und Stufe-2-Komplettläufe laufen verteilt auf GitHub Actions (>= 2 Runner).
+name: Pipeline Stufe 3 (Wöchentliches Aufräumen)
+
+on:
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pipeline-stufe-3-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  pipeline-stufe-3:
+    uses: ./.github/workflows/pipeline-stufe-3.yml
+    with:
+      python-version: "3.13"
+      test-pfade: "tests"
+      anforderungen: "tests/requirements.txt"
+      wackler-schwelle: 2
+      wackler-fenster-tage: 14
+      langsamste-top: 10
+      mutation-aktiv: true
+      ersteller-agent: "stufe3-aufraeum-agent"
+      skill-pfad: "."

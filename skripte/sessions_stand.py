@@ -338,9 +338,9 @@ def token_text(ticket: str, repo: Path = REPO) -> str:
     if ort is not None:
         # Rückfall-Laufdatei im Hauptbaum kommt dazu (Worktree fehlte beim Schreiben, #257).
         spitze_k = bau_log.zusammenfassung(ort, ticket, hauptbaum=repo)["spitze_k"]
-    # Linux-Teil (#660): laufende ``agy``-Sessions schreiben keinen Claude-Stop-Hook —
+    # #660 (Linux + Windows): laufende ``agy``-Sessions schreiben keinen Claude-Stop-Hook —
     # Spitzen-Kontext aus dem ``agy``-Transkript lesen, wenn das Bau-Log noch keinen Wert hat.
-    if sys.platform != "win32" and (spitze_k is None or werkzeug.runner_von(config.lade(repo)) == "agy"):
+    if spitze_k is None or werkzeug.runner_von(config.lade(repo)) == "agy":
         agy_k = werkzeug.agy_spitze_k(wt)
         if agy_k is not None:
             spitze_k = max(spitze_k, agy_k) if spitze_k is not None else agy_k

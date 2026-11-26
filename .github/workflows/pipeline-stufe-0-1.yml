@@ -1,0 +1,223 @@
+# Wiederverwendbare Pipeline-Vorlage Stufe 0+1 (#580, #796).
+# Zielbild der Pipeline-Vorlage (#581, #797):
+# - Triage neuer Befunde und Tickets vor dem Bau.
+# - Risikoarme Fixes gehen bei grüner CI automatisch durch.
+# - Restliche Änderungen gehen nur per Beweis (Prüf-Beleg / Freigabe) weiter.
+# - Nächtliche Audits (Stufe 3 / Nachtrunde) prüfen Qualität, Wackler und Mutationen.
+# Rolle des Bau-Servers:
+# - Ausschließlich Claude-Sessions und 'braucht Server'-Tests (@pytest.mark.braucht('server') / braucht_server).
+# - Alle übrigen Tests und Stufe-2-Komplettläufe laufen verteilt auf GitHub Actions (>= 2 Runner).
+# Stufe 0: ruff, konfigurierbare Typ-Prüfung und AST-Diff-Test-Schutz.
+# Stufe 1: Ersatz-Lauf der statischen AST-Import-Graph-Testauswahl auf GitHub Actions.
+name: Pipeline Stufe 0+1
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        description: "Python-Version für die GitHub-Actions-Runner."
+        required: false
+        type: string
+        default: "3.13"
+      pfade:
+        description: "Optionale Pfad-Filter (leerzeichengetrennt, z. B. 'to_spawn tests'); leer = ganzes Repo."
+        required: false
+        type: string
+        default: ""
+      basis-ref:
+        description: "Git-Basis-Ref für Diff, Test-Schutz und Import-Graph (leer = automatisch PR-Basis oder Vorgänger-Commit)."
+        required: false
+        type: string
+        default: ""
+      ruff-befehl:
+        description: "Optionaler ruff-Befehl für Stufe 0 (leer = Basis-Konfig oder Standard-ruff)."
+        required: false
+        type: string
+        default: ""
+      typ-befehl:
+        description: "Optionaler Typ-Prüf-Befehl für Stufe 0, z. B. 'mypy to_spawn' (leer = Basis-Konfig oder ausgelassen)."
+        required: false
+        type: string
+        default: ""
+      test-schutz:
+        description: "AST-Diff-Test-Schutz in Stufe 0 aktivieren (verhindert entfernte Prüfungen und geänderte Grenzwerte)."
+        required: false
+        type: boolean
+        default: true
+      anforderungen:
+        description: "Pfad zu pip-Abhängigkeiten für Tests (leer = nur pytest und ruff)."
+        required: false
+        type: string
+        default: "tests/requirements.txt"
+      test-pfade:
+        description: "Optionale Test-Wurzelordner (leerzeichengetrennt, z. B. 'tests') für Stufe 1."
+        required: false
+        type: string
+        default: ""
+      pytest-befehl:
+        description: "Optionale zusätzliche pytest-Argumente für Stufe 1 (z. B. '-x --tb=short')."
+        required: false
+        type: string
+        default: ""
+      auslassungen:
+        description: "Optionaler Pfad zu einer Auslassungs-Liste im Format '<test-id>  # <grund>'."
+        required: false
+        type: string
+        default: ""
+      betriebssysteme:
+        description: "JSON-Array der Runner-Betriebssysteme für Stufe 1 (z. B. ubuntu-latest und windows-latest)."
+        required: false
+        type: string
+        default: "[\"ubuntu-latest\"]"
+      skill-pfad:
+        description: "Pfad zum Skill-Repo im Runner (Eigenanschluss '.', Fremdrepo z. B. '.to-spawn-skill')."
+        required: false
+        type: string
+        default: "."
+
+permissions:
+  contents: read
+
+jobs:
+  stufe-0:
+    name: Stufe 0 (ruff, Typ-Prüfung, Test-Schutz)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ inputs.python-version }}"
+
+      - name: Werkzeuge für Stufe 0 installieren
+        env:
+          ANFORDERUNGEN: ${{ inputs.anforderungen }}
+        run: |
+          python -m pip install -q ruff
+          if [ -n "$ANFORDERUNGEN" ] && [ -f "$ANFORDERUNGEN" ]; then
+            python -m pip install -q -r "$ANFORDERUNGEN"
+          fi
+
+      - name: Basis-Ref bestimmen
+        env:
+          EINGABE_BASIS: ${{ inputs.basis-ref }}
+          PR_BASIS: ${{ github.event.pull_request.base.sha }}
+          PUSH_VORHER: ${{ github.event.before }}
+        run: |
+          if [ -n "$EINGABE_BASIS" ]; then
+            BASIS="$EINGABE_BASIS"
+          elif [ -n "$PR_BASIS" ]; then
+            BASIS="$PR_BASIS"
+          elif [ -n "$PUSH_VORHER" ] && [ "$PUSH_VORHER" != "0000000000000000000000000000000000000000" ]; then
+            BASIS="$PUSH_VORHER"
+          elif git rev-parse --verify --quiet HEAD~1 >/dev/null; then
+            BASIS="HEAD~1"
+          else
+            BASIS="HEAD"
+          fi
+          echo "BASIS_REF=$BASIS" >> "$GITHUB_ENV"
+
+      - name: Stufe 0 ausführen
+        env:
+          SKILL_PFAD: ${{ inputs.skill-pfad }}
+          RUFF_BEFEHL: ${{ inputs.ruff-befehl }}
+          TYP_BEFEHL: ${{ inputs.typ-befehl }}
+          TEST_SCHUTZ: ${{ inputs.test-schutz }}
+          PFADE: ${{ inputs.pfade }}
+        run: |
+          args=(--repo . --basis "$BASIS_REF" --ziel HEAD)
+          [ -n "$RUFF_BEFEHL" ] && args+=(--ruff-befehl "$RUFF_BEFEHL")
+          [ -n "$TYP_BEFEHL" ] && args+=(--typ-befehl "$TYP_BEFEHL")
+          [ "$TEST_SCHUTZ" = "false" ] && args+=(--kein-test-schutz)
+          [ -n "$PFADE" ] && args+=(--pfade "$PFADE")
+          PYTHONPATH="${SKILL_PFAD}:${PYTHONPATH:-}" python -m to_spawn.pruef.pipeline_vorlage stufe0 "${args[@]}"
+
+  stufe-1:
+    name: Stufe 1 Import-Graph (${{ matrix.os }})
+    needs: stufe-0
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJson(inputs.betriebssysteme) }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ inputs.python-version }}"
+
+      - name: tmux installieren (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q tmux
+
+      - name: Test-Abhängigkeiten installieren
+        env:
+          ANFORDERUNGEN: ${{ inputs.anforderungen }}
+        run: |
+          if [ -n "$ANFORDERUNGEN" ] && [ -f "$ANFORDERUNGEN" ]; then
+            python -m pip install -q -r "$ANFORDERUNGEN" ruff
+          else
+            python -m pip install -q pytest ruff
+          fi
+
+      - name: git-Identität für Tests
+        run: |
+          git config --global user.name "ci"
+          git config --global user.email "ci@example.invalid"
+          git config --global init.defaultBranch main
+
+      - name: Basis-Ref bestimmen
+        env:
+          EINGABE_BASIS: ${{ inputs.basis-ref }}
+          PR_BASIS: ${{ github.event.pull_request.base.sha }}
+          PUSH_VORHER: ${{ github.event.before }}
+        run: |
+          if [ -n "$EINGABE_BASIS" ]; then
+            BASIS="$EINGABE_BASIS"
+          elif [ -n "$PR_BASIS" ]; then
+            BASIS="$PR_BASIS"
+          elif [ -n "$PUSH_VORHER" ] && [ "$PUSH_VORHER" != "0000000000000000000000000000000000000000" ]; then
+            BASIS="$PUSH_VORHER"
+          elif git rev-parse --verify --quiet HEAD~1 >/dev/null; then
+            BASIS="HEAD~1"
+          else
+            BASIS="HEAD"
+          fi
+          echo "BASIS_REF=$BASIS" >> "$GITHUB_ENV"
+
+      - name: Stufe 1 Import-Graph-Testauswahl ausführen
+        env:
+          SKILL_PFAD: ${{ inputs.skill-pfad }}
+          PFADE: ${{ inputs.pfade }}
+          TEST_PFADE: ${{ inputs.test-pfade }}
+          PYTEST_BEFEHL: ${{ inputs.pytest-befehl }}
+          AUSLASSUNGEN: ${{ inputs.auslassungen }}
+        run: |
+          args=(--repo . --basis "$BASIS_REF" --ziel HEAD --junitxml "$RUNNER_TEMP/junit-stufe1.xml" --summary-pfad "$GITHUB_STEP_SUMMARY")
+          [ -n "$PFADE" ] && args+=(--pfade "$PFADE")
+          [ -n "$TEST_PFADE" ] && args+=(--test-pfade "$TEST_PFADE")
+          [ -n "$PYTEST_BEFEHL" ] && args+=(--pytest-befehl "$PYTEST_BEFEHL")
+          [ -n "$AUSLASSUNGEN" ] && args+=(--auslassungen "$AUSLASSUNGEN")
+          PYTHONPATH="${SKILL_PFAD}:${PYTHONPATH:-}" python -m to_spawn.pruef.pipeline_vorlage stufe1 "${args[@]}"
+
+      - name: JUnit-Artefakt (Stufe 1)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-stufe1-${{ matrix.os }}
+          path: ${{ runner.temp }}/junit-stufe1.xml
+          if-no-files-found: ignore

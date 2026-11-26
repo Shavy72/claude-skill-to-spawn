@@ -61,7 +61,7 @@ Der Job `staging-probe` hängt hinter `stufe-2` und ist strikt an `if: ${{ input
 
 ## Einbindung im Skill-Repo (Eigenanschluss mit `>= 2` Runnern)
 
-Die erzeugten Workflow-Dateien `.github/workflows/pipeline-stufe-2.yml` (Vorlage) und `.github/workflows/pipeline-stufe-2-eigen.yml` (Eigenanschluss mit `teile: 2`, Auslöser ausschließlich `workflow_dispatch` — bewusst ohne `pull_request`/`push`, da Stufe 2 genau einmal je Spec vor Live läuft) sind im Skill-Repo eingehängt. Zum Aktualisieren oder Prüfen aus der einen Quelle (`to_spawn/pruef/pipeline_stufe2.py`) reichen vier Befehle:
+Die wiederverwendbare Vorlage `.github/workflows/pipeline-stufe-2.yml` und der Eigenanschluss `.github/workflows/pipeline-stufe-2-eigen.yml` (mit `teile: 2`, `xdist-worker: "auto"`, `mit-staging-app: false`, `server-marker-ausschliessen: true` und Auslöser ausschließlich `workflow_dispatch` — bewusst ohne `pull_request`/`push`, da Stufe 2 genau einmal je Spec vor Live läuft) sind im Skill-Repo direkt eingehängt und werden durch `tests/test_pipeline_stufe2_581.py` gegen den Generator geprüft. Zum Aktualisieren oder Prüfen aus der einen Quelle (`to_spawn/pruef/pipeline_stufe2.py`) reichen vier Befehle:
 
 ```bash
 python -m to_spawn.pruef.pipeline_stufe2 vorlage --ausgabe .github/workflows/pipeline-stufe-2.yml
@@ -89,7 +89,7 @@ Stufe 3 bündelt drei Aufräum-Bausteine ohne Feature-Bau mit strikt minimalen L
 
 ### Einbindung von Stufe 3 im Skill-Repo
 
-Die Workflow-Dateien `.github/workflows/pipeline-stufe-3.yml` (Vorlage) und `.github/workflows/pipeline-stufe-3-eigen.yml` (wöchentlicher Eigenanschluss) werden in #800 bereitgestellt. Zum Aktualisieren oder Prüfen aus `to_spawn/pruef/aufraeumen.py`:
+Die Workflow-Dateien `.github/workflows/pipeline-stufe-3.yml` (Vorlage) und `.github/workflows/pipeline-stufe-3-eigen.yml` (wöchentlicher Eigenanschluss, aus #800) sind im Skill-Repo eingehängt. Zum Aktualisieren oder Prüfen aus `to_spawn/pruef/aufraeumen.py`:
 
 ```bash
 python -m to_spawn.pruef.aufraeumen vorlage --ausgabe .github/workflows/pipeline-stufe-3.yml

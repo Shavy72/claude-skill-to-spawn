@@ -390,3 +390,24 @@ def test_cli_vorlage_gibt_gueltigen_text_aus(modus: str) -> None:
     assert lauf.returncode == 0, lauf.stdout + lauf.stderr
     assert "name:" in lauf.stdout
     assert "testmon" not in lauf.stdout.lower()
+
+
+# --- 5. Eingecheckte Workflow-Dateien im Skill-Repo (#580, #796) --------------------------------
+
+
+def test_eingecheckte_workflow_vorlage_entspricht_generator() -> None:
+    vorlage_pfad = SKILL / ".github" / "workflows" / "pipeline-stufe-0-1.yml"
+    assert vorlage_pfad.is_file(), f"Workflow-Vorlage fehlt: {vorlage_pfad}"
+    inhalt = vorlage_pfad.read_text(encoding="utf-8")
+    assert pipeline_vorlage.pruefe_vorlage_text(inhalt) == []
+    assert inhalt == pipeline_vorlage.vorlage_yaml()
+    assert "testmon" not in inhalt.lower()
+
+
+def test_eingecheckter_eigenanschluss_entspricht_generator() -> None:
+    eigen_pfad = SKILL / ".github" / "workflows" / "pipeline-stufe-0-1-eigen.yml"
+    assert eigen_pfad.is_file(), f"Eigenanschluss-Workflow fehlt: {eigen_pfad}"
+    inhalt = eigen_pfad.read_text(encoding="utf-8")
+    assert inhalt == pipeline_vorlage.eigenanschluss_yaml()
+    assert "uses: ./.github/workflows/pipeline-stufe-0-1.yml" in inhalt
+    assert "testmon" not in inhalt.lower()
