@@ -271,7 +271,7 @@ def zeige(zustand: dict[str, Any]) -> str:
 
 
 def _pruefe_login_agy(*, laeufer: Laeufer, which: Which) -> Ergebnis:
-    """Punkt 1 für ``agy`` (Linux-Teil, #660): ``agy models`` prüft Installation und Login."""
+    """Punkt 1 für ``agy`` (#660): ``agy models`` prüft Installation und Login."""
     agy = which("agy")
     if not agy:
         return _rot(1, "agy nicht gefunden", "Antigravity CLI (agy) installieren + anmelden")

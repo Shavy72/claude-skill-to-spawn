@@ -14,12 +14,13 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import sqlite3
 import sys
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePath, PureWindowsPath
 from typing import Any, Literal
 from urllib.parse import unquote, urlparse
 
@@ -291,7 +292,7 @@ def session_zustand(
     return "still"
 
 
-# --- agy-Kontext-Auswertung & Staffel-Übergabe (#660, Linux-Teil) -----------
+# --- agy-Kontext-Auswertung & Staffel-Übergabe (#660) -----------------------
 
 
 def agy_daten_ordner(heim: Path | None = None) -> Path:
@@ -454,13 +455,39 @@ def agy_json_auswerten(text: str) -> dict[str, Any] | None:
     return _eintraege_auswerten(eintraege)
 
 
-def _uri_passt_zu_ordner(uri: str, ziel: Path, ziel_uri: str) -> bool:
+_WIN_URI_LAUFWERK = re.compile(r"^/[A-Za-z]:(?:[\\/]|$)")
+
+
+def _uri_passt_zu_ordner(
+    uri: str,
+    ziel: PurePath,
+    ziel_uri: str,
+    *,
+    windows: bool = _WINDOWS,
+) -> bool:
     if uri == ziel_uri:
         return True
     if not uri.startswith("file://"):
         return False
     geparst = urlparse(uri)
     pfad = unquote(geparst.path)
+    if windows:
+        netloc = unquote(geparst.netloc)
+        if netloc and netloc.lower() != "localhost":
+            if len(netloc) == 2 and netloc[0].isalpha() and netloc[1] == ":":
+                pfad = f"{netloc}{pfad}"
+            else:
+                pfad = f"\\\\{netloc}{pfad.replace('/', '\\\\')}"
+        elif _WIN_URI_LAUFWERK.match(pfad):
+            pfad = pfad[1:]
+        if not pfad:
+            return False
+        if isinstance(ziel, Path) and sys.platform == "win32":
+            try:
+                return os.path.normcase(str(Path(pfad).resolve())) == os.path.normcase(str(ziel))
+            except OSError:
+                return False
+        return str(PureWindowsPath(pfad)).lower() == str(PureWindowsPath(ziel)).lower()
     if not pfad:
         return False
     try:
@@ -487,10 +514,11 @@ def agy_gespraech_fuer_ordner(
     try:
         ziel = ordner.expanduser().resolve()
         ziel_uri = ziel.as_uri()
+        db_uri = f"{db.resolve().as_uri()}?mode=ro"
     except (OSError, ValueError):
         return None
     try:
-        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=1.0)
+        con = sqlite3.connect(db_uri, uri=True, timeout=1.0)
     except sqlite3.Error as fehler:
         log.debug("agy-Datenbank %s nicht lesbar: %s", db, fehler)
         return None
@@ -505,6 +533,7 @@ def agy_gespraech_fuer_ordner(
     finally:
         con.close()
 
+    ist_windows = sys.platform == "win32"
     for cid, uris_roh, mod_roh, parent in zeilen:
         if not isinstance(cid, str) or not cid.strip():
             continue
@@ -515,7 +544,7 @@ def agy_gespraech_fuer_ordner(
         except ValueError:
             continue
         if not isinstance(uris, list) or not any(
-            isinstance(u, str) and _uri_passt_zu_ordner(u, ziel, ziel_uri) for u in uris
+            isinstance(u, str) and _uri_passt_zu_ordner(u, ziel, ziel_uri, windows=ist_windows) for u in uris
         ):
             continue
         if nach is not None:

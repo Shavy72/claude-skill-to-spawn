@@ -521,7 +521,7 @@ def _log_lage(n: int, repo: Path) -> tuple[str, str, str, int] | None:
     """
     try:
         ort = bau_log.log_ort_fuer(n, repo)
-        ist_agy = sys.platform != "win32" and werkzeug.runner_von(config.lade(repo)) == "agy"
+        ist_agy = werkzeug.runner_von(config.lade(repo)) == "agy"
         if ort is None:
             if ist_agy:
                 agy_k = werkzeug.agy_spitze_k(Path(config.worktree_pfad(n, repo)).expanduser())
@@ -530,7 +530,7 @@ def _log_lage(n: int, repo: Path) -> tuple[str, str, str, int] | None:
             return None
         zeilen = bau_log.lese(ort, n, hauptbaum=repo)
         spitze_k = bau_log.zusammenfassung(ort, n, hauptbaum=repo)["spitze_k"]
-        if sys.platform != "win32" and (spitze_k is None or ist_agy):
+        if spitze_k is None or ist_agy:
             agy_k = werkzeug.agy_spitze_k(Path(config.worktree_pfad(n, repo)).expanduser())
             if agy_k is not None:
                 spitze_k = max(spitze_k, agy_k) if spitze_k is not None else agy_k
