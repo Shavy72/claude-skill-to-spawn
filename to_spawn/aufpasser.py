@@ -1055,17 +1055,22 @@ def eingabe_leer(text: str) -> bool:
 #: bestehende ``stand.json``-Einträge mit älterem Hash-Format sauber migrieren, ohne ``seit``
 #: oder ``pane_aenderung`` als vermeintliche Aktivität zurückzusetzen.
 PANE_HASH_VERSION = 2
+#: Format eines 40-stelligen SHA-1-Hex-Digests (unversionierter Alt-Hash v1 und Digest-Anteil ab v2, #624).
+_SHA1_HEX = re.compile(r"^[0-9a-f]{40}$")
 
 
 def _pane_hash_version(wert: object) -> int:
-    """Format-Version eines gespeicherten ``pane_hash``-Werts (unversionierte Alt-Hashes ⇒ 1)."""
+    """Format-Version eines gespeicherten ``pane_hash``-Werts (#624):
+    ``v<N>:<sha1>`` ⇒ ``N``, unversionierter 40-stelliger SHA-1-Alt-Hash ⇒ ``1``,
+    alles andere (leer, Platzhalter wie ``"alt"``) ⇒ ``0`` (kein Formatwechsel)."""
     if not isinstance(wert, str) or not wert:
         return 0
     if wert.startswith("v"):
-        praefix, trenner, _ = wert[1:].partition(":")
-        if trenner and praefix.isdigit():
+        praefix, trenner, rest = wert[1:].partition(":")
+        if trenner and praefix.isdigit() and _SHA1_HEX.fullmatch(rest):
             return int(praefix)
-    return 1
+        return 0
+    return 1 if _SHA1_HEX.fullmatch(wert) else 0
 
 
 def _zeile_fuer_hash(zeile: str) -> str:
@@ -2640,16 +2645,17 @@ class Aufpasser:
         if alt_hash != h:
             alt_seit = float(e.get("seit") or 0)
             e["hash"] = h
-            if _pane_hash_version(alt_hash) != _pane_hash_version(h):
+            alt_version = _pane_hash_version(alt_hash)
+            if alt_version > 0 and alt_version != _pane_hash_version(h):
                 # Hash-Format-/Versionswechsel (#624): bestehenden Stand migrieren, ohne
                 # ``seit``/``pane_aenderung`` als vermeintliche Aktivität zurückzusetzen.
                 if "pane_aenderung" in e and eingabe_leer(text):
                     e.pop("pane_aenderung", None)
                     sperr_zeit = float(e.get("eingriff") or 0)
-                if hinweis is not None and not e["stufe"] and hinweis > sperr_zeit:
+                if not alt_seit:
+                    e["seit"] = hinweis if hinweis is not None else self.jetzt
+                elif hinweis is not None and not e["stufe"] and hinweis > sperr_zeit and hinweis < alt_seit:
                     e["seit"] = hinweis
-                elif not alt_seit:
-                    e["seit"] = self.jetzt
             else:
                 if hinweis is not None and hinweis > alt_seit and hinweis > sperr_zeit:
                     e["seit"] = hinweis

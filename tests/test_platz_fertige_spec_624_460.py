@@ -1132,3 +1132,45 @@ def test_weg_624_alt_stand_json_und_fluechtige_gegenprobe_raeumt_im_ersten_zyklu
     assert dauer_s < 60.0, f"platz_schaffen brauchte {dauer_s:.1f} s (>= 60 s)"
     assert _sitzung_fenster(sitzung_alt) == [], (caplog.text, welt.log())
     assert "inzwischen aktiv" not in caplog.text, caplog.text
+
+
+def test_hash_migration_bewahrt_aelteres_seit_und_erkennt_platzhalter_als_aenderung(tmp_path: Path) -> None:
+    """#624 Fix-Runde 3:
+    1. Bei einer v1→v2-Hash-Migration darf ein jüngerer ``seit_hinweis`` (z. B. frische
+       Session-JSON-``mtime``) ein bereits älteres ``seit`` im Stand nicht verkürzen.
+    2. Nicht-Hash-Platzhalter wie ``"alt"`` zählen nicht als Formatwechsel — ``eintrag()``
+       wertet sie als echte Textänderung und setzt ``stufe`` zurück auf 0."""
+    jetzt = time.time()
+    a = aufpasser.Aufpasser(
+        aufpasser.Einstellungen(
+            zustand=tmp_path,
+            tmux_socket="nie-benutzt",
+            trocken=True,
+            jetzt=lambda: jetzt,
+        )
+    )
+    a.jetzt = jetzt
+
+    # (1) Alter 40-stelliger v1-SHA-1 + bestehendes seit (20 min alt) + frischer seit_hinweis (2 s alt):
+    #     Formatwechsel migriert den Hash, behält aber das ältere seit (20 min).
+    alt_v1 = hashlib.sha1(ECHTES_PANE_OHNE_UMFRAGE.encode("utf-8")).hexdigest()
+    schluessel_1 = "spec-9001/bau 9003"
+    a.stand.fenster[schluessel_1] = {"hash": alt_v1, "seit": jetzt - 20 * 60, "stufe": 0}
+    e1 = a.eintrag(schluessel_1, ECHTES_PANE_OHNE_UMFRAGE, seit_hinweis=jetzt - 2.0)
+    assert e1["hash"] == aufpasser.pane_hash(ECHTES_PANE_OHNE_UMFRAGE)
+    assert e1["seit"] == pytest.approx(jetzt - 20 * 60, abs=1.0)
+    assert "pane_aenderung" not in e1
+
+    # (2) Platzhalter-Hash ("alt", kein gültiger SHA-1) mit stufe=1: kein Formatwechsel,
+    #     sondern Textänderung nach Eingriff → stufe zurück auf 0.
+    schluessel_2 = "spec-9001/bau 9002"
+    a.stand.fenster[schluessel_2] = {
+        "hash": "alt",
+        "seit": jetzt - 100 * 60,
+        "eingriff": jetzt - 100 * 60,
+        "stufe": 1,
+    }
+    e2 = a.eintrag(schluessel_2, ECHTES_PANE_OHNE_UMFRAGE, seit_hinweis=jetzt - 0.5)
+    assert e2["hash"] == aufpasser.pane_hash(ECHTES_PANE_OHNE_UMFRAGE)
+    assert e2["stufe"] == 0
+    assert abs(e2["seit"] - jetzt) < 2.0
