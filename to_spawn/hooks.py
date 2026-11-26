@@ -1169,7 +1169,7 @@ def _ja_traeger_sperren(innere: list[_JaTeil], teile: list[_JaTeil]) -> bool:
         return True
     # Runde 4/5: schreibt ein Teil in eine Datei, kann sie Konfiguration für git/gh sein (``b/config``).
     # #621: nur eine einzelne eigene Ausgabe-Umleitung eines git/gh-Text-Unterbefehls
-    # (``git log … > /tmp/x.txt``) ohne Ersetzungen (``innere``), ohne Schleife und ohne ``&``/``|``
+    # (``git log … > ~/tmp-bau/x.txt``) ohne Ersetzungen (``innere``), ohne Schleife und ohne ``&``/``|``
     # bleibt frei; jeder andere Fall bleibt fail-closed wie main.
     schreib_indices = [idx for idx, (_, roh) in enumerate(zerlegt) if _ja_schreibt(roh)]
     unsichere_folge = (
