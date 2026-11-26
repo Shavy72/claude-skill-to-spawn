@@ -61,7 +61,9 @@ Der Job `staging-probe` hängt hinter `stufe-2` und ist strikt an `if: ${{ input
 
 ## Aktivierung im Skill-Repo (Eigenanschluss mit `>= 2` Runnern)
 
-Das Anlegen und Aktualisieren von Dateien unter `.github/workflows/` verlangt beim GitHub-Push den OAuth-Scope `workflow` (auf dem Bau-Server bewusst nicht vergeben). Auf einem Rechner mit `workflow`-Scope reichen drei Befehle:
+Die wiederverwendbare Vorlage `.github/workflows/pipeline-stufe-2.yml` und der Eigenanschluss `.github/workflows/pipeline-stufe-2-eigen.yml` (mit `teile: 2`, `xdist-worker: "auto"`, `mit-staging-app: false` und `server-marker-ausschliessen: true`) sind im Skill-Repo direkt eingecheckt und werden durch `tests/test_pipeline_stufe2_581.py` gegen den Generator geprüft.
+
+Zum Neu-Erzeugen oder Prüfen der Workflow-Dateien (erfordert beim Push den GitHub-OAuth-Scope `workflow`) reichen drei Befehle:
 
 ```bash
 python -m to_spawn.pruef.pipeline_stufe2 vorlage --ausgabe .github/workflows/pipeline-stufe-2.yml
@@ -74,8 +76,6 @@ Alternativ steht derselbe Generator über den gemeinsamen Rahmen bereit:
 ```bash
 python -m to_spawn.pruef.pipeline_vorlage vorlage --stufe 2 --ausgabe .github/workflows/pipeline-stufe-2.yml
 ```
-
-Danach die erzeugten Workflow-Dateien committen und pushen, damit der Eigenanschluss mit Aufteilung auf `>= 2` Runner bei GitHub Actions läuft und der grüne Lauf samt Laufzeit im Ticket verlinkt werden kann.
 
 ## Stufe 3 (`pipeline-stufe-3.yml`) — Wöchentliches Aufräumen (nur Vorschläge)
 

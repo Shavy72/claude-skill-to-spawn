@@ -1,0 +1,203 @@
+# Wiederverwendbare Pipeline-Vorlage Stufe 2 (#581, #797).
+# Zielbild der Pipeline-Vorlage (#581, #797):
+# - Triage neuer Befunde und Tickets vor dem Bau.
+# - Risikoarme Fixes gehen bei grüner CI automatisch durch.
+# - Restliche Änderungen gehen nur per Beweis (Prüf-Beleg / Freigabe) weiter.
+# - Nächtliche Audits (Stufe 3 / Nachtrunde) prüfen Qualität, Wackler und Mutationen.
+# Rolle des Bau-Servers:
+# - Ausschließlich Claude-Sessions und 'braucht Server'-Tests (@pytest.mark.braucht('server') / braucht_server).
+# - Alle übrigen Tests und Stufe-2-Komplettläufe laufen verteilt auf GitHub Actions (>= 2 Runner).
+# Stufe 2 (Komplett-Prüfung genau einmal je Spec vor Live):
+# - Verteilte Ausführung auf >= 2 Runner (pytest-split + pytest-xdist).
+# - Bau-Server-Tests ('braucht Server' / Marker braucht_server) laufen nur auf dem Bau-Server.
+# - Bedingter Staging-Probe-Schritt läuft ausschließlich bei inputs.mit-staging-app == true.
+name: Pipeline Stufe 2 (Komplett-Prüfung)
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        description: "Python-Version für die GitHub-Actions-Runner."
+        required: false
+        type: string
+        default: "3.13"
+      teile:
+        description: "Anzahl paralleler Runner-Teile für pytest-split (mindestens 2)."
+        required: false
+        type: number
+        default: 2
+      xdist-worker:
+        description: "Anzahl pytest-xdist-Worker je Runner (z. B. 'auto' oder '2'; '0' deaktiviert xdist)."
+        required: false
+        type: string
+        default: "auto"
+      test-pfade:
+        description: "Test-Wurzelordner oder Test-Pfade für die Komplett-Prüfung (leerzeichengetrennt)."
+        required: false
+        type: string
+        default: "tests"
+      anforderungen:
+        description: "Pfad zu pip-Abhängigkeiten für Tests (pytest-split und pytest-xdist werden immer sichergestellt)."
+        required: false
+        type: string
+        default: "tests/requirements.txt"
+      pytest-befehl:
+        description: "Optionale zusätzliche pytest-Argumente (z. B. '--dist worksteal --tb=short')."
+        required: false
+        type: string
+        default: ""
+      auslassungen:
+        description: "Optionaler Pfad zu einer Auslassungs-Liste im Format '<test-id>  # <grund>'."
+        required: false
+        type: string
+        default: ""
+      dauer-datei:
+        description: "Optionale Laufzeit-Datei für pytest-split (least_duration, falls vorhanden)."
+        required: false
+        type: string
+        default: ".test_durations"
+      betriebssysteme:
+        description: "JSON-Array der Runner-Betriebssysteme für Stufe 2 (z. B. ubuntu-latest und windows-latest)."
+        required: false
+        type: string
+        default: "[\"ubuntu-latest\"]"
+      mit-staging-app:
+        description: "Schalter 'mit Staging-App': aktiviert den bedingten Staging-Probe-Schritt (wie config.hat_staging)."
+        required: false
+        type: boolean
+        default: false
+      staging-probe-befehl:
+        description: "Befehl für den Staging-Probe-Schritt (läuft ausschließlich bei mit-staging-app=true)."
+        required: false
+        type: string
+        default: ""
+      server-marker-ausschliessen:
+        description: "Bau-Server-Tests ('braucht Server' / Marker braucht_server) auf GitHub-Runnern ausschließen."
+        required: false
+        type: boolean
+        default: true
+      skill-pfad:
+        description: "Pfad zum Skill-Repo im Runner (Eigenanschluss '.', Fremdrepo z. B. '.to-spawn-skill')."
+        required: false
+        type: string
+        default: "."
+
+permissions:
+  contents: read
+
+jobs:
+  vorbereiten:
+    name: Aufteilung prüfen (>= 2 Runner)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      teile: ${{ steps.matrix.outputs.teile }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ inputs.python-version }}"
+
+      - id: matrix
+        name: Runner-Matrix erzeugen (>= 2 Teile)
+        env:
+          SKILL_PFAD: ${{ inputs.skill-pfad }}
+          TEILE: ${{ inputs.teile }}
+        run: |
+          PYTHONPATH="${SKILL_PFAD}:${PYTHONPATH:-}" python -m to_spawn.pruef.pipeline_stufe2 matrix --teile "$TEILE" --github-output "$GITHUB_OUTPUT"
+
+  stufe-2:
+    name: Stufe 2 Komplett (${{ matrix.os }}, Teil ${{ matrix.teil }}/${{ inputs.teile }})
+    needs: vorbereiten
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJson(inputs.betriebssysteme) }}
+        teil: ${{ fromJson(needs.vorbereiten.outputs.teile) }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ inputs.python-version }}"
+
+      - name: tmux installieren (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q tmux
+
+      - name: Test-Abhängigkeiten installieren (inkl. pytest-split + pytest-xdist)
+        env:
+          ANFORDERUNGEN: ${{ inputs.anforderungen }}
+        run: |
+          if [ -n "$ANFORDERUNGEN" ] && [ -f "$ANFORDERUNGEN" ]; then
+            python -m pip install -q -r "$ANFORDERUNGEN" pytest-split pytest-xdist
+          else
+            python -m pip install -q pytest pytest-split pytest-xdist
+          fi
+
+      - name: git-Identität für Tests
+        run: |
+          git config --global user.name "ci"
+          git config --global user.email "ci@example.invalid"
+          git config --global init.defaultBranch main
+
+      - name: Stufe 2 Komplett-Prüfung ausführen
+        env:
+          SKILL_PFAD: ${{ inputs.skill-pfad }}
+          TEILE: ${{ inputs.teile }}
+          TEIL: ${{ matrix.teil }}
+          XDIST_WORKER: ${{ inputs.xdist-worker }}
+          TEST_PFADE: ${{ inputs.test-pfade }}
+          PYTEST_BEFEHL: ${{ inputs.pytest-befehl }}
+          AUSLASSUNGEN: ${{ inputs.auslassungen }}
+          DAUER_DATEI: ${{ inputs.dauer-datei }}
+          SERVER_AUSSCHLIESSEN: ${{ inputs.server-marker-ausschliessen }}
+        run: |
+          args=(--repo . --splits "$TEILE" --group "$TEIL" --xdist-worker "$XDIST_WORKER" --split-modus pytest-split --junitxml "$RUNNER_TEMP/junit-stufe2-${TEIL}.xml" --summary-pfad "$GITHUB_STEP_SUMMARY")
+          [ -n "$TEST_PFADE" ] && args+=(--test-pfade "$TEST_PFADE")
+          [ -n "$PYTEST_BEFEHL" ] && args+=(--pytest-befehl "$PYTEST_BEFEHL")
+          [ -n "$AUSLASSUNGEN" ] && args+=(--auslassungen "$AUSLASSUNGEN")
+          [ -n "$DAUER_DATEI" ] && args+=(--dauer-datei "$DAUER_DATEI")
+          [ "$SERVER_AUSSCHLIESSEN" = "false" ] && args+=(--server-behalten)
+          PYTHONPATH="${SKILL_PFAD}:${PYTHONPATH:-}" python -m to_spawn.pruef.pipeline_stufe2 lauf "${args[@]}"
+
+      - name: JUnit-Artefakt (Stufe 2)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-stufe2-${{ matrix.os }}-teil-${{ matrix.teil }}
+          path: ${{ runner.temp }}/junit-stufe2-${{ matrix.teil }}.xml
+          if-no-files-found: ignore
+
+  staging-probe:
+    name: Staging-Probe (nur mit Staging-App)
+    needs: stufe-2
+    if: ${{ inputs.mit-staging-app }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ inputs.python-version }}"
+
+      - name: Staging-Probe ausführen
+        env:
+          SKILL_PFAD: ${{ inputs.skill-pfad }}
+          STAGING_PROBE_BEFEHL: ${{ inputs.staging-probe-befehl }}
+        run: |
+          PYTHONPATH="${SKILL_PFAD}:${PYTHONPATH:-}" python -m to_spawn.pruef.pipeline_stufe2 staging-probe --repo . --mit-staging-app --befehl "$STAGING_PROBE_BEFEHL" --summary-pfad "$GITHUB_STEP_SUMMARY"

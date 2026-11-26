@@ -1,0 +1,39 @@
+# Eigenanschluss des Skill-Repos an die Pipeline-Vorlage Stufe 2 (#581, #797).
+# Zielbild der Pipeline-Vorlage (#581, #797):
+# - Triage neuer Befunde und Tickets vor dem Bau.
+# - Risikoarme Fixes gehen bei grüner CI automatisch durch.
+# - Restliche Änderungen gehen nur per Beweis (Prüf-Beleg / Freigabe) weiter.
+# - Nächtliche Audits (Stufe 3 / Nachtrunde) prüfen Qualität, Wackler und Mutationen.
+# Rolle des Bau-Servers:
+# - Ausschließlich Claude-Sessions und 'braucht Server'-Tests (@pytest.mark.braucht('server') / braucht_server).
+# - Alle übrigen Tests und Stufe-2-Komplettläufe laufen verteilt auf GitHub Actions (>= 2 Runner).
+name: Pipeline Stufe 2 (Eigenanschluss)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pipeline-stufe-2-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pipeline-stufe-2:
+    uses: ./.github/workflows/pipeline-stufe-2.yml
+    with:
+      python-version: "3.13"
+      teile: 2
+      xdist-worker: "auto"
+      test-pfade: "tests"
+      anforderungen: "tests/requirements.txt"
+      auslassungen: ".github/workflows/auslassungen.txt"
+      betriebssysteme: '["ubuntu-latest", "windows-latest"]'
+      mit-staging-app: false
+      server-marker-ausschliessen: true
+      skill-pfad: "."
