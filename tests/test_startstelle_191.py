@@ -699,3 +699,385 @@ def test_startstelle_msvcrt_zweig_sperrt_und_gibt_nach_ende_frei(tmp_path: Path)
         check=False,
     )
     assert danach.stdout.strip() == "JA", danach.stdout + danach.stderr
+
+
+# --- 7. Maschinenübergreifende Ticket-Sperre (Remote-Lease, Linux + Windows) ----------
+
+
+def _zwei_rechner_welt(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """Gemeinsames Bare-Remote + zwei unabhängige Klone (Rechner A = PC, Rechner B = Bau-Server)."""
+    bare = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+    rechner_a = tmp_path / "klon-pc"
+    rechner_b = tmp_path / "klon-server"
+    subprocess.run(["git", "clone", "-q", str(bare), str(rechner_a)], check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(rechner_a),
+            "-c",
+            "user.name=test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "init",
+        ],
+        check=True,
+    )
+    subprocess.run(["git", "-C", str(rechner_a), "push", "-q", "origin", "HEAD"], check=True, capture_output=True)
+    subprocess.run(["git", "clone", "-q", str(bare), str(rechner_b)], check=True, capture_output=True)
+    return bare, rechner_a, rechner_b
+
+
+def _rechner_env(
+    tmp_path: Path,
+    repo: Path,
+    rechner: str,
+    *,
+    extra: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Prozess-Umgebung für einen Rechner mit eigenem Sperr-Ordner und aktiver Fern-Sperre."""
+    env = dict(os.environ)
+    env.pop(startstelle.TEST_OFFEN_ENV, None)
+    env.pop(startstelle.TEST_FERN_SPERRE_AUS_ENV, None)
+    env.pop("LOCALAPPDATA", None)
+    env.pop("BAU_AUFTRAG", None)
+    env.update(
+        {
+            "TO_SPAWN_REPO": str(repo),
+            "TO_SPAWN_GH_STUB": str(SKILL / "tests" / "hilfen" / "gh_stub.py"),
+            "TO_SPAWN_RECHNER": rechner,
+            startstelle.SPERR_ORDNER_ENV: str(tmp_path / f"sperren-{rechner}"),
+            startstelle.STAND_ABSTAND_ENV: "0",
+            "TMPDIR": str(tmp_path / f"tmp-{rechner}"),
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8": "1",
+        }
+    )
+    (tmp_path / f"tmp-{rechner}").mkdir(parents=True, exist_ok=True)
+    if extra:
+        env.update(extra)
+    return env
+
+
+def test_fern_sperre_zwei_rechner_sperren_sich_und_geben_bei_ende_frei(tmp_path: Path) -> None:
+    """#191: Läuft ein Ticket auf Rechner A (PC), weist Rechner B (Bau-Server) ab; nach Ende startet B."""
+    _bare, klon_pc, klon_srv = _zwei_rechner_welt(tmp_path)
+    beleg = tmp_path / "beleg.txt"
+    halte_pc = tmp_path / "halte_pc"
+
+    env_pc = _rechner_env(tmp_path, klon_pc, "pc-win", extra={"BAU_LAUF_97_HALTE_DATEI": str(halte_pc)})
+    env_srv = _rechner_env(tmp_path, klon_srv, "bau-server", extra={"BAU_LAUF_97_SCHLAF_S": "0"})
+
+    pc = subprocess.Popen(
+        [sys.executable, str(LAUF), str(beleg), "19120", "--sofort"],
+        env=env_pc,
+        cwd=str(klon_pc),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+    )
+    try:
+        ende = time.monotonic() + 20.0
+        while time.monotonic() < ende:
+            if beleg.exists() and beleg.read_text(encoding="utf-8").splitlines():
+                break
+            time.sleep(0.05)
+        assert beleg.exists() and len(beleg.read_text(encoding="utf-8").splitlines()) == 1
+
+        # Zweiter Rechner sieht aktive Fern-Sperre von pc-win -> kein zweiter Start.
+        srv_block = subprocess.run(
+            [sys.executable, str(LAUF), str(beleg), "19120", "--sofort"],
+            env=env_srv,
+            cwd=str(klon_srv),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=30,
+            check=False,
+        )
+        ausgabe_block = srv_block.stdout + srv_block.stderr
+        assert srv_block.returncode == 0, ausgabe_block
+        assert "läuft schon" in ausgabe_block and "pc-win" in ausgabe_block, ausgabe_block
+        assert len(beleg.read_text(encoding="utf-8").splitlines()) == 1
+    finally:
+        halte_pc.write_text("ende", encoding="utf-8")
+        pc_aus, _ = pc.communicate(timeout=30)
+    assert pc.returncode == 0, pc_aus
+
+    # Nach sauberem Ende von PC ist die Remote-Ref frei -> Bau-Server darf starten.
+    srv_frei = subprocess.run(
+        [sys.executable, str(LAUF), str(beleg), "19120", "--sofort"],
+        env=env_srv,
+        cwd=str(klon_srv),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+        check=False,
+    )
+    assert srv_frei.returncode == 0, srv_frei.stdout + srv_frei.stderr
+    assert len(beleg.read_text(encoding="utf-8").splitlines()) == 2
+
+
+def test_fern_sperre_gleichzeitiger_start_auf_zwei_rechnern_ergibt_eine_session(tmp_path: Path) -> None:
+    """#191: Wettlauf zweier Rechner am selben Bare-Remote → atomares CAS lässt genau einen starten."""
+    _bare, klon_pc, klon_srv = _zwei_rechner_welt(tmp_path)
+    beleg = tmp_path / "beleg.txt"
+    env_pc = _rechner_env(tmp_path, klon_pc, "pc-win", extra={"BAU_LAUF_97_SCHLAF_S": "1.5"})
+    env_srv = _rechner_env(tmp_path, klon_srv, "bau-server", extra={"BAU_LAUF_97_SCHLAF_S": "1.5"})
+
+    p_pc = subprocess.Popen(
+        [sys.executable, str(LAUF), str(beleg), "19121", "--sofort"],
+        env=env_pc,
+        cwd=str(klon_pc),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+    )
+    p_srv = subprocess.Popen(
+        [sys.executable, str(LAUF), str(beleg), "19121", "--sofort"],
+        env=env_srv,
+        cwd=str(klon_srv),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+    )
+    ausgaben = [p.communicate(timeout=60)[0] for p in (p_pc, p_srv)]
+    assert sorted((p_pc.returncode, p_srv.returncode)) == [0, 0], ausgaben
+    zeilen = beleg.read_text(encoding="utf-8").splitlines() if beleg.exists() else []
+    assert len(zeilen) == 1, (zeilen, ausgaben)
+    assert any("läuft schon" in a for a in ausgaben), ausgaben
+
+
+def test_fern_sperre_remote_unerreichbar_ist_fail_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#191: Ist das Remote nicht erreichbar, verweigert die Startstelle fail-closed mit Exit 2."""
+    repo = tmp_path / "repo-kaputt"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    subprocess.run(["git", "remote", "add", "origin", str(tmp_path / "fehlt.git")], cwd=repo, check=True)
+    monkeypatch.delenv(startstelle.TEST_FERN_SPERRE_AUS_ENV, raising=False)
+    monkeypatch.setenv("TO_SPAWN_RECHNER", "pc-win")
+    monkeypatch.setenv(startstelle.SPERR_ORDNER_ENV, str(tmp_path / "sperren"))
+
+    e = startstelle.betreten("19122", "test-org/test-repo", repo, pruefer=lambda _t, _c: True)
+    assert not e.erlaubt
+    assert e.exit_code == startstelle.EXIT_UNKLAR
+    assert "fail-closed" in e.grund
+
+
+def test_fern_sperre_kaputter_inhalt_ist_fail_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#191: Unlesbarer/kaputter Lease-Commit auf dem Remote wird nie still überschrieben (Exit 2)."""
+    _bare, klon_pc, klon_srv = _zwei_rechner_welt(tmp_path)
+    ref = startstelle.fern_sperr_ref("19123")
+    ok, sha, fehler = gh.commit_mit_nachricht(klon_pc, "kein-json{{{")
+    assert ok, fehler
+    ok_push, _konflikt, fehler_push = gh.remote_ref_cas_setzen(klon_pc, ref, sha, "")
+    assert ok_push, fehler_push
+
+    monkeypatch.delenv(startstelle.TEST_FERN_SPERRE_AUS_ENV, raising=False)
+    monkeypatch.setenv("TO_SPAWN_RECHNER", "bau-server")
+    monkeypatch.setenv(startstelle.SPERR_ORDNER_ENV, str(tmp_path / "sperren"))
+
+    e = startstelle.betreten("19123", "test-org/test-repo", klon_srv, pruefer=lambda _t, _c: True)
+    assert not e.erlaubt
+    assert e.exit_code == startstelle.EXIT_UNKLAR
+    assert "fail-closed" in e.grund
+    # Kaputte Ref bleibt unangetastet auf dem Remote.
+    ok_sha, fern_sha, _ = gh.remote_ref_sha(klon_srv, ref)
+    assert ok_sha and fern_sha == sha
+
+
+def test_fern_sperre_abgelaufene_lease_wird_uebernommen_und_alte_freigabe_loescht_sie_nicht(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#191 Ablauf-Regel: Abgelaufene Lease eines anderen Rechners wird atomar übernommen; verspätete Freigabe schützt neue Lease."""
+    import json
+
+    _bare, klon_pc, klon_srv = _zwei_rechner_welt(tmp_path)
+    ref = startstelle.fern_sperr_ref("19124")
+    abgelaufen = {
+        "schema": 1,
+        "ticket": "19124",
+        "rechner": "pc-win",
+        "pid": 99999,
+        "token": "alt-token",
+        "beginn": 1_000_000.0,
+        "erneuert": 1_000_000.0,
+        "ablauf": 1_000_060.0,
+        "ttl_s": 60.0,
+    }
+    ok, alt_sha, fehler = gh.commit_mit_nachricht(klon_pc, json.dumps(abgelaufen))
+    assert ok, fehler
+    ok_push, _konflikt, fehler_push = gh.remote_ref_cas_setzen(klon_pc, ref, alt_sha, "")
+    assert ok_push, fehler_push
+
+    monkeypatch.delenv(startstelle.TEST_FERN_SPERRE_AUS_ENV, raising=False)
+    monkeypatch.setenv("TO_SPAWN_RECHNER", "bau-server")
+    monkeypatch.setenv(startstelle.SPERR_ORDNER_ENV, str(tmp_path / "sperren-srv"))
+
+    try:
+        e = startstelle.betreten("19124", "test-org/test-repo", klon_srv, pruefer=lambda _t, _c: True)
+        assert e.erlaubt, e.grund
+        ok_sha, neu_sha, _ = gh.remote_ref_sha(klon_srv, ref)
+        assert ok_sha and neu_sha and neu_sha != alt_sha
+
+        # Verspätete CAS-Freigabe des alten Halters (mit alt_sha) darf die neue Lease nicht löschen.
+        ok_del, konflikt, _ = gh.remote_ref_cas_loeschen(klon_pc, ref, alt_sha)
+        assert not ok_del and konflikt
+        ok_sha2, danach_sha, _ = gh.remote_ref_sha(klon_srv, ref)
+        assert ok_sha2 and danach_sha == neu_sha
+    finally:
+        startstelle.alle_fern_sperren_freigeben()
+
+
+def test_fern_sperre_heartbeat_verlaengert_aktive_lease(tmp_path: Path) -> None:
+    """#191: Laufende Session verlängert ihre Lease regelmäßig — über die Erst-TTL hinaus bleibt Rechner B gesperrt."""
+    _bare, klon_pc, klon_srv = _zwei_rechner_welt(tmp_path)
+    beleg = tmp_path / "beleg.txt"
+    halte_pc = tmp_path / "halte_pc"
+    ref = startstelle.fern_sperr_ref("19125")
+
+    env_pc = _rechner_env(
+        tmp_path,
+        klon_pc,
+        "pc-win",
+        extra={
+            "BAU_LAUF_97_HALTE_DATEI": str(halte_pc),
+            startstelle.FERN_SPERRE_TTL_ENV: "1.5",
+            startstelle.FERN_SPERRE_TAKT_ENV: "0.3",
+        },
+    )
+    env_srv = _rechner_env(tmp_path, klon_srv, "bau-server", extra={"BAU_LAUF_97_SCHLAF_S": "0"})
+
+    pc = subprocess.Popen(
+        [sys.executable, str(LAUF), str(beleg), "19125", "--sofort"],
+        env=env_pc,
+        cwd=str(klon_pc),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+    )
+    try:
+        ende = time.monotonic() + 20.0
+        while time.monotonic() < ende:
+            if beleg.exists() and beleg.read_text(encoding="utf-8").splitlines():
+                break
+            time.sleep(0.05)
+        ok_1, sha_1, _ = gh.remote_ref_sha(klon_srv, ref)
+        assert ok_1 and sha_1
+
+        # Länger warten als die Erst-TTL (1,5 s): Heartbeat muss den SHA fortgeschrieben haben.
+        time.sleep(2.0)
+        ok_2, sha_2, _ = gh.remote_ref_sha(klon_srv, ref)
+        assert ok_2 and sha_2 and sha_2 != sha_1, "Heartbeat hat die Lease nicht verlängert"
+
+        srv = subprocess.run(
+            [sys.executable, str(LAUF), str(beleg), "19125", "--sofort"],
+            env=env_srv,
+            cwd=str(klon_srv),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=30,
+            check=False,
+        )
+        assert srv.returncode == 0 and "läuft schon" in (srv.stdout + srv.stderr)
+    finally:
+        halte_pc.write_text("ende", encoding="utf-8")
+        pc.communicate(timeout=30)
+
+
+def test_fern_sperre_uebernahme_bei_umzug_und_weiter_pruefung(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#191 Übernahme-Regel: Explizite Übernahme (Umzug) löst aktive Lease ab; der alte Rechner stoppt vor der nächsten Staffel-Runde."""
+    _bare, klon_pc, klon_srv = _zwei_rechner_welt(tmp_path)
+    monkeypatch.delenv(startstelle.TEST_FERN_SPERRE_AUS_ENV, raising=False)
+    ref = startstelle.fern_sperr_ref("19126")
+
+    try:
+        # Rechner A (PC) betritt das Ticket.
+        monkeypatch.setenv("TO_SPAWN_RECHNER", "pc-win")
+        monkeypatch.setenv(startstelle.SPERR_ORDNER_ENV, str(tmp_path / "sperren-pc"))
+        e_pc = startstelle.betreten("19126", "test-org/test-repo", klon_pc, pruefer=lambda _t, _c: True)
+        assert e_pc.erlaubt, e_pc.grund
+
+        # Rechner B (Bau-Server) übernimmt ausdrücklich (wie ``bau.py --umzug``).
+        monkeypatch.setenv("TO_SPAWN_RECHNER", "bau-server")
+        monkeypatch.setenv(startstelle.SPERR_ORDNER_ENV, str(tmp_path / "sperren-srv"))
+        e_srv = startstelle.betreten(
+            "19126", "test-org/test-repo", klon_srv, uebernahme=True, pruefer=lambda _t, _c: True
+        )
+        assert e_srv.erlaubt, e_srv.grund
+
+        # Rechner A prüft vor einer Staffel-Runde: Lease gehört jetzt bau-server → kein Weiterlaufen.
+        monkeypatch.setenv("TO_SPAWN_RECHNER", "pc-win")
+        w_pc = startstelle.weiter_entscheidung("19126", klon_pc, pruefer=lambda _t, _c: True, abstand=0)
+        assert not w_pc.erlaubt and w_pc.exit_code == 0 and "bau-server" in w_pc.grund, w_pc
+    finally:
+        startstelle.alle_fern_sperren_freigeben()
+
+    ok_ende, sha_ende, _ = gh.remote_ref_sha(klon_srv, ref)
+    assert ok_ende and sha_ende == ""
+
+
+def test_fern_sperre_test_schalter_wirkt_nicht_im_betrieb(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#191: ``TO_SPAWN_TEST_FERN_SPERRE_AUS=1`` wird außerhalb von Tests ignoriert (fail-closed im Betrieb)."""
+    repo = tmp_path / "repo-betrieb"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    subprocess.run(["git", "remote", "add", "origin", str(tmp_path / "nicht-da.git")], cwd=repo, check=True)
+    monkeypatch.delenv("TO_SPAWN_TESTLAUF", raising=False)
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.setenv(startstelle.TEST_FERN_SPERRE_AUS_ENV, "1")
+    monkeypatch.setenv(startstelle.SPERR_ORDNER_ENV, str(tmp_path / "sperren"))
+
+    e = startstelle.betreten("19127", "test-org/test-repo", repo, pruefer=lambda _t, _c: True)
+    assert not e.erlaubt
+    assert e.exit_code == startstelle.EXIT_UNKLAR
+    assert "fail-closed" in e.grund
+
+
+def test_fern_sperre_gleicher_rechner_uebernimmt_verwaiste_lease_nach_absturz(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#191: Stirbt ein Prozess hart auf demselben Rechner, darf derselbe Rechner seine verwaiste Lease sofort übernehmen."""
+    import json
+
+    _bare, klon_pc, _klon_srv = _zwei_rechner_welt(tmp_path)
+    ref = startstelle.fern_sperr_ref("19128")
+    jetzt = time.time()
+    verwaist = {
+        "schema": 1,
+        "ticket": "19128",
+        "rechner": "PC-WIN",  # Groß-/Kleinschreibung egal (auswahl.gleicher_rechner)
+        "pid": 99998,
+        "token": "abgestuerzt-token",
+        "beginn": jetzt - 10.0,
+        "erneuert": jetzt - 10.0,
+        "ablauf": jetzt + 600.0,
+        "ttl_s": 600.0,
+    }
+    ok, alt_sha, fehler = gh.commit_mit_nachricht(klon_pc, json.dumps(verwaist))
+    assert ok, fehler
+    ok_push, _konflikt, fehler_push = gh.remote_ref_cas_setzen(klon_pc, ref, alt_sha, "")
+    assert ok_push, fehler_push
+
+    monkeypatch.delenv(startstelle.TEST_FERN_SPERRE_AUS_ENV, raising=False)
+    monkeypatch.setenv("TO_SPAWN_RECHNER", "pc-win")
+    monkeypatch.setenv(startstelle.SPERR_ORDNER_ENV, str(tmp_path / "sperren-pc"))
+
+    try:
+        e = startstelle.betreten("19128", "test-org/test-repo", klon_pc, pruefer=lambda _t, _c: True)
+        assert e.erlaubt, e.grund
+        ok_sha, neu_sha, _ = gh.remote_ref_sha(klon_pc, ref)
+        assert ok_sha and neu_sha and neu_sha != alt_sha
+    finally:
+        startstelle.alle_fern_sperren_freigeben()
