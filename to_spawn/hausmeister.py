@@ -620,14 +620,16 @@ def aufraeumen_alles(*, loeschen: bool = False, jetzt: float | None = None) -> l
     return list(_rundgang_sicher(loeschen=loeschen, jetzt=jetzt, docker=loeschen).ergebnisse)
 
 
-def rundgang(*, loeschen: bool, jetzt: float | None = None) -> Rundgang:
+def rundgang(*, loeschen: bool, jetzt: float | None = None, docker: bool = False) -> Rundgang:
     """Wie :func:`aufraeumen_alles`, sagt aber, ob überhaupt aufgeräumt wurde; wirft nie.
 
-    Für Aufrufer, die „erledigt“ festhalten (capo-Schlussschritt): belegte Sperre,
-    gescheiterte Ordnersuche und jeder unerwartete Fehler ergeben ``gelaufen=False``
-    mit Klartext-Grund statt einer leeren Liste, die wie „nichts zu tun“ aussieht.
+    Für Aufrufer, die „erledigt“ oder den Exit-Code des Gesamtlaufs festhalten
+    (capo-Schlussschritt, CLI ``aufraeumen --alles``): belegte Sperre, gescheiterte
+    Ordnersuche und jeder unerwartete Fehler ergeben ``gelaufen=False`` mit Klartext-Grund
+    statt einer leeren Liste, die wie „nichts zu tun“ aussieht. Mit ``docker=True`` gibt
+    derselbe Lauf unter gehaltener Sperre einmal täglich Docker-Reste frei (#1372).
     """
-    return _rundgang_sicher(loeschen=loeschen, jetzt=jetzt, docker=False)
+    return _rundgang_sicher(loeschen=loeschen, jetzt=jetzt, docker=docker)
 
 
 def _rundgang_sicher(*, loeschen: bool, jetzt: float | None, docker: bool) -> Rundgang:

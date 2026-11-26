@@ -314,7 +314,22 @@ def _aufraeumen(args: argparse.Namespace, ap: argparse.ArgumentParser) -> int:
             aelter_als_tage=tage,
         )
     elif args.alles:
-        ergebnisse = hausmeister.aufraeumen_alles(loeschen=args.loeschen)
+        rund = hausmeister.rundgang(loeschen=args.loeschen, docker=args.loeschen)
+        for erg in rund.ergebnisse:
+            modus = "trocken" if erg.trocken else "echt"
+            print(f"{erg.ordner}: {erg.art} ({erg.grund}) [{modus}]")
+        if not rund.gelaufen:
+            if rund.wartet:
+                print(f"Hausmeister wartet: {rund.grund}")
+                return 0
+            print(f"Hausmeister gescheitert: {rund.grund}", file=sys.stderr)
+            return 1
+        if rund.fehler:
+            print(
+                f"Hinweis: {rund.fehler} Alt-Ordner mit Einzelfehler übersprungen (Details oben / im Hausmeister-Log)",
+                file=sys.stderr,
+            )
+        return 0
     elif args.ordner:
         ergebnisse = [hausmeister.aufraeumen(args.ordner, loeschen=args.loeschen)]
     else:

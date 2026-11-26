@@ -614,3 +614,97 @@ def test_abnahme_m14_beleg_vorhanden() -> None:
     assert len(m14) == 1
     assert "test_temp_ordner_136.py" in m14[0]
     assert "| – | offen |" not in m14[0]
+
+
+def test_abnahme_m14_probe5_belegt() -> None:
+    """M14 trägt den echten Probe-5-Beleg (26.11.2026) und das Urteil ``belegt``."""
+    zeilen = (SKILL / "docs" / "ABNAHME_L1.md").read_text(encoding="utf-8").splitlines()
+    m14 = [z for z in zeilen if z.startswith("| M14 |")]
+    assert len(m14) == 1
+    assert "Probe-Lauf 5" in m14[0]
+    assert "hausmeister.jsonl" in m14[0]
+    assert m14[0].rstrip().endswith("| belegt |")
+
+
+def _cli_modul():
+    spec = importlib.util.spec_from_file_location("to_spawn_cli_136", SKILL / "to_spawn.py")
+    assert spec and spec.loader
+    modul = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(modul)
+    return modul
+
+
+def test_cli_aufraeumen_alles_exit_0_trotz_kaputter_alt_worktrees(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Fremde/kaputte Alt-Worktrees melden ihren Fehler, machen ``aufraeumen --alles`` aber nicht rot."""
+    cli = _cli_modul()
+    _wurzel(tmp_path, monkeypatch, {42})
+    temp_rest = temp_ordner.anlegen(42, repo=TEST_REPO, von="pruef")
+    (temp_rest / "probe.txt").write_text("rest", encoding="utf-8")
+    _alt_baum(temp_rest)
+
+    # Echter Git-Ordner mit nicht abfragbarem Alt-Ticket (wie skill-1433 in Probe 5).
+    wt_wurzel = tmp_path / "wt"
+    kaputt = wt_wurzel / "skill-1433"
+    kaputt.mkdir(parents=True)
+    for args in (
+        ["init", "-q"],
+        ["remote", "add", "origin", f"https://github.com/{TEST_REPO}"],
+    ):
+        subprocess.run(["git", *args], cwd=kaputt, check=True, capture_output=True)
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_WURZELN", str(wt_wurzel / "*"))
+    monkeypatch.setattr(
+        hausmeister,
+        "_ticket_daten",
+        lambda nr, ziel=None: {"state": "CLOSED"} if nr == 42 else None,
+    )
+
+    exit_code = cli.main(["aufraeumen", "--alles", "--loeschen"])
+    aus = capsys.readouterr()
+
+    assert not temp_rest.exists(), "Eigener markierter Temp-Rest muss geräumt sein"
+    assert kaputt.is_dir(), "Kaputter Alt-Worktree bleibt geschützt"
+    assert exit_code == 0, f"Kaputter Alt-Worktree darf --alles nicht rot machen: {aus.out} {aus.err}"
+    assert "Ticket #1433 nicht abfragbar" in aus.out
+    assert "1 Alt-Ordner mit Einzelfehler" in aus.err
+    log_pfad = Path(os.environ["TO_SPAWN_HAUSMEISTER_LOG"])
+    zeilen = [json.loads(z) for z in log_pfad.read_text(encoding="utf-8").splitlines()]
+    assert any(z["ordner"] == str(temp_rest) and z["art"] == "gelöscht" for z in zeilen)
+    assert any(z["ordner"] == str(kaputt) and z["fehler"] is True for z in zeilen)
+
+
+def test_cli_aufraeumen_alles_exit_1_bei_rundgang_fehler(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Scheitert der Rundgang selbst (z. B. Ordnersuche), meldet ``--alles`` Exit 1."""
+    cli = _cli_modul()
+    _wurzel(tmp_path, monkeypatch, set())
+
+    def unlesbar() -> list[Path]:
+        raise OSError("Wurzel unlesbar")
+
+    monkeypatch.setattr(hausmeister, "_kandidaten", unlesbar)
+    exit_code = cli.main(["aufraeumen", "--alles"])
+    aus = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "Ordnersuche gescheitert" in aus.err
+
+
+def test_cli_aufraeumen_alles_exit_0_bei_belegter_sperre(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Hält ein anderer Lauf die Sperre, wartet ``--alles`` ohne Fehler (Exit 0)."""
+    cli = _cli_modul()
+    _wurzel(tmp_path, monkeypatch, set())
+    monkeypatch.setattr(
+        hausmeister,
+        "rundgang",
+        lambda **_k: hausmeister.Rundgang(False, "ein anderer Lauf räumt gerade auf (Sperre belegt)", wartet=True),
+    )
+    exit_code = cli.main(["aufraeumen", "--alles", "--loeschen"])
+    aus = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Hausmeister wartet:" in aus.out
