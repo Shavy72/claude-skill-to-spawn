@@ -776,13 +776,46 @@ def gemergt_und_offen(text: str, ticket: int | None, repo: Path) -> bool:
 
 
 def _zeilen_am_prompt(text: str) -> list[str]:
-    """Nicht-leere Text-Zeilen über dem Eingabefeld (ohne Rahmen, ``❯`` und Statuszeile)."""
+    """Nicht-leere Text-Zeilen über dem Eingabefeld (ohne Rahmen, ``❯``, Rauschen und Statuszeile)."""
     zeilen = [z for z in ohne_statuszeile(text).splitlines() if z.strip()]
-    return [z for z in zeilen if not EINGABEFELD_LINIE.fullmatch(z) and not z.lstrip().startswith("❯")]
+    return [z for z in zeilen if not z.lstrip().startswith("❯") and not ist_pane_rauschen(z)]
 
 
 #: Rahmenlinie des Claude-Code-Eingabefelds: Zeile nur aus ``─`` (mind. 20).
 EINGABEFELD_LINIE = re.compile(r"\s*─{20,}\s*")
+#: Abgesetzte Claude-Code-Fußzeile nach einer Antwort (z. B. ``✻ Crunched for 6s · done 7:25 PM``
+#: oder ``✻ Baked for 40s``) — reines Abschluss-Rauschen, kein Antwort-Inhalt (#372).
+_CLAUDE_FUSSZEILE = re.compile(
+    r"^[✻✶✳✢✽]\s+(?:"
+    r".+\s+for\s+(?:<\s*)?\d+\s*[hms](?:\s+\d+\s*[hms])*(?:\s*[·•][^\n?]*)?"
+    r"|.+?\s[·•]\s*done\b[^\n?]*"
+    r")$"
+)
+#: Eingeblendete Claude-Code-Feedback-Umfrage über dem Eingabefeld — Rauschen, keine Frage der
+#: Bau-Session (#372).
+_CLAUDE_UMFRAGE = re.compile(
+    r"^(?:"
+    r"(?:[●✻✶✳✢✽│]\s+)?How is Claude doing this session\?(?:\s*\(optional\))?(?:\s*│)?"
+    r"|(?:│\s+)?1:\s*Bad\b.*\b2:\s*Fine\b.*\b3:\s*Good\b.*\b0:\s*Dismiss\b.*"
+    r")$",
+    re.IGNORECASE,
+)
+
+
+def ist_pane_rauschen(zeile: str) -> bool:
+    """Ist ``zeile`` reines Claude-Code-UI-Rauschen ohne Antwort-Inhalt (#372)?
+
+    Einzige Stelle für Aufpasser und Aufseher-Stand: erkennt waagerechte Trennlinien
+    (:data:`EINGABEFELD_LINIE`), abgesetzte Dauer-/Abschluss-Fußzeilen
+    (``✻ Crunched for 6s · done 7:25 PM``, ``✻ Baked for 40s``) und die Feedback-Umfrage
+    (``How is Claude doing this session?`` samt Auswahlzeile ``1: Bad … 0: Dismiss``).
+    """
+    sauber = ohne_farben(zeile).strip()
+    if not sauber:
+        return False
+    return bool(
+        EINGABEFELD_LINIE.fullmatch(sauber) or _CLAUDE_FUSSZEILE.fullmatch(sauber) or _CLAUDE_UMFRAGE.fullmatch(sauber)
+    )
 
 
 def ohne_statuszeile(text: str) -> str:
