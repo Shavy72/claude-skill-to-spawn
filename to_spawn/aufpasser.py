@@ -672,7 +672,8 @@ def notiere_blocker_falsch(repo: Path, ticket: int, blocker: str, datum: str) ->
 
 
 def rueckfrage(text: str) -> bool:
-    return any(m in text for m in RUECKFRAGE_MARKER)
+    sauber = _ohne_fluechtiges_rauschen(text)
+    return any(m in sauber for m in RUECKFRAGE_MARKER)
 
 
 # Ein Fehl-Treffer ist harmlos: er löst nur Stufe 0 aus (ein Anstupser, begrenzt durch STUPSER_MAX).
@@ -796,7 +797,7 @@ _CLAUDE_FUSSZEILE = re.compile(
     r")$"
 )
 #: Eingeblendete Claude-Code-Feedback-Umfrage über dem Eingabefeld — Rauschen, keine Frage der
-#: Bau-Session (#372).
+#: Bau-Session (#372, #624).
 _CLAUDE_UMFRAGE = re.compile(
     r"^(?:"
     r"(?:[●✻✶✳✢✽│]\s+)?How is Claude doing this session\?(?:\s*\(optional\))?(?:\s*│)?"
@@ -804,21 +805,61 @@ _CLAUDE_UMFRAGE = re.compile(
     r")$",
     re.IGNORECASE,
 )
+#: Eingeblendeter Kontext-Hinweis direkt über dem Eingabefeld (``new task? /clear to save … tokens``) —
+#: flüchtiges UI-Rauschen ohne Antwort-Inhalt (#624).
+_CLAUDE_CLEAR_HINWEIS = re.compile(r"^new task\?\s+/clear\s+to\s+save\s+\S+\s+tokens$", re.IGNORECASE)
+
+
+def _ist_fluechtiges_ui_rauschen(zeile: str) -> bool:
+    """Flüchtige Claude-Code-UI-Einblendungen über dem Eingabefeld (#624):
+    Feedback-Umfrage (:data:`_CLAUDE_UMFRAGE`) und ``/clear``-Hinweis (:data:`_CLAUDE_CLEAR_HINWEIS`).
+    Ihr Erscheinen oder Verschwinden ist weder Aktivität noch eine Rückfrage."""
+    sauber = ohne_farben(zeile).strip()
+    if not sauber:
+        return False
+    return bool(_CLAUDE_UMFRAGE.fullmatch(sauber) or _CLAUDE_CLEAR_HINWEIS.fullmatch(sauber))
+
+
+def _ohne_fluechtiges_rauschen(text: str) -> str:
+    """Text ohne :func:`_ist_fluechtiges_ui_rauschen` samt umgebender Leerzeilen (#624)."""
+    zeilen = text.splitlines()
+    if not any(_ist_fluechtiges_ui_rauschen(z) for z in zeilen):
+        return text
+    raus: list[str] = []
+    entfernt = False
+    for z in zeilen:
+        if _ist_fluechtiges_ui_rauschen(z):
+            entfernt = True
+            continue
+        if entfernt:
+            entfernt = False
+            while raus and not raus[-1].strip():
+                raus.pop()
+            if not z.strip():
+                continue
+        raus.append(z)
+    if entfernt:
+        while raus and not raus[-1].strip():
+            raus.pop()
+    return "\n".join(raus)
 
 
 def ist_pane_rauschen(zeile: str) -> bool:
-    """Ist ``zeile`` reines Claude-Code-UI-Rauschen ohne Antwort-Inhalt (#372)?
+    """Ist ``zeile`` reines Claude-Code-UI-Rauschen ohne Antwort-Inhalt (#372, #624)?
 
     Einzige Stelle für Aufpasser und Aufseher-Stand: erkennt waagerechte Trennlinien
     (:data:`EINGABEFELD_LINIE`), abgesetzte Dauer-/Abschluss-Fußzeilen
-    (``✻ Crunched for 6s · done 7:25 PM``, ``✻ Baked for 40s``) und die Feedback-Umfrage
-    (``How is Claude doing this session?`` samt Auswahlzeile ``1: Bad … 0: Dismiss``).
+    (``✻ Crunched for 6s · done 7:25 PM``, ``✻ Baked for 40s``), die Feedback-Umfrage
+    (``How is Claude doing this session?`` samt Auswahlzeile ``1: Bad … 0: Dismiss``) und
+    den ``/clear``-Hinweis (``new task? /clear to save … tokens``).
     """
     sauber = ohne_farben(zeile).strip()
     if not sauber:
         return False
     return bool(
-        EINGABEFELD_LINIE.fullmatch(sauber) or _CLAUDE_FUSSZEILE.fullmatch(sauber) or _CLAUDE_UMFRAGE.fullmatch(sauber)
+        EINGABEFELD_LINIE.fullmatch(sauber)
+        or _CLAUDE_FUSSZEILE.fullmatch(sauber)
+        or _ist_fluechtiges_ui_rauschen(sauber)
     )
 
 
@@ -957,8 +998,8 @@ def eingabe_leer(text: str) -> bool:
 
 
 def pane_hash(text: str) -> str:
-    """Hash für „arbeitet oder still“: Statuszeile zählt nicht mit (#429)."""
-    return hashlib.sha1(ohne_statuszeile(text).encode("utf-8", "replace")).hexdigest()
+    """Hash für „arbeitet oder still“: Statuszeile (#429) und flüchtiges UI-Rauschen (#624) zählen nicht mit."""
+    return hashlib.sha1(_ohne_fluechtiges_rauschen(ohne_statuszeile(text)).encode("utf-8", "replace")).hexdigest()
 
 
 #: Programmname aus ``argv[0]`` bzw. einem Befehlswort, plattformfest
@@ -2333,10 +2374,14 @@ class Aufpasser:
             return None
         return sichern(worktree, ticket, self.jetzt)
 
-    def vor_eingriff(self, f: Fenster, hash_start: str, repo: Path) -> bool:
+    def vor_eingriff(self, f: Fenster, hash_start: str, repo: Path, *, limit_ignorieren: bool = False) -> bool:
         """Direkt vor jedem Eingriff neu lesen: Deploy (serverweit), Gate dieses
         Fensters (Fensterbaum oder Ticket-Worktree in ``repo``), Text anders als zu
-        Laufbeginn oder arbeitend ⇒ Kette abbrechen (False)."""
+        Laufbeginn oder arbeitend ⇒ Kette abbrechen (False).
+
+        ``limit_ignorieren=True`` beim Schließen fertiger Fenster (#624): eine alte
+        Limit-Meldung im Pane einer stillen Session (``status=idle``) ist keine Arbeit.
+        """
         if self.e.verzoegerung_s:
             time.sleep(self.e.verzoegerung_s)
         deploy = self.deploy_laeuft(self.muster)
@@ -2362,11 +2407,13 @@ class Aufpasser:
             log.info("%s: Gate läuft in diesem Fenster (%s) — kein Eingriff", f.name, gate)
             return False
         text = self.pane_text(f.ziel)
-        if pane_hash(text) != hash_start or arbeitet(text, info.status if info else None):
+        status = info.status if info else None
+        aktiv = arbeitet_echt(text, status) if limit_ignorieren else arbeitet(text, status)
+        if pane_hash(text) != hash_start or aktiv:
             log.info("%s: inzwischen aktiv — kein Eingriff", f.name)
             e = self.stand.fenster.get(f"{f.sitzung}/{f.name}")
             if e is not None and pane_hash(text) != hash_start:
-                e["hash"], e["seit"] = pane_hash(text), self.jetzt
+                e["hash"], e["seit"], e["pane_aenderung"] = pane_hash(text), self.jetzt, self.jetzt
                 if e.get("stufe", 0):
                     e["stufe"] = 0
             return False
@@ -2374,7 +2421,7 @@ class Aufpasser:
 
     # -- Regeln je Fenster -------------------------------------------------------
 
-    def _agy_still_seit(self, f: Fenster, repo: Path, ticket: int | None) -> float | None:
+    def _agy_still_seit(self, f: Fenster, repo: Path | None, ticket: int | None) -> float | None:
         """Letzte Aktivitätszeit (``mtime`` des Transkripts) einer laufenden ``agy``-Session (#288)."""
         if not f.pane_pid:
             return None
@@ -2388,7 +2435,7 @@ class Aufpasser:
             return None
         agy_ordner = werkzeug.agy_daten_ordner(self.e.heim)
         kandidaten: list[Path] = []
-        if ticket is not None:
+        if ticket is not None and repo is not None:
             try:
                 wt = worktree_finden(repo, ticket)
             except RuntimeError:
@@ -2399,7 +2446,7 @@ class Aufpasser:
             pane_ordner = Path(f.pfad)
             if pane_ordner.is_dir() and pane_ordner not in kandidaten:
                 kandidaten.append(pane_ordner)
-        if repo.is_dir() and repo not in kandidaten:
+        if repo is not None and repo.is_dir() and repo not in kandidaten:
             kandidaten.append(repo)
         for ordner in kandidaten:
             cid = werkzeug.agy_gespraech_fuer_ordner(ordner, agy_ordner=agy_ordner)
@@ -2416,7 +2463,7 @@ class Aufpasser:
     def _seit_hinweis(
         self,
         f: Fenster,
-        repo: Path,
+        repo: Path | None,
         info: SessionInfo | None,
         arbeitend: bool,
         ticket: int | None = None,
@@ -2430,39 +2477,40 @@ class Aufpasser:
             return self._agy_still_seit(f, repo, ticket)
         return None
 
+    def _gueltiger_seit_hinweis(self, seit_hinweis: float | None) -> float | None:
+        if seit_hinweis is not None and 0 < seit_hinweis < self.jetzt and abs(time.time() - self.jetzt) < 60:
+            return seit_hinweis
+        return None
+
     def eintrag(self, schluessel: str, text: str, *, seit_hinweis: float | None = None) -> dict:
         """Hash/Zeit fortschreiben. Ändert sich der Text nach einem Eingriff
         (``stufe`` > 0), hat der Eingriff gewirkt: Stufe 0 — kein Zeit-Reset.
 
-        ``seit_hinweis`` (z. B. ``mtime`` der Session-JSON bei ``status: idle`` oder des
-        ``agy``-Transkripts, #624/#288) gilt bei realer Uhr für brandneue Einträge sowie
-        für bestehende Einträge ohne vorherigen Textwechsel/Eingriff (zieht ``seit`` nur
-        früher, überschreibt nie eine echte Textänderung).
+        ``seit_hinweis`` (``mtime`` der Session-JSON bei ``status: idle`` oder des
+        ``agy``-Transkripts, #624/#288) gilt bei realer Uhr beim Neuanlegen und bei
+        unverändertem Eintrag ohne jüngeren Eingriff oder jüngere echte Pane-Änderung —
+        so bleibt ``seit`` auf dem echten Stille-Beginn statt bei jedem Takt oder
+        Erstblick zurückgesetzt zu werden.
         """
         h = pane_hash(text)
+        hinweis = self._gueltiger_seit_hinweis(seit_hinweis)
         vorhanden = self.stand.fenster.get(schluessel)
-        hinweis_gueltig = (
-            seit_hinweis is not None and 0 < seit_hinweis < self.jetzt and abs(time.time() - self.jetzt) < 60
-        )
         if vorhanden is None:
-            anfang = seit_hinweis if hinweis_gueltig else self.jetzt
+            anfang = hinweis if hinweis is not None else self.jetzt
             e = {"hash": h, "seit": anfang, "stufe": 0}
         else:
             e = vorhanden
-            if (
-                hinweis_gueltig
-                and seit_hinweis is not None
-                and e.get("hash") == h
-                and int(e.get("stufe", 0)) == 0
-                and not e.get("eingriff")
-                and e.get("seit_quelle") != "text"
-                and seit_hinweis < float(e.get("seit", self.jetzt))
-            ):
-                e["seit"] = seit_hinweis
         e.setdefault("stufe", 0)
+        sperr_zeit = max(float(e.get("eingriff") or 0), float(e.get("pane_aenderung") or 0))
         if e.get("hash") != h:
-            e["hash"], e["seit"] = h, self.jetzt
-            e["seit_quelle"] = "text"
+            alt_seit = float(e.get("seit") or 0)
+            e["hash"] = h
+            if hinweis is not None and hinweis > alt_seit and hinweis > sperr_zeit:
+                e["seit"] = hinweis
+                e.pop("pane_aenderung", None)
+            else:
+                e["seit"] = self.jetzt
+                e["pane_aenderung"] = self.jetzt
             if e["stufe"]:
                 log.info(
                     "%s: Text geändert nach Eingriff (Stufe %s) — Kette zurück auf 0",
@@ -2470,12 +2518,27 @@ class Aufpasser:
                     e["stufe"],
                 )
                 e["stufe"] = 0
+        elif (
+            hinweis is not None
+            and not e["stufe"]
+            and hinweis > sperr_zeit
+            and hinweis < float(e.get("seit", self.jetzt))
+        ):
+            e["seit"] = hinweis
         self.stand.fenster[schluessel] = e
         return e
 
-    def hashes_fortschreiben(self, sitzung: str, fenster: list[Fenster]) -> None:
+    def hashes_fortschreiben(self, sitzung: str, fenster: list[Fenster], repo: Path | None = None) -> None:
         for f in fenster:
-            self.eintrag(f"{sitzung}/{f.name}", self.pane_text(f.ziel))
+            text = self.pane_text(f.ziel)
+            info = self.session(f)
+            arbeitend = arbeitet_echt(text, info.status if info else None)
+            ticket = echtes_ticket(f)
+            self.eintrag(
+                f"{sitzung}/{f.name}",
+                text,
+                seit_hinweis=self._seit_hinweis(f, repo, info, arbeitend, ticket=ticket),
+            )
 
     def _braucht_mensch(
         self,
@@ -2674,7 +2737,7 @@ class Aufpasser:
             except RuntimeError:
                 return None
             fb_info = self.session(fb)
-            if arbeitet(fb_text, fb_info.status if fb_info else None):
+            if arbeitet_echt(fb_text, fb_info.status if fb_info else None):
                 return None
         return grund
 
@@ -2687,7 +2750,7 @@ class Aufpasser:
         grund: str,
     ) -> None:
         """Schließt ein stilles ``leitstand``-/``wache``-Fenster einer abgeschlossenen Spec (#624)."""
-        if not self.vor_eingriff(f, hash_start, repo):
+        if not self.vor_eingriff(f, hash_start, repo, limit_ignorieren=True):
             return
         ende = self._fenster_schliessen(
             f.fest,
@@ -2714,7 +2777,7 @@ class Aufpasser:
         info = self.session(f)
         status = info.status if info else None
         ticket = echtes_ticket(f)
-        arbeitend = arbeitet(text, status)
+        arbeitend = arbeitet_echt(text, status)
         seit_hinweis = self._seit_hinweis(f, repo, info, arbeitend, ticket=ticket)
         e = self.eintrag(schluessel, text, seit_hinweis=seit_hinweis)
         still_min = (self.jetzt - e["seit"]) / 60
@@ -2868,13 +2931,14 @@ class Aufpasser:
         ticket = echtes_ticket(f)
         if ticket != f.ticket:
             log.info("%s: bau.py arbeitet an Ticket %s", f.name, ticket)
-        arbeitend = arbeitet(text, status)
-        seit_hinweis = self._seit_hinweis(f, repo, info, arbeitend, ticket=ticket)
+        echt_arbeitend = arbeitet_echt(text, status)
+        seit_hinweis = self._seit_hinweis(f, repo, info, echt_arbeitend, ticket=ticket)
         e = self.eintrag(schluessel, text, seit_hinweis=seit_hinweis)
         hash_start = e["hash"]
         still_min = (self.jetzt - e["seit"]) / 60
+        arbeitend = arbeitet(text, status)
 
-        if self._fertiges_fenster(f, repo, offen, ticket, text, info, e, still_min, schluessel, arbeitend):
+        if self._fertiges_fenster(f, repo, offen, ticket, text, info, e, still_min, schluessel, echt_arbeitend):
             return
 
         if rueckfrage(text):
@@ -2906,7 +2970,7 @@ class Aufpasser:
         schwelle = FRAGE_PROMPT_MIN if kurz else self.e.hang_min
         if arbeitend or still_min < schwelle:
             return
-        if ticket is None and not f.ist_wache:
+        if ticket is None and (not f.ist_wache or not offen):
             return
 
         stufe = int(e.get("stufe", 0))
@@ -3080,7 +3144,7 @@ class Aufpasser:
                 f"„{f.name}“: Ticket zu, aber Sicherung fehlgeschlagen — braucht den Menschen.",
             )
             return
-        if not self.vor_eingriff(f, hash_start, repo):
+        if not self.vor_eingriff(f, hash_start, repo, limit_ignorieren=True):
             return
         # Folgt in der Kette ein Ticket, das schon woanders läuft, endet das ganze
         # Fenster — nach /exit startete die Kette sonst ein zweites bau.py (#598).
@@ -3568,9 +3632,9 @@ class Aufpasser:
             log.info("Deploy/Gate läuft (%s): nichts angefasst", "; ".join(deploy[:3]))
             if self.e.trocken:
                 print(f"[trocken] Deploy/Gate läuft ({deploy[0]}): nichts angefasst")
-            for sitzung, _, fenster, _ in gesehen:
+            for sitzung, _, fenster, repo in gesehen:
                 try:
-                    self.hashes_fortschreiben(sitzung, fenster)
+                    self.hashes_fortschreiben(sitzung, fenster, repo=repo)
                 except RuntimeError as fehler:
                     log.error("%s: Fenster nicht lesbar: %s", sitzung, fehler)
             return

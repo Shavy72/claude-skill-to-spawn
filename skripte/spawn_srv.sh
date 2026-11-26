@@ -285,7 +285,11 @@ warteliste_aendern() {
 # <<< warteliste
 # LAEUFT = Tickets dieses Laufs, die schon liefen oder gestartet wurden — nur die trägt der Lauf aus.
 LAEUFT=""
-VORSPANN="export REPO=$(printf %q "$REPO") TO_SPAWN_HOME=$(printf %q "$SKILL_HOME") TO_SPAWN_REPO=$(printf %q "$REPO") TO_SPAWN_WARTE_DATEI=$(printf %q "$WARTE_DATEI");"
+VORSPANN="export REPO=$(printf %q "$REPO") TO_SPAWN_HOME=$(printf %q "$SKILL_HOME") TO_SPAWN_REPO=$(printf %q "$REPO") TO_SPAWN_WARTE_DATEI=$(printf %q "$WARTE_DATEI")"
+if [ -n "${TO_SPAWN_MASCHINE:-}" ]; then
+  VORSPANN="$VORSPANN TO_SPAWN_MASCHINE=$(printf %q "$TO_SPAWN_MASCHINE")"
+fi
+VORSPANN="$VORSPANN;"
 # GEPLANT = echte Fensterbefehle, KURZ = Kurzform ``bau <N> [--umzug …]`` / ``wache <S>`` für
 # Anzeige und Fenstername (erste zwei Wörter; sessions_stand/aufpasser lesen die Namen) —
 # beide Listen laufen parallel.

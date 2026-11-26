@@ -18,14 +18,14 @@ import ast
 import os
 import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 _SKILL = Path(__file__).resolve().parent.parent
 if str(_SKILL) not in sys.path:
     sys.path.insert(0, str(_SKILL))
 
-from to_spawn import prozessbaum, sitzungsjob  # noqa: E402
+from to_spawn import prozessbaum, sitzungsjob, temp_ordner  # noqa: E402
 
 # Windows-Konsole/Pipe nutzt ohne PYTHONUTF8 oft cp1252 — Meldungen mit Umlauten/Gedankenstrich brauchen UTF-8.
 for _strom in (sys.stdout, sys.stderr):
@@ -155,9 +155,9 @@ def zerlege_args(argv: Sequence[str], wurzel: Path) -> tuple[Path, bool, list[st
     return ziel_wurzel, je_datei, pfade, extra
 
 
-def _datei_lauf(befehl: list[str], wurzel: Path) -> int:
+def _datei_lauf(befehl: list[str], wurzel: Path, *, env: Mapping[str, str] | None = None) -> int:
     """Startet genau einen ``pytest``-Prozess gebunden an ``sitzungsjob.gebunden`` (#197)."""
-    prozess = subprocess.Popen(befehl, cwd=wurzel, **prozessbaum.ohne_fenster())  # noqa: S603
+    prozess = subprocess.Popen(befehl, cwd=wurzel, env=env, **prozessbaum.ohne_fenster())  # noqa: S603
     with sitzungsjob.gebunden(prozess):
         try:
             return prozess.wait()
@@ -188,8 +188,13 @@ def main(argv: Sequence[str] | None = None, *, wurzel: Path = _SKILL) -> int:
         return 64
     basis = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"]
     if not je_datei:
-        parallel = [] if _hat_parallel_schalter(extra) else ["-n", "4"]
-        return _datei_lauf([*basis, *parallel, *pfade, *extra], ziel_wurzel)
+        parallel = [] if _hat_parallel_schalter(extra) else ["-n", "4", "--dist", "worksteal"]
+        umg: dict[str, str] | None = None
+        if not os.environ.get("TMPDIR"):
+            temp_umg = temp_ordner.umgebung()
+            if temp_umg:
+                umg = {**os.environ, **temp_umg}
+        return _datei_lauf([*basis, *parallel, *pfade, *extra], ziel_wurzel, env=umg)
 
     ziele = sammle_dateien(ziel_wurzel, pfade)
     if not ziele:

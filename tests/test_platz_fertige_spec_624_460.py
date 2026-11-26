@@ -461,3 +461,443 @@ def test_spawn_srv_wartepfad_verzoegerter_wache_start_exit_0_und_wartedatei(tmp_
     assert f"leitstand {e2.SPEC}" not in gestartet and "bau 901" not in gestartet, gestartet
     assert "wartet auf Platz:" in ausgabe and speicher.GESAMT_VOLL_TEXT in ausgabe, ausgabe
     assert warte_datei.is_file() and warte_datei.read_text(encoding="utf-8").strip() == "901", ausgabe
+
+
+# --- Nachfix Mini-Probe 6 (#624, #460): stand.json 'seit', Limit/Umfrage, TO_SPAWN_MASCHINE, Weg-Test ---
+
+#: Echter tmux-Pane-Auszug von ``wache 41`` aus Mini-Probe 6 (26.11.2026): Wochenlimit-Hinweis
+#: über leerem Eingabefeld bei ``status: idle`` und 491 min alter Session-JSON.
+ECHTES_PANE_WACHE_41 = (
+    "❯ Weiter als Bau-Aufseher Spec #41: Modell-Wechsel claude-opus-5-5[1m] →\n"
+    "  claude-sonnet-5 wegen Nutzungs-Limit.\n"
+    "  ⎿  You've hit your weekly limit · resets Nov 29, 11pm (Europe/Berlin) · out of\n"
+    "     usage credits\n"
+    "     /usage-credits to finish what you’re working on.\n"
+    "\n"
+    "                                          new task? /clear to save 133k tokens\n"
+    + "─" * 80
+    + "\n❯ \n"
+    + "─" * 80
+    + "\n  Sonnet 5 · 132.1k (13.0%) · 27m\n"
+    "  📁 to-spawn-probe-5-mit · ⎇ main · 7d: 100%\n"
+)
+
+#: Echter Pane-Text mit Claude-Code-Feedback-Umfrage über dem Eingabefeld (UI-Rauschen).
+ECHTES_PANE_MIT_UMFRAGE = (
+    "● Spec #61 ist live und geschlossen.\n"
+    "\n"
+    "✻ Worked for 2m 59s · done 7:59 PM\n"
+    "\n"
+    "● How is Claude doing this session? (optional)\n"
+    "  1: Bad    2: Fine   3: Good   0: Dismiss · Esc to cancel\n"
+    "                                        new task? /clear to save 132.8k tokens\n"
+    + "─" * 80
+    + "\n❯ \n"
+    + "─" * 80
+    + "\n  Opus 5.5 · 132.8k (13.0%) · 3h52m\n"
+)
+
+ECHTES_PANE_OHNE_UMFRAGE = (
+    "● Spec #61 ist live und geschlossen.\n"
+    "\n"
+    "✻ Worked for 2m 59s · done 7:59 PM\n" + "─" * 80 + "\n❯ \n" + "─" * 80 + "\n  Opus 5.5 · 132.8k (13.0%) · 3h52m\n"
+)
+
+
+def test_eintrag_seit_nur_bei_echtem_zustandswechsel_und_ohne_ui_rauschen(tmp_path: Path) -> None:
+    """#624: ``stand.json``-``seit`` übernimmt ältere idle-``mtime`` auch bei bestehendem Eintrag
+    ohne jüngeren Eingriff, ignoriert Feedback-Umfrage/``/clear``-Hinweis im Hash und schützt
+    jüngere Eingriffe sowie echte Pane-Änderungen."""
+    jetzt = time.time()
+    a = aufpasser.Aufpasser(
+        aufpasser.Einstellungen(
+            zustand=tmp_path,
+            tmux_socket="nie-benutzt",
+            trocken=True,
+            jetzt=lambda: jetzt,
+        )
+    )
+    a.jetzt = jetzt
+    schluessel = "spec-probe-5-ohne-61/wache 61"
+
+    # (1) Flüchtiges UI-Rauschen (Umfrage + /clear-Hinweis) ändert pane_hash nicht.
+    assert aufpasser.pane_hash(ECHTES_PANE_MIT_UMFRAGE) == aufpasser.pane_hash(ECHTES_PANE_OHNE_UMFRAGE)
+
+    # (2) Bestehender Eintrag aus regulärem Aufpasser-Takt (9,5 min alt, ohne Eingriff),
+    # reale Session-JSON-mtime liegt 90 min zurück → 'seit' wird auf die echte Stille gezogen.
+    a.stand.fenster[schluessel] = {
+        "hash": aufpasser.pane_hash(ECHTES_PANE_OHNE_UMFRAGE),
+        "seit": jetzt - 9.5 * 60,
+        "stufe": 0,
+    }
+    e = a.eintrag(schluessel, ECHTES_PANE_MIT_UMFRAGE, seit_hinweis=jetzt - 90 * 60)
+    assert e["seit"] == pytest.approx(jetzt - 90 * 60, abs=1.0)
+
+    # (3) Schutz: nach einem frischen Eingriff (stufe=1, eingriff vor 2 min) darf eine alte
+    # Session-JSON-mtime 'seit' nie vor den Eingriff zurückziehen.
+    a.stand.fenster[schluessel] = {
+        "hash": aufpasser.pane_hash(ECHTES_PANE_OHNE_UMFRAGE),
+        "seit": jetzt - 2 * 60,
+        "stufe": 1,
+        "eingriff": jetzt - 2 * 60,
+    }
+    e_eingriff = a.eintrag(schluessel, ECHTES_PANE_OHNE_UMFRAGE, seit_hinweis=jetzt - 90 * 60)
+    assert e_eingriff["seit"] == pytest.approx(jetzt - 2 * 60, abs=1.0)
+
+    # (4) Echte Pane-Änderung ohne neuere mtime (z. B. Tippen im Eingabefeld) setzt 'seit' auf jetzt
+    # und hält es auch im Folgetakt stabil (kein Zurückschnappen auf alte mtime).
+    a.stand.fenster[schluessel] = {
+        "hash": aufpasser.pane_hash(ECHTES_PANE_OHNE_UMFRAGE),
+        "seit": jetzt - 90 * 60,
+        "stufe": 0,
+    }
+    geaendert = ECHTES_PANE_OHNE_UMFRAGE.replace("❯ \n", "❯ halb getippt\n")
+    e_neu = a.eintrag(schluessel, geaendert, seit_hinweis=jetzt - 90 * 60)
+    assert e_neu["seit"] == pytest.approx(jetzt, abs=1.0)
+    a.jetzt = jetzt + 120
+    e_folge = a.eintrag(schluessel, geaendert, seit_hinweis=jetzt - 90 * 60)
+    assert e_folge["seit"] == pytest.approx(jetzt, abs=1.0)
+
+
+def test_limit_und_umfrage_text_an_einer_stelle_als_nicht_arbeitend() -> None:
+    """#624: Limit-Meldung (``wache 41``) und Feedback-Umfrage gelten in ``arbeitet_echt`` als
+    nicht arbeitend; echte Arbeit (``busy``, ``esc to interrupt``, echte Rückfrage) bleibt geschützt."""
+    assert aufpasser.arbeitet_echt(ECHTES_PANE_WACHE_41, status="idle") is False
+    assert aufpasser.arbeitet_echt(ECHTES_PANE_MIT_UMFRAGE, status="idle") is False
+    assert aufpasser.rueckfrage(ECHTES_PANE_MIT_UMFRAGE) is False
+    assert aufpasser.arbeitet(ECHTES_PANE_MIT_UMFRAGE, status="idle") is False
+    # Gegenproben: echte Arbeit / echte Rückfrage bleiben aktiv.
+    assert aufpasser.arbeitet_echt(ECHTES_PANE_WACHE_41, status="busy") is True
+    assert aufpasser.arbeitet_echt("✻ Denkt nach… (esc to interrupt)", status="idle") is True
+    assert aufpasser.arbeitet_echt("Do you want to proceed?\nEsc to cancel", status="idle") is True
+
+
+@pytest.mark.braucht("tmux")
+def test_platz_schaffen_raeumt_fertige_spec_auch_nach_aufpasser_takt_und_mit_limit_text(
+    welt: Welt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#624 (Mini-Probe-6-Befund):
+    (1) Regulärer Aufpasser-Takt sieht fertige Fremd-Spec (``wache``/``leitstand``/``bau`` 90 min idle)
+        zuerst — danach muss ``platz_schaffen()`` alle drei trotzdem schließen (kein ``seit = 9,5 min``).
+    (2) ``wache`` mit echter Wochenlimit-Meldung im Pane (wie ``wache 41``) gilt bei ``status=idle``
+        als nicht arbeitend und wird ebenfalls geschlossen."""
+    _grenze(welt, monkeypatch, max_sessions=2)
+    monkeypatch.setenv("GH_STUB_UNTER", f"{SPEC}:9002,8861:8862,8871:8872")
+    monkeypatch.setenv("GH_STUB_ZU", "8862,8872")
+
+    sitzung_ohne = "spec-probe5-ohne-8861"
+    _zweite_sitzung(
+        welt,
+        sitzung_ohne,
+        "8861",
+        "repo-probe5-ohne",
+        [
+            ("wache 8861", ""),
+            ("leitstand 8861", f"{speicher.ANZEIGE_VARIABLE}=1"),
+            ("bau 8862", ""),
+        ],
+    )
+    sitzung_limit = "spec-probe5-limit-8871"
+    _zweite_sitzung(
+        welt,
+        sitzung_limit,
+        "8871",
+        "repo-probe5-limit",
+        [("wache 8871", "")],
+    )
+    _alle_sessions_altern(welt, 90 * 60)
+
+    # Echte Wochenlimit-Meldung ins Pane von wache 8871 + vorbestehender stand.json-Eintrag
+    # mit zu frischem 'seit' (9,5 min wie nach altem Aufpasser-Takt in Mini-Probe 6).
+    a_takt = _aufpasser(welt)
+    limit_fenster = a_takt.fenster(sitzung_limit, "8871")
+    limit_ziele = {f.ziel for f in limit_fenster}
+
+    def pane_text_hook(self: aufpasser.Aufpasser, ziel: str) -> str:
+        if ziel in limit_ziele:
+            return ECHTES_PANE_WACHE_41
+        return self.tmux("capture-pane", "-p", "-t", ziel)
+
+    monkeypatch.setattr(aufpasser.Aufpasser, "pane_text", pane_text_hook)
+
+    # Vorbestehende stand.json mit 9,5 min altem 'seit' (simuliert Alt-Stand aus regulärem Takt).
+    jetzt = time.time()
+    stand_datei = welt.zustand / "stand.json"
+    stand_daten = {"fenster": {}, "meldungen": {}, "starts": {}}
+    for f in a_takt.fenster(sitzung_ohne, "8861"):
+        stand_daten["fenster"][f"{sitzung_ohne}/{f.name}"] = {
+            "hash": aufpasser.pane_hash(a_takt.pane_text(f.ziel)),
+            "seit": jetzt - 9.5 * 60,
+            "stufe": 0,
+        }
+    welt.zustand.mkdir(parents=True, exist_ok=True)
+    stand_datei.write_text(json.dumps(stand_daten), encoding="utf-8")
+
+    # Auch ein regulärer fenster_pruefen-Durchlauf auf wache 8861 darf 'seit' nicht zurücksetzen,
+    # sondern übernimmt die 90 min alte Session-JSON-mtime.
+    a_check = _aufpasser(welt)
+    a_check.stand = a_check._stand_laden()
+    a_check.jetzt = time.time()
+    wache_8861 = next(f for f in a_check.fenster(sitzung_ohne, "8861") if f.ist_wache)
+    a_check.fenster_pruefen(wache_8861, welt.tmp / "repo-probe5-ohne", set())
+    assert (a_check.jetzt - a_check.stand.fenster[f"{sitzung_ohne}/wache 8861"]["seit"]) / 60 >= 80.0
+    a_check._stand_schreiben()
+
+    assert _aufpasser(welt).platz_schaffen() > 0
+    time.sleep(0.6)
+    assert _sitzung_fenster(sitzung_ohne) == [], welt.log()
+    assert _sitzung_fenster(sitzung_limit) == [], welt.log()
+
+
+@pytest.mark.braucht("bash", "posix")
+def test_spawn_srv_exportiert_to_spawn_maschine_ins_tmux_fenster(tmp_path: Path) -> None:
+    """#624: ``spawn_srv.sh`` reicht ``TO_SPAWN_MASCHINE`` über ``VORSPANN`` an jedes gestartete
+    tmux-Fenster weiter (und lässt die Variable weg, wenn sie nicht gesetzt ist)."""
+    maschine_pfad = tmp_path / "eigene-maschine.json"
+    maschine_pfad.write_text('{"rolle": "server", "repos": []}', encoding="utf-8")
+    repo, _welt, umgebung = _aufbau(
+        tmp_path,
+        konfig={
+            "hauptzweig": "main",
+            "worktree_basis": (tmp_path / "wt").as_posix(),
+            "speicher": {"max_sessions": 6, "min_frei_mib": 0, "staffel_s": 0},
+            "leitstand": {"aktiv": False},
+        },
+    )
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    aufrufe = bin_dir / "tmux_aufrufe.txt"
+    fenster = bin_dir / "fenster.txt"
+    sitzungen = bin_dir / "sitzungen.txt"
+    sitzungen.write_text(f"spec-{e2.SPEC}\t/tmp/t624-env/default\t$1\n", encoding="utf-8")
+    tmux_bin = bin_dir / "tmux"
+    tmux_bin.write_text(
+        "#!/usr/bin/env bash\n"
+        f'printf "%s\\n" "$*" >> {str(aufrufe)!r}\n'
+        'name=""; prev=""\n'
+        'for a in "$@"; do [ "$prev" = "-n" ] && name="$a"; prev="$a"; done\n'
+        'case "$1" in\n'
+        f"  has-session) [ -s {str(fenster)!r} ] ;;\n"
+        f"  list-windows) [ -s {str(fenster)!r} ] && cat {str(fenster)!r} ;;\n"
+        f"  list-sessions) cat {str(sitzungen)!r} ;;\n"
+        f'  new-session|new-window) printf "%s\\n" "$name" >> {str(fenster)!r} ;;\n'
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    tmux_bin.chmod(0o755)
+    proc = tmp_path / "proc"
+    sessions = tmp_path / "sessions"
+    proc.mkdir()
+    sessions.mkdir()
+    meminfo = tmp_path / "meminfo"
+    meminfo.write_text("MemTotal:       16777216 kB\nMemAvailable:   10485760 kB\n", encoding="utf-8")
+    umgebung.update(
+        {
+            "PATH": f"{bin_dir}{os.pathsep}{umgebung['PATH']}",
+            "TO_SPAWN_REPO": str(repo),
+            "TO_SPAWN_MASCHINE": str(maschine_pfad),
+            "TO_SPAWN_TEST_BIN": str(bin_dir),
+            "TO_SPAWN_SPEICHER_PROC": str(proc),
+            "TO_SPAWN_SPEICHER_SESSIONS": str(sessions),
+            "TO_SPAWN_SPEICHER_MEMINFO": str(meminfo),
+            "TO_SPAWN_SPEICHER_PLATZ": str(tmp_path / "platz.json"),
+            "TO_SPAWN_HAUSMEISTER_PLATTE": "0.5",
+            "TO_SPAWN_ANLAUF_MAX_S": "1",
+            "TO_SPAWN_ANLAUF_PRUEF_S": "0",
+            "GIT_ALLOW_PROTOCOL": "file",
+            "GIT_TERMINAL_PROMPT": "0",
+        }
+    )
+    umgebung.pop("TMUX", None)
+
+    lauf = bash_wahl.lauf(
+        [str(SPAWN_SH), str(e2.SPEC), "--tickets", "901"],
+        cwd=str(repo),
+        env=umgebung,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+    )
+    assert lauf.returncode == 0, lauf.stdout + lauf.stderr
+    gestartet = aufrufe.read_text(encoding="utf-8")
+    for name in (f"wache {e2.SPEC}", "bau 901"):
+        zeile = next((z for z in gestartet.splitlines() if f"-n {name} " in z), "")
+        assert zeile, gestartet
+        assert f"TO_SPAWN_MASCHINE={maschine_pfad}" in zeile, zeile
+
+
+@pytest.mark.braucht("bash", "posix")
+def test_weg_460_kleine_grenze_wartet_und_aufseher_startet_ohne_ueberbuchung(tmp_path: Path) -> None:
+    """#460 Weg-Test mit kleiner Session-Grenze (4 GB → 3 arbeitend / 6 gesamt):
+    1. 6 fremde stille Sessions füllen die Gesamtgrenze → ``spawn_srv.sh`` liefert Exit 0,
+       „wartet auf Platz:“ + Grund, öffnet ``wache <S>`` (mit ``TO_SPAWN_MASCHINE``), schreibt
+       ``.to-spawn/wartet-auf-platz-<S>`` mit ``901,902`` und startet kein ``bau``-Fenster.
+    2. Genau 1 Platz wird frei → Aufseher-Nachstart startet NUR ``bau 901`` (6/6, keine Überbuchung),
+       ``902`` bleibt in ``wartet-auf-platz-<S>``.
+    3. Ein weiterer Platz wird frei → Aufseher-Nachstart startet ``bau 902`` (6/6), Warte-Datei weg."""
+    import importlib.util
+
+    sockel = "/tmp/t460-weg-klein/default"
+    proc = tmp_path / "proc"
+    sessions = tmp_path / "sessions"
+    proc.mkdir()
+    sessions.mkdir()
+    # 4 GB MemTotal → rechner_grenze=3, gesamt_grenze=6. 6 fremde stille Sessions = voll (6/6).
+    meminfo = tmp_path / "meminfo"
+    meminfo.write_text("MemTotal:       4194304 kB\nMemAvailable:   3145728 kB\n", encoding="utf-8")
+    for pid in range(201, 207):
+        ordner = proc / str(pid)
+        ordner.mkdir()
+        (ordner / "cmdline").write_bytes(b"/usr/bin/claude\0")
+        (ordner / "environ").write_bytes(f"PATH=/usr/bin\0TMUX={sockel},1,9\0".encode())
+        (sessions / f"{pid}.json").write_text(json.dumps({"pid": pid, "status": "idle"}), encoding="utf-8")
+
+    maschine_pfad = tmp_path / "maschine-weg-460.json"
+    maschine_pfad.write_text('{"rolle": "server", "repos": []}', encoding="utf-8")
+    repo, welt_datei, umgebung = _aufbau(
+        tmp_path,
+        konfig={
+            "hauptzweig": "main",
+            "worktree_basis": (tmp_path / "wt").as_posix(),
+            "speicher": {"max_sessions": 3, "min_frei_mib": 0, "staffel_s": 0},
+            "leitstand": {"aktiv": False},
+        },
+    )
+    # Manifest + GitHub-Attrappen-Welt um zweites Ticket 902 ergänzen, damit schrittweises Nachstarten prüfbar ist.
+    manifest_pfad = repo / "docs" / "agents" / "manifests" / f"spec-{e2.SPEC}.json"
+    manifest_daten = json.loads(manifest_pfad.read_text(encoding="utf-8"))
+    manifest_daten["tickets"]["902"] = dict(manifest_daten["tickets"]["901"], titel="Zweites Ticket")
+    manifest_pfad.write_text(json.dumps(manifest_daten), encoding="utf-8")
+    welt_daten = json.loads(welt_datei.read_text(encoding="utf-8"))
+    welt_daten["issues"]["902"] = dict(welt_daten["issues"]["901"], number=902, title="Zweites Ticket")
+    welt_datei.write_text(json.dumps(welt_daten), encoding="utf-8")
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    aufrufe = bin_dir / "tmux_aufrufe.txt"
+    fenster = bin_dir / "fenster.txt"
+    sitzungen = bin_dir / "sitzungen.txt"
+    sitzungen.write_text(f"spec-{e2.SPEC}\t{sockel}\t$5\n", encoding="utf-8")
+    wache_py = bin_dir / "attrappe" / "skripte" / "wache.py"
+    wache_py.parent.mkdir(parents=True, exist_ok=True)
+    wache_py.write_text(_WACHE_ATTRAPPE, encoding="utf-8")
+
+    # Jeder gestartete Fenster-Start legt eine Claude-Session in der eigenen Sitzung ($5) an,
+    # damit die Obergrenze 6/6 bei jedem weiteren Fenster echt greift.
+    tmux_bin = bin_dir / "tmux"
+    tmux_bin.write_text(
+        "#!/usr/bin/env bash\n"
+        f'printf "%s\\n" "$*" >> {str(aufrufe)!r}\n'
+        'name=""; ort="$PWD"; prev=""\n'
+        'for a in "$@"; do [ "$prev" = "-n" ] && name="$a"; [ "$prev" = "-c" ] && ort="$a"; prev="$a"; done\n'
+        'case "$1" in\n'
+        f"  has-session) [ -s {str(fenster)!r} ] ;;\n"
+        f"  list-windows) [ -s {str(fenster)!r} ] && cat {str(fenster)!r} ;;\n"
+        f"  list-sessions) cat {str(sitzungen)!r} ;;\n"
+        "  new-session|new-window)\n"
+        f'    printf "%s\\n" "$name" >> {str(fenster)!r}\n'
+        f"    pid=$((500 + $(wc -l < {str(fenster)!r})))\n"
+        f'    mkdir -p {str(proc)!r}/"$pid"\n'
+        f'    printf "/usr/bin/claude\\0" > {str(proc)!r}/"$pid/cmdline"\n'
+        f'    printf "PATH=/usr/bin\\0TMUX={sockel},1,5\\0" > {str(proc)!r}/"$pid/environ"\n'
+        '    case "$name" in "wache "*)\n'
+        f'      ( cd "$ort" && exec {sys.executable!r} {str(wache_py)!r} "${{name#wache }}" "$$" )'
+        " </dev/null >/dev/null 2>&1 & ;;\n"
+        "    esac\n"
+        "    ;;\n"
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    tmux_bin.chmod(0o755)
+    # Aufseher-Attrappe bleibt für den ganzen Weg-Test an diesem pytest-Prozess gebunden.
+    wache_py.write_text(_WACHE_ATTRAPPE.replace("int(sys.argv[2])", str(os.getpid())), encoding="utf-8")
+
+    umgebung.update(
+        {
+            "PATH": f"{bin_dir}{os.pathsep}{umgebung['PATH']}",
+            "TO_SPAWN_REPO": str(repo),
+            "TO_SPAWN_MASCHINE": str(maschine_pfad),
+            "TO_SPAWN_TEST_BIN": str(bin_dir),
+            "TO_SPAWN_SPEICHER_PROC": str(proc),
+            "TO_SPAWN_SPEICHER_SESSIONS": str(sessions),
+            "TO_SPAWN_SPEICHER_MEMINFO": str(meminfo),
+            "TO_SPAWN_SPEICHER_PLATZ": str(tmp_path / "platz.json"),
+            "TO_SPAWN_HAUSMEISTER_PLATTE": "0.5",
+            "TO_SPAWN_ANLAUF_MAX_S": "1",
+            "TO_SPAWN_ANLAUF_PRUEF_S": "0",
+            "GIT_ALLOW_PROTOCOL": "file",
+            "GIT_TERMINAL_PROMPT": "0",
+        }
+    )
+    umgebung.pop("TMUX", None)
+
+    def fremde_entfernen(pids: list[int]) -> None:
+        for p in pids:
+            for teil in (proc / str(p)).iterdir():
+                teil.unlink()
+            (proc / str(p)).rmdir()
+            (sessions / f"{p}.json").unlink()
+
+    def gesamt_claude() -> int:
+        return len(list(proc.iterdir()))
+
+    # 1. Start bei voller Gesamtgrenze 6/6 → wache öffnet, 901+902 warten, Exit 0.
+    lauf = bash_wahl.lauf(
+        [str(SPAWN_SH), str(e2.SPEC), "--tickets", "901,902"],
+        cwd=str(repo),
+        env=umgebung,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+    )
+    ausgabe = lauf.stdout + lauf.stderr
+    warte_datei = repo / ".to-spawn" / f"wartet-auf-platz-{e2.SPEC}"
+    assert lauf.returncode == 0, ausgabe
+    assert "nicht gestartet" not in ausgabe and "nichts gestartet" not in ausgabe, ausgabe
+    assert "wartet auf Platz:" in ausgabe and speicher.GESAMT_VOLL_TEXT in ausgabe, ausgabe
+    assert warte_datei.is_file() and warte_datei.read_text(encoding="utf-8").strip() == "901,902", ausgabe
+    gestartet = aufrufe.read_text(encoding="utf-8")
+    assert f"-n wache {e2.SPEC} " in gestartet and f"TO_SPAWN_MASCHINE={maschine_pfad}" in gestartet, gestartet
+    assert "-n bau 901 " not in gestartet and "-n bau 902 " not in gestartet, gestartet
+
+    spec_wache = importlib.util.spec_from_file_location("wache_weg_460", SKILL / "skripte" / "wache.py")
+    assert spec_wache and spec_wache.loader
+    wache_mod = importlib.util.module_from_spec(spec_wache)
+    spec_wache.loader.exec_module(wache_mod)
+
+    # 2. Noch voll (6 fremde + 1 wache = 7 >= 6) → Nachstart startet nichts.
+    assert (
+        wache_mod.wartende_nachstarten(warte_datei, e2.SPEC, repo, env=umgebung, schlafen=lambda _s: None, max_laeufe=1)
+        == 1
+    )
+    assert warte_datei.read_text(encoding="utf-8").strip() == "901,902"
+
+    # 3. Zwei fremde Sessions enden → 4 fremde + 1 wache = 5/6 (genau 1 Platz frei).
+    # Nachstart darf NUR bau 901 starten (6/6, keine Überbuchung); 902 bleibt in der Warte-Datei.
+    fremde_entfernen([201, 202])
+    assert (
+        wache_mod.wartende_nachstarten(warte_datei, e2.SPEC, repo, env=umgebung, schlafen=lambda _s: None, max_laeufe=1)
+        == 1
+    )
+    gestartet = aufrufe.read_text(encoding="utf-8")
+    assert "-n bau 901 " in gestartet and "-n bau 902 " not in gestartet, gestartet
+    assert gesamt_claude() == 6, f"Überbuchung: {gesamt_claude()} > 6"
+    assert warte_datei.is_file() and warte_datei.read_text(encoding="utf-8").strip() == "902"
+
+    # 4. Eine weitere fremde Session endet → 3 fremde + 1 wache + 1 bau 901 = 5/6 (1 Platz frei).
+    # Nachstart startet bau 902 (6/6) und räumt die Warte-Datei weg.
+    fremde_entfernen([203])
+    assert (
+        wache_mod.wartende_nachstarten(warte_datei, e2.SPEC, repo, env=umgebung, schlafen=lambda _s: None, max_laeufe=2)
+        == 1
+    )
+    gestartet = aufrufe.read_text(encoding="utf-8")
+    assert "-n bau 902 " in gestartet, gestartet
+    assert gesamt_claude() == 6, f"Überbuchung: {gesamt_claude()} > 6"
+    assert not warte_datei.exists()
