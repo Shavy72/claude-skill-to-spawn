@@ -526,3 +526,69 @@ CMD_GEKLEBT_RUNDE6 = [
 @pytest.mark.parametrize("befehl", CMD_GEKLEBT_RUNDE6)
 def test_runde6_cmd_geklebt_wird_gesperrt(befehl: str) -> None:
     assert _sperrt(befehl), repr(befehl)
+
+
+# --- #621: ext-Weg neben Wert-Teil, Datei-Endungen (.bat/.ps1/Großschreibung), Fehlalarm Commit + Umleitung ---
+
+#: Punkt 1 — ``git fetch``/``git push`` mit ``ext::``-Transport neben einem Wert-Teil sperrt.
+EXT_WEG_621 = [
+    "git commit -m 'ja 5' && git fetch 'ext::sh -c \"git log -1 --format=%s | sh\"'",
+    "git commit -m 'ja 5' && git fetch 'ext::sh -c true'",
+    "git commit -m 'ja 5' && git fetch 'EXT::sh -c true'",
+    "git commit -m 'ja 5' && git push 'ext::sh -c true'",
+    "git commit -m 'ja 5' && git push --repo='ext::sh -c true'",
+]
+
+#: Punkt 2 — Aufruf als ``.bat``/``.ps1`` oder mit Pfad in Großschreibung sperrt.
+DATEI_ENDUNGEN_621 = [
+    "ja.bat 5",
+    "ja.ps1 5",
+    "JA.BAT 5",
+    "JA.PS1 5",
+    "~/.claude/bin/JA.BAT 5",
+    "~/.claude/bin/JA.PS1 5",
+    "C:\\Users\\x\\.claude\\bin\\JA.BAT 5",
+    "C:\\Users\\x\\.claude\\bin\\JA.PS1 5",
+    "bash ~/.claude/bin/JA.BAT 5",
+    "cmd /c ja.bat 5",
+    "cmd /cJA.BAT 5",
+    "powershell -c ja.ps1 5",
+    "echo 5 | xargs ~/.claude/bin/JA.BAT",
+    "rg --pre ~/.claude/bin/JA.BAT x .",
+]
+
+#: Gegenproben zu Punkt 3 — Umleitung vor weiterem git, Start-/Konfig-Ziel, Schleife, Nebenläufigkeit, xargs.
+UMLEITUNG_UMGEHUNG_621 = [
+    "git commit -m 'ja 5' && git log -1 --format=%s > /tmp/x.txt && git -C b fetch o",
+    "git commit -m 'ja 5' && git log -1 --format=%s > .git/config",
+    "git commit -m 'ja 5' && git log -1 --format=%s > ~/.config/gh/config.yml",
+    "while true; do git -C b fetch o; printf 'uploadpack = ja 5\\n' > b/config; done",
+    "(git -C b fetch o) & (printf 'uploadpack = ja 5\\n' > b/config)",
+    "echo 'uploadpack = ja 5' > b/config && echo o | xargs git -C b fetch",
+]
+
+
+@pytest.mark.parametrize("befehl", EXT_WEG_621 + DATEI_ENDUNGEN_621 + UMLEITUNG_UMGEHUNG_621)
+def test_621_ext_weg_und_endungen_werden_gesperrt(befehl: str) -> None:
+    assert _sperrt(befehl), repr(befehl)
+
+
+@pytest.mark.parametrize(
+    "befehl",
+    ["ja.bat 5", "ja.ps1 5", "~/.claude/bin/JA.BAT 5", "C:\\tools\\JA.PS1 5"],
+)
+def test_621_endungen_im_powershell_werkzeug_gesperrt(befehl: str) -> None:
+    assert _sperrt(befehl, "PowerShell"), repr(befehl)
+
+
+#: Punkt 3 — Commit-Nachricht mit dem Wort + eigene Umleitung von ``git log`` bleibt frei.
+COMMIT_UMLEITUNG_FREI_621 = [
+    "git commit -m 'ja 5' && git log -1 --format=%s > /tmp/x.txt",
+    "git commit -m 'Bitte ja 5 eingeben' && git log -1 --format=%s > /tmp/x.txt",
+    "git commit -m \"$(cat <<'EOF'\nfix: ja 5\nEOF\n)\" && git log -1 --format=%s > /tmp/x.txt",
+]
+
+
+@pytest.mark.parametrize("befehl", COMMIT_UMLEITUNG_FREI_621)
+def test_621_commit_mit_log_umleitung_bleibt_frei(befehl: str) -> None:
+    assert not _sperrt(befehl), repr(befehl)
