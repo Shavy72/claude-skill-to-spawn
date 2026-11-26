@@ -37,8 +37,10 @@ Gesamtgrenze, endet ``to_spawn.py speicher`` mit :data:`EXIT_FREMD_VOLL` statt :
 Die Grenzen bleiben gleich hart; ``spawn_srv.sh`` öffnet dann nur das Aufseher-Fenster, das selbst
 per :func:`auf_platz_warten` wartet, und meldet den Rest als „wartet auf Platz“.
 
-Nur Standardbibliothek (plus ``to_spawn.config``), nur Linux: auf anderen Systemen gibt es kein Urteil,
-also „frei“. Test-Tür: die Umgebungsvariablen ``TO_SPAWN_SPEICHER_MEMINFO``
+Nur Standardbibliothek (plus ``to_spawn.config``), Linux und Windows (#284): Linux liest
+``/proc/meminfo`` und ``/proc``, Windows nutzt ``GlobalMemoryStatusEx`` und die Kernel-Prozessliste
+(:func:`prozessbaum.prozesse`); nur wenn auf einem System keine Messung verfügbar ist, gibt es kein
+Urteil, also „frei“. Test-Tür: die Umgebungsvariablen ``TO_SPAWN_SPEICHER_MEMINFO``
 (Pfad einer meminfo-Datei) und ``TO_SPAWN_SPEICHER_PROC`` (Ordner im Aufbau von
 ``/proc``) ersetzen den echten ``/proc`` — so bleibt das Ergebnis in Tests
 unabhängig von den Sessions, die gerade auf der Testmaschine laufen. Ebenso
@@ -60,7 +62,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from to_spawn import config, sperre, werkzeug
+from to_spawn import config, prozessbaum, sperre, werkzeug
 
 log = logging.getLogger("to_spawn.speicher")
 
@@ -408,6 +410,49 @@ def _claude_eintraege(ordner: Path) -> list[Path] | None:
     return treffer
 
 
+def _windows_sessions_aus(
+    liste: dict[int, tuple[int, str, int]],
+    *,
+    mit_stillen: bool = False,
+) -> int | None:
+    """Zählt laufende Bau-Sessions (``claude``/``agy``, ohne ``-p``/``--print``) aus einer
+    Windows-Prozessliste (:func:`prozessbaum.prozesse`, #284).
+
+    Leere Prozessliste heißt unlesbar (``None``). Eltern-Kind-Paare aus Hülle + Zielprozess
+    (z. B. ``cmd.exe /c claude.cmd`` → ``node.exe … claude-code/cli.js``) zählen nur einmal.
+    """
+    if not liste:
+        return None
+    treffer: dict[int, int] = {}
+    for pid, (eltern, zeile, _start) in liste.items():
+        if not zeile or not werkzeug.ist_session_zeile(zeile, windows=True):
+            continue
+        teile = [t.strip('"') for t in zeile.split()]
+        if "-p" in teile[1:] or "--print" in teile[1:]:
+            continue  # Einmal-Helfer (``claude -p`` / ``agy -p``) — keine eigene Sitzung
+        treffer[pid] = eltern
+    anzahl = 0
+    for pid, eltern in treffer.items():
+        if eltern in treffer:
+            continue  # Kindprozess derselben Session-Hülle nicht doppelt zählen
+        if not mit_stillen:
+            roh = session_json_lesen(pid)
+            if roh is not None and roh.get("status") == "idle":
+                continue
+        anzahl += 1
+    return anzahl
+
+
+def windows_sessions(*, mit_stillen: bool = False) -> int | None:
+    """Zahl laufender Bau-Sessions unter Windows über :func:`prozessbaum.prozesse` (#284).
+
+    Außerhalb von Windows (oder ohne Kernel-Zugriff) ``None``.
+    """
+    if sys.platform != "win32" or getattr(ctypes, "windll", None) is None:
+        return None
+    return _windows_sessions_aus(prozessbaum.prozesse(), mit_stillen=mit_stillen)
+
+
 def claude_sessions(
     proc: Path | None = None, sitzung: Sitzung | None = None, *, mit_stillen: bool = False
 ) -> int | None:
@@ -416,9 +461,12 @@ def claude_sessions(
     Stille Sessions und Anzeige-Fenster zählen nicht (#460, Regel im Modul-Kopf);
     ``mit_stillen=True`` zählt sie mit (Gesamtgrenze, :func:`gesamt_grenze`).
     ``proc`` = Ordner im Aufbau von ``/proc`` (Unterordner je PID mit ``cmdline``, ``environ``);
-    ohne Angabe gilt ``TO_SPAWN_SPEICHER_PROC`` bzw. ``/proc``. ``sitzung`` = nur Prozesse
+    ohne Angabe gilt ``TO_SPAWN_SPEICHER_PROC`` bzw. ``/proc`` (Linux) oder die
+    Windows-Kernel-Prozessliste (:func:`windows_sessions`, #284). ``sitzung`` = nur Prozesse
     dieser tmux-Sitzung zählen (#409); ``None`` = alle der Maschine.
     """
+    if proc is None and not os.environ.get("TO_SPAWN_SPEICHER_PROC") and sys.platform == "win32":
+        return windows_sessions(mit_stillen=mit_stillen)
     eintraege = _claude_eintraege(proc if proc is not None else _proc_pfad())
     if eintraege is None:
         return None
@@ -570,7 +618,7 @@ def platz_frei(
 
     ``frei``/``sessions`` = Messwerte für Tests; ohne Angabe wird gemessen. Vorgegebene
     Werte (Parameter oder ``TO_SPAWN_SPEICHER_MEMINFO``/``TO_SPAWN_SPEICHER_PROC``)
-    gelten auf jeder Plattform; selbst gemessen wird nur unter Linux. Kein Wert →
+    gelten auf jeder Plattform; selbst gemessen wird unter Linux und Windows (#284). Kein Wert →
     kein Urteil, also frei (lieber starten als grundlos blockieren). Der Satz ist für
     Menschen: „Speicher knapp: 1,2 GB frei, Mindestmaß 2 GB“ oder „schon 6
     Claude-Sessions in spec-12 (Obergrenze 6)“.
@@ -630,13 +678,15 @@ def _urteil_art(
             grund = str(runde.get("grund") or f"PID {runde.get('pid')}")
             return False, f"{GROSSE_RUNDE_TEXT} ({grund}) — Bau-Tickets warten bis zum Rundenende", False
     werte = grenzen(konfig)
-    if frei is None and (linux or os.environ.get("TO_SPAWN_SPEICHER_MEMINFO")):
-        frei = frei_mib()
+    gesamt_mib: int | None = None
+    if frei is None:
+        frei, gesamt_mib = system_speicher_mib()
     # Rechner-weit, nur mit Sitzung gemessen: arbeitende (Rechner-Grenze) und alle (Gesamtgrenze).
     rechner: int | None = None
     alle: int | None = None
-    if sessions is None and (linux or os.environ.get("TO_SPAWN_SPEICHER_PROC")):
-        sitzung = welche()
+    mit_proc_tuer = bool(os.environ.get("TO_SPAWN_SPEICHER_PROC"))
+    if sessions is None and (linux or sys.platform == "win32" or mit_proc_tuer):
+        sitzung = welche() if (linux or mit_proc_tuer) else None
         sessions = _mit_vergebenen(claude_sessions(sitzung=sitzung), sitzung)
         if sitzung is None:
             wo = None  # keine/unbekannte Sitzung → der ganze Rechner zählt gegen max_sessions
@@ -646,21 +696,26 @@ def _urteil_art(
             rechner = _mit_vergebenen(claude_sessions(), None)
             alle = _mit_vergebenen(claude_sessions(mit_stillen=True), None)
     if frei is None and sessions is None:
-        grund = "/proc nicht lesbar" if linux else "kein Linux"
+        grund = "/proc nicht lesbar" if linux else "Messung nicht verfügbar"
         return True, f"Speicher: kein Urteil ({grund}) — Start erlaubt", False
     wo_text = f" in {wo}" if wo else ""
     if frei is not None and frei < werte["min_frei_mib"]:
         return False, f"Speicher knapp: {_gb_text(frei)} frei, Mindestmaß {_gb_text(werte['min_frei_mib'])}", False
     if sessions is not None and sessions >= werte["max_sessions"]:
         return False, f"schon {sessions} Claude-Sessions{wo_text} (Obergrenze {werte['max_sessions']})", False
+    gesamt = (
+        gesamt_kib()
+        if (linux or os.environ.get("TO_SPAWN_SPEICHER_MEMINFO"))
+        else (gesamt_mib * 1024 if gesamt_mib is not None else None)
+    )
     rechner_text = ""
     if rechner is not None:
-        grenze = rechner_grenze(gesamt_kib())
+        grenze = rechner_grenze(gesamt)
         if rechner >= grenze:
             return False, f"Rechner voll: schon {rechner} Claude-Sessions auf dem Rechner (Obergrenze {grenze})", True
         rechner_text = f", Rechner {rechner} von {grenze}"
     if alle is not None:
-        obergrenze = gesamt_grenze(gesamt_kib())
+        obergrenze = gesamt_grenze(gesamt)
         if alle >= obergrenze:
             return (
                 False,
