@@ -244,7 +244,7 @@ def test_f_drei_fehlversuche_einmal_kommentar_erfolg_setzt_zurueck(
 def test_g_notfall_ablage_ohne_zugangsdaten(kette: dict[str, Path], url: str, erwartet: str) -> None:
     from test_waechter_213 import _konfig
 
-    _konfig(kette, staging={"url": url})
+    _konfig(kette, staging={"url": url}, pruefung={"komplett": "true"})
     _spec_fertig(kette)
     ergebnis = _capo(kette)
     datei = kette["repo"] / ".to-spawn" / f"abschluss_{SPEC}_paket.json"

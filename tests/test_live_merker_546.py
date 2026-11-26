@@ -16,11 +16,28 @@ from test_spec_schliessen_nach_fertig_543 import (  # noqa: F401
     hm,
     welt,
 )
+from test_waechter_213 import _commit
 
 from to_spawn import capo, komplett_lauf, live_tuer, tmux_aufruf
 
-STAGING = {"staging": {"url": "https://staging.example.test"}}
+STAGING = {
+    "staging": {"url": "https://staging.example.test"},
+    "pruefung": {"komplett": "true"},
+}
 GH = "test/wegwerf"
+
+
+def _fertig(welt: dict[str, Path]) -> None:
+    """Spec fertig mit eingechecktem Rückblick/Thermo, damit ``komplett_lauf`` keinen schmutzigen Klon meldet (#451)."""
+    _spec_fertig(welt, rueckblick=False)
+    _commit(
+        welt["repo"],
+        "docs: Rückblick (#902)",
+        {
+            f"docs/agents/rueckblick_{SPEC}.md": "Rückblick: keine Vorschläge\n",
+            f"docs/agents/thermo_{SPEC}.md": "# Thermo\n\n- nichts auffällig\n",
+        },
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -36,7 +53,7 @@ def _merken(welt) -> None:
 
 
 def test_staging_mit_merker_schliesst_und_raeumt_fenster_einmal(welt, hm, monkeypatch, fenster) -> None:
-    _spec_fertig(welt)
+    _fertig(welt)
     _merken(welt)
     assert _tick(welt, monkeypatch, STAGING) == [int(SPEC)]
     assert _zustand(welt).get("spec_geschlossen")
@@ -47,13 +64,13 @@ def test_staging_mit_merker_schliesst_und_raeumt_fenster_einmal(welt, hm, monkey
 
 
 def test_staging_ohne_merker_schliesst_nie(welt, hm, monkeypatch, fenster) -> None:
-    _spec_fertig(welt)
+    _fertig(welt)
     assert _tick(welt, monkeypatch, STAGING) == []
     assert not _zustand(welt).get("spec_geschlossen") and fenster == []
 
 
 def test_kaputter_zustand_schliesst_nie(welt, hm, monkeypatch, fenster) -> None:
-    _spec_fertig(welt)
+    _fertig(welt)
     datei = capo._zustand_datei(welt["repo"], GH, int(SPEC))
     datei.parent.mkdir(parents=True, exist_ok=True)
     datei.write_text("{kaputt", encoding="utf-8")
@@ -62,13 +79,13 @@ def test_kaputter_zustand_schliesst_nie(welt, hm, monkeypatch, fenster) -> None:
 
 
 def test_merker_ohne_staging_eintrag_schliesst_nie(welt, hm, monkeypatch, fenster) -> None:
-    _spec_fertig(welt)
+    _fertig(welt)
     _merken(welt)
     assert _tick(welt, monkeypatch, {}) == [] and fenster == []
 
 
 def test_staging_ohne_weg_bleibt_und_raeumt_fenster(welt, hm, monkeypatch, fenster) -> None:
-    _spec_fertig(welt)
+    _fertig(welt)
     assert _tick(welt, monkeypatch, {"staging": {"ohne": True}}) == [int(SPEC)]
     assert fenster == [int(SPEC)]
 
@@ -78,7 +95,7 @@ def test_fehler_beim_fenster_schliessen_laesst_takt_gruen(welt, hm, monkeypatch)
         raise tmux_aufruf.TmuxFehler("kill-session", "boom")
 
     monkeypatch.setattr(tmux_aufruf, "spec_session_schliessen", kaputt)
-    _spec_fertig(welt)
+    _fertig(welt)
     _merken(welt)
     assert _tick(welt, monkeypatch, STAGING) == [int(SPEC)]
     assert _zustand(welt).get("spec_geschlossen")
@@ -105,7 +122,7 @@ def test_merker_wird_bei_belegter_takt_sperre_gesetzt(welt, hm) -> None:
 
 @pytest.mark.parametrize("inhalt", ["", "   ", "kein-zeitstempel", "{kaputt"])
 def test_leere_oder_kaputte_merker_datei_schliesst_nie(welt, hm, monkeypatch, fenster, inhalt) -> None:
-    _spec_fertig(welt)
+    _fertig(welt)
     merker = capo._live_merker_datei(welt["repo"], int(SPEC), GH)
     merker.parent.mkdir(parents=True, exist_ok=True)
     merker.write_text(inhalt, encoding="utf-8")
