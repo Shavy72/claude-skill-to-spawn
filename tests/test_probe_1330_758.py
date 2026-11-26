@@ -219,7 +219,7 @@ def test_punkt1_sessions_stand_meldet_wartet_solange_bau_py_vor_claude_steht(
 
 
 def test_punkt2_pc_fenster_lauf_aus_verpasst_spawn_local_tab() -> None:
-    """``spawn_local.ps1`` öffnet ``pwsh -NoExit -Command "bau <N>"`` — ``pc_fenster.lauf_aus`` erkennt den Tab nicht."""
+    """``spawn_local.ps1`` öffnet ``pwsh -NoExit -Command "bau <N>"`` — ``pc_fenster.lauf_aus`` erkennt den Tab (#782)."""
     prozesse = {
         100: (4, r"C:\Program Files\WindowsApps\WindowsTerminal.exe", _ft(T0 - 30)),
         200: (100, r'"C:\Program Files\PowerShell\7\pwsh.exe" -NoExit -Command "bau 1477"', _ft(T0 - 20)),
@@ -234,7 +234,7 @@ def test_punkt2_pc_fenster_lauf_aus_verpasst_spawn_local_tab() -> None:
     lauf = pc_fenster.lauf_aus(prozesse, 1477)
     assert lauf.bau_pid == 300
     assert lauf.session_pid == 400
-    assert lauf.tab_pid is None, "spawn_local-Tab trägt 'bau 1477' statt 'bau.py 1477' → tab_pid bleibt None"
+    assert lauf.tab_pid == 200, "Fix #782: spawn_local-Tab mit 'bau 1477' wird als alleiniger Tab-pwsh erkannt"
 
 
 def test_punkt2_pc_fenster_abloesen_laesst_spawn_local_tab_stehen_und_oeffnet_zweiten(tmp_path: Path) -> None:
@@ -276,11 +276,14 @@ def test_punkt2_pc_fenster_abloesen_laesst_spawn_local_tab_stehen_und_oeffnet_zw
 
 
 def test_punkt2_spawn_local_und_wt_tab_befehl_halten_tabs_mit_noexit_offen(tmp_path: Path) -> None:
-    """Sowohl ``spawn_local.ps1`` als auch ``spawn.wt_tab_befehl`` setzen ``-NoExit``."""
+    """``spawn_local.ps1`` und ``spawn.wt_tab_befehl`` behalten ``-NoExit`` für Fehler, schließen aber bei Exit 0 (#282/#782)."""
     ps1 = (SKILL / "spawn_local.ps1").read_text(encoding="utf-8")
     assert '"pwsh", "-NoExit", "-Command"' in ps1
+    assert "`$LASTEXITCODE -eq 0" in ps1 and "exit 0" in ps1
     wt_cmd = spawn.wt_tab_befehl(tmp_path, 1477, "")
     assert "pwsh" in wt_cmd and "-NoExit" in wt_cmd
+    innen = wt_cmd[wt_cmd.index("-Command") + 1]
+    assert "$LASTEXITCODE -eq 0" in innen and "exit 0" in innen
 
 
 # --- Punkt 3: Session merkt „ticket-rot“ 29 min nicht (Kern) -----------------
