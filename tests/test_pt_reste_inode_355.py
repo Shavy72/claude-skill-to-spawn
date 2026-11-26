@@ -416,3 +416,60 @@ def test_autouse_hilfsordner_werden_nach_gruenem_test_sofort_geraeumt(tmp_path: 
     pt_ordner = rot_heim.parent
     echte = [p.name for p in pt_ordner.glob("heim*") if not p.is_symlink()]
     assert echte == [rot_heim.name], echte
+
+
+@pytest.mark.braucht("posix")
+def test_autouse_raeumung_laeuft_erst_nach_monkeypatch_undo(tmp_path: Path) -> None:
+    """Ein Test, der ``shutil.rmtree``, ``os.scandir`` oder ``os.open`` per ``monkeypatch``
+    ersetzt, darf im Teardown der Autouse-Fixtures keinen Fehler werfen; geräumt wird erst
+    nach ``monkeypatch.undo()`` (#355 Fix-Runde 2)."""
+    import subprocess
+    import sys
+
+    skill = Path(__file__).resolve().parent.parent
+    mini = tmp_path / "mini_mp"
+    mini.mkdir()
+    (mini / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    (mini / "conftest.py").write_text(
+        f"import importlib.util\n"
+        f"_s = importlib.util.spec_from_file_location('_c355_mp', {str(skill / 'tests' / 'conftest.py')!r})\n"
+        f"_m = importlib.util.module_from_spec(_s)\n"
+        f"_s.loader.exec_module(_m)\n"
+        f"for _n in dir(_m):\n"
+        f"    if not _n.startswith('__'):\n"
+        f"        globals()[_n] = getattr(_m, _n)\n",
+        encoding="utf-8",
+    )
+    spur = tmp_path / "heim_mp.txt"
+    (mini / "test_mp.py").write_text(
+        f"import os\n"
+        f"import shutil\n"
+        f"from pathlib import Path\n\n"
+        f"def test_1_patched_fs(test_heim, monkeypatch):\n"
+        f"    (test_heim / 'marker.txt').write_text('x', encoding='utf-8')\n"
+        f"    Path({str(spur)!r}).write_text(str(test_heim), encoding='utf-8')\n"
+        f"    def kaputt(*_a, **_k):\n"
+        f"        raise RuntimeError('monkeypatch noch aktiv')\n"
+        f"    monkeypatch.setattr(shutil, 'rmtree', kaputt)\n"
+        f"    monkeypatch.setattr(os, 'scandir', kaputt)\n"
+        f"    monkeypatch.setattr(os, 'open', kaputt)\n\n"
+        f"def test_2_heim_ist_trotzdem_weg():\n"
+        f"    alt = Path(Path({str(spur)!r}).read_text(encoding='utf-8'))\n"
+        f"    assert not (alt / 'marker.txt').exists(), f'Autouse-Heim blieb liegen: {{alt}}'\n",
+        encoding="utf-8",
+    )
+    temp = tmp_path / "t"
+    temp.mkdir()
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTEST_", "TO_SPAWN_"))}
+    env["PYTHONPATH"] = os.pathsep.join([str(skill), env.get("PYTHONPATH", "")]).rstrip(os.pathsep)
+    env["TMPDIR"] = env["TEMP"] = env["TMP"] = str(temp)
+    lauf = subprocess.run(
+        [sys.executable, "-m", "pytest", str(mini), "-q", "-p", "no:cacheprovider", "-p", "no:xdist"],
+        cwd=str(mini),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert lauf.returncode == 0, lauf.stdout + lauf.stderr

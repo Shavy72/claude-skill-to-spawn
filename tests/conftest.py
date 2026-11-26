@@ -216,22 +216,38 @@ _RESTE_ALTER_KNAPP_S = hausmeister.PT_RESTE_ALTER_KNAPP_S
 
 #: Merkt je Test, ob Setup/Call/Teardown fehlschlug (#355: grüne Autouse-Hilfsordner sofort räumen).
 _TEST_FEHLGESCHLAGEN = pytest.StashKey[bool]()
+#: Autouse-Hilfsordner dieses Tests — erst nach komplettem Teardown (nach ``monkeypatch.undo``) räumen (#355).
+_AUTOUSE_TEMP_ORDNER = pytest.StashKey[list[Path]]()
+
+
+def _autouse_temp_merken(request: pytest.FixtureRequest, ordner: Path) -> None:
+    """Merkt einen Autouse-Hilfsordner für die Sofort-Räumung nach grünem Test (#355, Linux)."""
+    if _WINDOWS:
+        return
+    request.node.stash.setdefault(_AUTOUSE_TEMP_ORDNER, []).append(ordner)
+
+
+def _autouse_temp_raeumen(item: pytest.Item) -> None:
+    """Räumt Autouse-Hilfsordner unter Linux nach komplettem Teardown (nach ``monkeypatch.undo``) ab (#355)."""
+    ordner_liste = item.stash.get(_AUTOUSE_TEMP_ORDNER, [])
+    if not ordner_liste:
+        return
+    item.stash[_AUTOUSE_TEMP_ORDNER] = []
+    if _WINDOWS or item.stash.get(_TEST_FEHLGESCHLAGEN, False):
+        return
+    for ordner in ordner_liste:
+        shutil.rmtree(ordner, ignore_errors=True)
 
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[object]) -> Iterator[None]:
-    """Merkt fehlgeschlagene Tests, damit ihre Autouse-Hilfsordner zum Nachsehen bleiben (#355)."""
+    """Merkt fehlgeschlagene Tests und räumt grüne Autouse-Hilfsordner nach komplettem Teardown (#355)."""
     ergebnis = yield
     bericht = ergebnis.get_result()
     if bericht.failed:
         item.stash[_TEST_FEHLGESCHLAGEN] = True
-
-
-def _autouse_temp_raeumen(request: pytest.FixtureRequest, ordner: Path) -> None:
-    """Räumt Autouse-Hilfsordner unter Linux nach grünem Test sofort ab (#355, Windows unberührt)."""
-    if _WINDOWS or request.node.stash.get(_TEST_FEHLGESCHLAGEN, False):
-        return
-    shutil.rmtree(ordner, ignore_errors=True)
+    if call.when == "teardown":
+        _autouse_temp_raeumen(item)
 
 
 @pytest.hookimpl(tryfirst=True)  # vor ``_pytest.tmpdir``, das ``--basetemp`` in seinem configure liest
@@ -665,7 +681,7 @@ def test_heim(
     monkeypatch: pytest.MonkeyPatch,
     _keine_to_spawn_umgebung: None,
     request: pytest.FixtureRequest,
-) -> Iterator[Path]:
+) -> Path:
     """Isolierter Test-Heimordner je Test (#232): kein Test liest/schreibt das echte HOME.
 
     ``HOME`` und ``USERPROFILE`` zeigen auf einen frischen Temp-Ordner mit Attrappen für
@@ -675,6 +691,7 @@ def test_heim(
     ``~/.claude.json`` über ``vertrauen.sicherstellen`` werden aktiv gesperrt.
     """
     heim = heim_anlegen(tmp_path_factory.mktemp("heim"))
+    _autouse_temp_merken(request, heim)
     if not os.environ.get("PYTHONUSERBASE") and _START_USER_BASE:
         monkeypatch.setenv("PYTHONUSERBASE", _START_USER_BASE)
     monkeypatch.setenv("HOME", str(heim))
@@ -692,10 +709,7 @@ def test_heim(
         return echt_sicherstellen(*pfade, claude_json=claude_json)
 
     monkeypatch.setattr(vertrauen, "sicherstellen", _sicherstellen_ohne_echtes_heim)
-    try:
-        yield heim
-    finally:
-        _autouse_temp_raeumen(request, heim)
+    return heim
 
 
 @pytest.fixture(autouse=True)
@@ -704,7 +718,7 @@ def _speicher_immer_frei(
     monkeypatch: pytest.MonkeyPatch,
     _keine_to_spawn_umgebung: None,
     request: pytest.FixtureRequest,
-) -> Iterator[None]:
+) -> None:
     """Speicher-Schutz (#257 Paket B) sieht in Tests immer „frei“.
 
     Die Starter (``bau``, ``wache``, ``spawn_srv.sh``, Aufpasser) fragen vor jedem
@@ -717,6 +731,7 @@ def _speicher_immer_frei(
     seine Fälle eigene Attrappen (knapp/voll) über dieselben Variablen.
     """
     ordner = tmp_path_factory.mktemp("speicher-frei")
+    _autouse_temp_merken(request, ordner)
     meminfo = ordner / "meminfo"
     meminfo.write_text(
         f"MemTotal:        {16 * 1024 * 1024} kB\nMemAvailable:    {16 * 1024 * 1024} kB\n",
@@ -734,10 +749,6 @@ def _speicher_immer_frei(
     monkeypatch.setenv("TO_SPAWN_SPEICHER_PLATZ", str(ordner / "platz.json"))
     # #761: Runden-Merker der Ort-Wahl ebenfalls isolieren, damit kein Test eine echte Server-Runde sieht.
     monkeypatch.setenv("TO_SPAWN_ORT_WAHL_RUNDE", str(ordner / "ort-wahl-runde.json"))
-    try:
-        yield
-    finally:
-        _autouse_temp_raeumen(request, ordner)
 
 
 @pytest.fixture(autouse=True)
@@ -758,7 +769,7 @@ def _start_nur_attrappen(
     monkeypatch: pytest.MonkeyPatch,
     _keine_to_spawn_umgebung: None,
     request: pytest.FixtureRequest,
-) -> Iterator[None]:
+) -> None:
     """Start-Schutz (#1406): ``to_spawn.starter`` startet unter Test nur Attrappen.
 
     Setzt nur die beiden Variablen; sie erben sich in Kind-Prozesse (``wache.py``,
@@ -766,12 +777,9 @@ def _start_nur_attrappen(
     ``TO_SPAWN_TEST_BIN``. Läuft nach ``_keine_to_spawn_umgebung`` (löscht ``TO_SPAWN_*``).
     """
     ordner = tmp_path_factory.mktemp("start-attrappen")
+    _autouse_temp_merken(request, ordner)
     monkeypatch.setenv("TO_SPAWN_TESTLAUF", "1")
     monkeypatch.setenv("TO_SPAWN_TEST_BIN", str(ordner))
-    try:
-        yield
-    finally:
-        _autouse_temp_raeumen(request, ordner)
 
 
 @pytest.fixture(autouse=True)
@@ -780,7 +788,7 @@ def _start_stelle_im_test(
     monkeypatch: pytest.MonkeyPatch,
     _keine_to_spawn_umgebung: None,
     request: pytest.FixtureRequest,
-) -> Iterator[None]:
+) -> None:
     """Start-Stelle (#97): Sperren je Test in eigenem Ordner, Tickets gelten als offen.
 
     Ohne den Ordner teilten parallele Tests mit gleicher Ticket-Nummer eine Sperre;
@@ -788,13 +796,10 @@ def _start_stelle_im_test(
     Tests der Start-Stelle selbst löschen die zweite Variable (``tests/test_startstelle_97.py``).
     """
     ordner = tmp_path_factory.mktemp("start-sperren")
+    _autouse_temp_merken(request, ordner)
     monkeypatch.setenv("TO_SPAWN_START_SPERREN", str(ordner))
     monkeypatch.setenv("TO_SPAWN_TEST_TICKET_OFFEN", "1")
     monkeypatch.setenv("TO_SPAWN_TEST_FERN_SPERRE_AUS", "1")
-    try:
-        yield
-    finally:
-        _autouse_temp_raeumen(request, ordner)
 
 
 @pytest.fixture(autouse=True)
@@ -842,7 +847,7 @@ def _hausmeister_nur_im_test(
     monkeypatch: pytest.MonkeyPatch,
     _keine_to_spawn_umgebung: None,
     request: pytest.FixtureRequest,
-) -> Iterator[None]:
+) -> None:
     """Hausmeister (#1369) räumt in Tests nie echte Ordner auf und sieht keine Fremdprozesse (#649).
 
     Start-Check (``to_spawn.py speicher``, ``bau.py``) und Aufpasser rufen
@@ -855,6 +860,7 @@ def _hausmeister_nur_im_test(
     (``_POWERSHELL != "powershell"``) und direkte ``_prozesse()``-Tests laufen normal.
     """
     ordner = tmp_path_factory.mktemp("hausmeister")
+    _autouse_temp_merken(request, ordner)
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_WURZELN", str(ordner / "keine" / "*"))
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_LOG", str(ordner / "hausmeister.jsonl"))
     monkeypatch.setenv("TO_SPAWN_HINDERNIS_LOG", str(ordner / "hindernisse.jsonl"))
@@ -922,10 +928,6 @@ def _hausmeister_nur_im_test(
             prozessbaum._momentaufnahme_windows = echt_momentaufnahme
 
     monkeypatch.setattr(prozessbaum, "arbeitsordner_in_windows", _arbeitsordner_nur_eigene)
-    try:
-        yield
-    finally:
-        _autouse_temp_raeumen(request, ordner)
 
 
 @pytest.fixture(autouse=True)
@@ -933,7 +935,7 @@ def _eigenes_tmux(
     tmp_path_factory: pytest.TempPathFactory,
     monkeypatch: pytest.MonkeyPatch,
     request: pytest.FixtureRequest,
-) -> Iterator[None]:
+) -> None:
     """Eigener, leerer tmux-Server je Test (#479): kein Test liest tmux-Sitzungen des Rechners.
 
     Ohne diese Fixture fragte ``hausmeister._keine_spec_sitzung`` das echte tmux ab — lief auf
@@ -943,12 +945,9 @@ def _eigenes_tmux(
     sich in Kind-Prozesse. Tests, die tmux-Verhalten prüfen, setzen eigene Werte darüber.
     """
     ordner = tmp_path_factory.mktemp("tx")
+    _autouse_temp_merken(request, ordner)
     monkeypatch.delenv("TMUX", raising=False)
     monkeypatch.setenv("TMUX_TMPDIR", str(ordner))
-    try:
-        yield
-    finally:
-        _autouse_temp_raeumen(request, ordner)
 
 
 @pytest.fixture(autouse=True)

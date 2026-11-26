@@ -2721,7 +2721,9 @@ def pt_reste_raeumen(
             geraeumt.append(ordner)
             continue
         grund = (
-            f"toter pt-Rest (PID {pid}, Inodes knapp)" if knapp else f"toter pt-Rest (PID {pid}, abgelaufene Schonfrist)"
+            f"toter pt-Rest (PID {pid}, Inodes knapp)"
+            if knapp
+            else f"toter pt-Rest (PID {pid}, abgelaufene Schonfrist)"
         )
         if mit_log and not _log_schreiben(Ergebnis(ordner, "gelöscht", grund, None, trocken=False)):
             continue
