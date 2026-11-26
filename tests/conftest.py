@@ -195,15 +195,16 @@ def repo_dateien(ordner: Path) -> list[Path]:
 #: Eigener Temp-Ordner dieses Laufs (#349), nur gesetzt, wenn ``pytest_configure`` ihn anlegte.
 _EIGENER_BASETEMP = pytest.StashKey[Path]()
 
-#: Marker-Datei im eigenen Temp-Ordner (#177): PID des Leit-Prozesses. Nur Ordner mit
-#: diesem Marker räumt :func:`_reste_raeumen` — nie nach Namen raten (#136).
-_MARKER = ".pt-lauf"
+#: Marker-Datei im eigenen Temp-Ordner (#177, #355): PID des Leit-Prozesses. Nur Ordner mit
+#: diesem Marker räumt :func:`_reste_raeumen` — nie nach Namen raten (#136). Konstanten aus
+#: genau einer Stelle (:mod:`to_spawn.hausmeister`).
+_MARKER = hausmeister.PT_MARKER
 
 #: Schonfrist für Reste toter Läufe (#177): so lange bleibt ein roter Lauf zum Nachsehen.
 _LOG = logging.getLogger(__name__)
 
 #: ponytail: feste Frist, Einstellung über ``temp_ordner``/Maschinen-Liste, wenn eine Maschine anders braucht.
-_RESTE_ALTER_S = 3600
+_RESTE_ALTER_S = hausmeister.PT_RESTE_ALTER_S
 
 #: Ab diesem Inode-Anteil der Temp-Wurzel gilt nur noch :data:`_RESTE_ALTER_KNAPP_S` (#355) —
 #: Schwelle und Messung kommen aus genau einer Stelle (:mod:`to_spawn.hausmeister`).
@@ -211,7 +212,26 @@ _INODE_GRENZE = hausmeister.INODE_WARN_ANTEIL
 _inode_anteil = hausmeister.inode_anteil
 
 #: Mindestalter toter Reste bei Inode-Knappheit (#355) — nie ein gerade startender Lauf.
-_RESTE_ALTER_KNAPP_S = 600
+_RESTE_ALTER_KNAPP_S = hausmeister.PT_RESTE_ALTER_KNAPP_S
+
+#: Merkt je Test, ob Setup/Call/Teardown fehlschlug (#355: grüne Autouse-Hilfsordner sofort räumen).
+_TEST_FEHLGESCHLAGEN = pytest.StashKey[bool]()
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[object]) -> Iterator[None]:
+    """Merkt fehlgeschlagene Tests, damit ihre Autouse-Hilfsordner zum Nachsehen bleiben (#355)."""
+    ergebnis = yield
+    bericht = ergebnis.get_result()
+    if bericht.failed:
+        item.stash[_TEST_FEHLGESCHLAGEN] = True
+
+
+def _autouse_temp_raeumen(request: pytest.FixtureRequest, ordner: Path) -> None:
+    """Räumt Autouse-Hilfsordner unter Linux nach grünem Test sofort ab (#355, Windows unberührt)."""
+    if _WINDOWS or request.node.stash.get(_TEST_FEHLGESCHLAGEN, False):
+        return
+    shutil.rmtree(ordner, ignore_errors=True)
 
 
 @pytest.hookimpl(tryfirst=True)  # vor ``_pytest.tmpdir``, das ``--basetemp`` in seinem configure liest
@@ -644,7 +664,8 @@ def test_heim(
     tmp_path_factory: pytest.TempPathFactory,
     monkeypatch: pytest.MonkeyPatch,
     _keine_to_spawn_umgebung: None,
-) -> Path:
+    request: pytest.FixtureRequest,
+) -> Iterator[Path]:
     """Isolierter Test-Heimordner je Test (#232): kein Test liest/schreibt das echte HOME.
 
     ``HOME`` und ``USERPROFILE`` zeigen auf einen frischen Temp-Ordner mit Attrappen für
@@ -671,7 +692,10 @@ def test_heim(
         return echt_sicherstellen(*pfade, claude_json=claude_json)
 
     monkeypatch.setattr(vertrauen, "sicherstellen", _sicherstellen_ohne_echtes_heim)
-    return heim
+    try:
+        yield heim
+    finally:
+        _autouse_temp_raeumen(request, heim)
 
 
 @pytest.fixture(autouse=True)
@@ -679,7 +703,8 @@ def _speicher_immer_frei(
     tmp_path_factory: pytest.TempPathFactory,
     monkeypatch: pytest.MonkeyPatch,
     _keine_to_spawn_umgebung: None,
-) -> None:
+    request: pytest.FixtureRequest,
+) -> Iterator[None]:
     """Speicher-Schutz (#257 Paket B) sieht in Tests immer „frei“.
 
     Die Starter (``bau``, ``wache``, ``spawn_srv.sh``, Aufpasser) fragen vor jedem
@@ -709,6 +734,10 @@ def _speicher_immer_frei(
     monkeypatch.setenv("TO_SPAWN_SPEICHER_PLATZ", str(ordner / "platz.json"))
     # #761: Runden-Merker der Ort-Wahl ebenfalls isolieren, damit kein Test eine echte Server-Runde sieht.
     monkeypatch.setenv("TO_SPAWN_ORT_WAHL_RUNDE", str(ordner / "ort-wahl-runde.json"))
+    try:
+        yield
+    finally:
+        _autouse_temp_raeumen(request, ordner)
 
 
 @pytest.fixture(autouse=True)
@@ -728,15 +757,21 @@ def _start_nur_attrappen(
     tmp_path_factory: pytest.TempPathFactory,
     monkeypatch: pytest.MonkeyPatch,
     _keine_to_spawn_umgebung: None,
-) -> None:
+    request: pytest.FixtureRequest,
+) -> Iterator[None]:
     """Start-Schutz (#1406): ``to_spawn.starter`` startet unter Test nur Attrappen.
 
     Setzt nur die beiden Variablen; sie erben sich in Kind-Prozesse (``wache.py``,
     ``bau.py``), wo monkeypatch nicht hinreicht. Attrappen gehören in den Ordner
     ``TO_SPAWN_TEST_BIN``. Läuft nach ``_keine_to_spawn_umgebung`` (löscht ``TO_SPAWN_*``).
     """
+    ordner = tmp_path_factory.mktemp("start-attrappen")
     monkeypatch.setenv("TO_SPAWN_TESTLAUF", "1")
-    monkeypatch.setenv("TO_SPAWN_TEST_BIN", str(tmp_path_factory.mktemp("start-attrappen")))
+    monkeypatch.setenv("TO_SPAWN_TEST_BIN", str(ordner))
+    try:
+        yield
+    finally:
+        _autouse_temp_raeumen(request, ordner)
 
 
 @pytest.fixture(autouse=True)
@@ -744,16 +779,22 @@ def _start_stelle_im_test(
     tmp_path_factory: pytest.TempPathFactory,
     monkeypatch: pytest.MonkeyPatch,
     _keine_to_spawn_umgebung: None,
-) -> None:
+    request: pytest.FixtureRequest,
+) -> Iterator[None]:
     """Start-Stelle (#97): Sperren je Test in eigenem Ordner, Tickets gelten als offen.
 
     Ohne den Ordner teilten parallele Tests mit gleicher Ticket-Nummer eine Sperre;
     ohne ``TO_SPAWN_TEST_TICKET_OFFEN`` fragte jeder ``bau.main``-Test echtes gh.
     Tests der Start-Stelle selbst löschen die zweite Variable (``tests/test_startstelle_97.py``).
     """
-    monkeypatch.setenv("TO_SPAWN_START_SPERREN", str(tmp_path_factory.mktemp("start-sperren")))
+    ordner = tmp_path_factory.mktemp("start-sperren")
+    monkeypatch.setenv("TO_SPAWN_START_SPERREN", str(ordner))
     monkeypatch.setenv("TO_SPAWN_TEST_TICKET_OFFEN", "1")
     monkeypatch.setenv("TO_SPAWN_TEST_FERN_SPERRE_AUS", "1")
+    try:
+        yield
+    finally:
+        _autouse_temp_raeumen(request, ordner)
 
 
 @pytest.fixture(autouse=True)
@@ -800,7 +841,8 @@ def _hausmeister_nur_im_test(
     tmp_path_factory: pytest.TempPathFactory,
     monkeypatch: pytest.MonkeyPatch,
     _keine_to_spawn_umgebung: None,
-) -> None:
+    request: pytest.FixtureRequest,
+) -> Iterator[None]:
     """Hausmeister (#1369) räumt in Tests nie echte Ordner auf und sieht keine Fremdprozesse (#649).
 
     Start-Check (``to_spawn.py speicher``, ``bau.py``) und Aufpasser rufen
@@ -880,10 +922,18 @@ def _hausmeister_nur_im_test(
             prozessbaum._momentaufnahme_windows = echt_momentaufnahme
 
     monkeypatch.setattr(prozessbaum, "arbeitsordner_in_windows", _arbeitsordner_nur_eigene)
+    try:
+        yield
+    finally:
+        _autouse_temp_raeumen(request, ordner)
 
 
 @pytest.fixture(autouse=True)
-def _eigenes_tmux(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+def _eigenes_tmux(
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> Iterator[None]:
     """Eigener, leerer tmux-Server je Test (#479): kein Test liest tmux-Sitzungen des Rechners.
 
     Ohne diese Fixture fragte ``hausmeister._keine_spec_sitzung`` das echte tmux ab — lief auf
@@ -892,8 +942,13 @@ def _eigenes_tmux(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.
     einen kurzen Ordner des Testlaufs (Unix-Socket-Pfade sind auf ~108 Zeichen begrenzt). Erbt
     sich in Kind-Prozesse. Tests, die tmux-Verhalten prüfen, setzen eigene Werte darüber.
     """
+    ordner = tmp_path_factory.mktemp("tx")
     monkeypatch.delenv("TMUX", raising=False)
-    monkeypatch.setenv("TMUX_TMPDIR", str(tmp_path_factory.mktemp("tx")))
+    monkeypatch.setenv("TMUX_TMPDIR", str(ordner))
+    try:
+        yield
+    finally:
+        _autouse_temp_raeumen(request, ordner)
 
 
 @pytest.fixture(autouse=True)

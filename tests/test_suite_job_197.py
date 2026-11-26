@@ -274,3 +274,39 @@ def test_suite_sh_delegiert_unter_windows_an_suite_py(tmp_path: Path) -> None:
         assert _warte_tot(pids[0]), f"Kindprozess {pids[0]} überlebte skripte/suite.sh"
     finally:
         _aufraeumen(pids)
+
+
+@pytest.mark.skipif(WINDOWS, reason="Linux-Teil von skripte/suite.py (Windows nutzt --je-datei)")
+def test_suite_py_linux_setzt_worksteal_und_tmpdir_aus_temp_ordner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#355/#353 (Linux-Teil): ``suite.py`` nutzt wie ``suite.sh`` ``--dist worksteal`` und
+    lenkt leeres ``TMPDIR`` über ``temp_ordner.umgebung()`` auf die Platte."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("suite_py_355", SUITE_PY)
+    assert spec and spec.loader
+    modul = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(modul)
+
+    (tmp_path / "conftest.py").write_text("", encoding="utf-8")
+    platte = tmp_path / "platte"
+    monkeypatch.setenv("TO_SPAWN_TEMP_ORDNER", str(platte))
+    for name in ("TMPDIR", "TEMP", "TMP"):
+        monkeypatch.delenv(name, raising=False)
+
+    aufruf: dict[str, object] = {}
+
+    def fake_lauf(befehl: list[str], wurzel: Path, *, env: object = None) -> int:
+        aufruf["befehl"] = befehl
+        aufruf["wurzel"] = wurzel
+        aufruf["env"] = env
+        return 0
+
+    monkeypatch.setattr(modul, "_datei_lauf", fake_lauf)
+    assert modul.main(["--wurzel", str(tmp_path)]) == 0
+    befehl = aufruf["befehl"]
+    assert isinstance(befehl, list)
+    assert befehl[-4:] == ["-n", "4", "--dist", "worksteal"], befehl
+    env = aufruf["env"]
+    assert isinstance(env, dict) and env["TMPDIR"] == str(platte), env
