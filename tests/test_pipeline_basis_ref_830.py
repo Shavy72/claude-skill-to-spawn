@@ -50,9 +50,7 @@ def _schreibe(ordner: Path, rel: str, inhalt: str) -> Path:
     return ziel
 
 
-def _cli(
-    *args: str, cwd: Path, extra_env: dict[str, str] | None = None
-) -> subprocess.CompletedProcess[str]:
+def _cli(*args: str, cwd: Path, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     umg = {**os.environ, "PYTHONPATH": str(SKILL)}
     if extra_env:
         umg.update(extra_env)
@@ -149,8 +147,7 @@ def test_pr_merge_commit_vermeidet_falschen_test_schutz_verstoss_auf_fremder_dat
     assert erg_veraltet.exit_code == 1
     assert erg_veraltet.test_schutz is not None
     assert any(
-        v.datei == "tests/test_fremd.py" and v.art == "grenzwert_geaendert"
-        for v in erg_veraltet.test_schutz.verstoesse
+        v.datei == "tests/test_fremd.py" and v.art == "grenzwert_geaendert" for v in erg_veraltet.test_schutz.verstoesse
     )
 
     # Neue Basis-Wahl für pull_request + Merge-Commit liefert HEAD^1 (= Commit B).

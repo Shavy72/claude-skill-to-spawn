@@ -1526,7 +1526,7 @@ def vorlage_stufe3_yaml() -> str:
         '            python -m pip install -q -r "$ANFORDERUNGEN"\n'
         "          fi\n"
         "\n"
-        f'{pipeline_vorlage.basis_ref_schritt_yaml("Basis-Ref für Diff-Mutationstest bestimmen")}'
+        f"{pipeline_vorlage.basis_ref_schritt_yaml('Basis-Ref für Diff-Mutationstest bestimmen')}"
         "\n"
         "      - name: Diff-Mutationstest ausführen (nur Bericht/Vorschläge)\n"
         "        continue-on-error: true\n"
