@@ -162,9 +162,7 @@ def test_platz_schaffen_schliesst_stille_sessions_bei_nur_abnahme_offen(
 
 
 @pytest.mark.braucht("tmux")
-def test_platz_schaffen_haelt_fertige_spec_unter_stille_schwelle(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_platz_schaffen_haelt_fertige_spec_unter_stille_schwelle(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     """Frisch idle gewordene leitstand-/wache-Fenster (< Schwelle) bleiben offen."""
     _grenze(welt, monkeypatch, max_sessions=2)
     monkeypatch.setenv("GH_STUB_UNTER", f"{SPEC}:9002,8821:8822")
@@ -258,9 +256,7 @@ def test_platz_schaffen_schliesst_mehrere_fertige_bau_fenster_in_einer_gegenprob
     monkeypatch.setattr(
         aufpasser.Aufpasser,
         "_platznot",
-        lambda _s, _r, info, _sz: bool(
-            info and info.aus_json and info.status == "idle" and schliessungen["n"] == 0
-        ),
+        lambda _s, _r, info, _sz: bool(info and info.aus_json and info.status == "idle" and schliessungen["n"] == 0),
     )
 
     def merke_sleep(sek: float) -> None:

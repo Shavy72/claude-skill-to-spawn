@@ -969,6 +969,7 @@ def cli(
     if not platte_ok:
         print(platte_grund)
         return EXIT_PLATTE
+
     def welche() -> Sitzung | None:
         return sitzung_nach_name(sitzung) if sitzung else None
 

@@ -2349,11 +2349,7 @@ class Aufpasser:
         vorhanden = self.stand.fenster.get(schluessel)
         if vorhanden is None:
             anfang = self.jetzt
-            if (
-                seit_hinweis is not None
-                and 0 < seit_hinweis < self.jetzt
-                and abs(time.time() - self.jetzt) < 60
-            ):
+            if seit_hinweis is not None and 0 < seit_hinweis < self.jetzt and abs(time.time() - self.jetzt) < 60:
                 anfang = seit_hinweis
             e = {"hash": h, "seit": anfang, "stufe": 0}
         else:
@@ -2554,8 +2550,7 @@ class Aufpasser:
                 return None
             abnahme = manifest.checkpoint_label(konfig)
             if not all(
-                ticket_zustand.fertig_gebaut(t) or abnahme in ticket_zustand.label_namen(t)
-                for t in offen_roh.values()
+                ticket_zustand.fertig_gebaut(t) or abnahme in ticket_zustand.label_namen(t) for t in offen_roh.values()
             ):
                 return None
             try:
@@ -2614,9 +2609,7 @@ class Aufpasser:
         status = info.status if info else None
         arbeitend = arbeitet(text, status)
         seit_hinweis = (
-            info.mtime
-            if (info is not None and info.aus_json and info.status == "idle" and not arbeitend)
-            else None
+            info.mtime if (info is not None and info.aus_json and info.status == "idle" and not arbeitend) else None
         )
         e = self.eintrag(schluessel, text, seit_hinweis=seit_hinweis)
         still_min = (self.jetzt - e["seit"]) / 60
