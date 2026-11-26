@@ -2777,7 +2777,7 @@ def _komplett_alle_auf_staging(
 ) -> bool:
     """Komplett-Prüfung „alle Tickets auf Staging“ (#425 C2); ``True`` = Spec in diesem Takt nicht fertig.
 
-    Einmal-Regel (rot je Kopf), Hintergrund-Lauf, Sperre und „nicht eingerichtet“ versteckt
+    Einmal-Regel (rot je Kopf), Hintergrund-Lauf und Sperre versteckt
     :mod:`to_spawn.komplett_lauf` (#455: der Takt wartet nicht auf lange Prüfungen). Eine Zeile
     nur, wenn etwas passiert ist (Lauf, Fehler, läuft schon) — sonst bleibt der Takt wie vor #425.
     Probelauf (#456): nur den Merker lesen (:func:`komplett_lauf.nur_lesen`), nichts starten;

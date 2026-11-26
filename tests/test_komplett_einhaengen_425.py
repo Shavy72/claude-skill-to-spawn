@@ -205,7 +205,7 @@ def test_tuer_unbekannter_moment_exit_2(welt: dict[str, Path]) -> None:
 
 def test_tuer_alle_auf_staging_und_nicht_eingerichtet(welt: dict[str, Path]) -> None:
     ohne = _tuer(welt["repo"], "--moment", "vor-live")
-    assert ohne.returncode == 0 and "nicht eingerichtet" in ohne.stdout, _text(ohne)
+    assert ohne.returncode == 1 and "pruefung.komplett" in ohne.stdout, _text(ohne)
     zaehl = _zaehl(welt)
     _eingerichtet(welt, zaehl)
     erg = _tuer(welt["repo"], "--moment", "alle-auf-staging")

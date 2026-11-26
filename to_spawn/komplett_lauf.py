@@ -32,8 +32,6 @@ kein Merker) — je Ticket nur die schnelle Prüfung. Die Regel lebt allein in :
 (#496); auch ``pruef.pruefen(art="komplett")`` fragt dort, so greift sie für jedes Repo-Skript.
 Jede Ablehnung steht als Bau-Log-Zeile ``komplett_abgelehnt`` des Tickets; der Aufseher-Stand zählt
 sie nur über :func:`ablehnungen`.
-Übergangsregel: Repo ohne Gruppe ``pruefung`` (:func:`pruefplan.eingerichtet`) → nichts ausführen,
-``ok=True`` (alter Ablauf).
 
 Takt (#455): mit ``takt=True`` läuft der Befehl in einem eigenen Hintergrund-Prozess
 (``to_spawn.py komplett <S> --aus-takt`` → :func:`takt_kind`); der Takt wartet höchstens
@@ -293,12 +291,8 @@ def darf_live(klon: Path, spec: int, konfig: dict[str, Any]) -> Ergebnis:
     return komplett_einmal(klon, spec, Moment.VOR_LIVE, konfig)
 
 
-def _nicht_eingerichtet(spec: int, konfig: dict[str, Any]) -> Ergebnis | None:
-    """Übergangsregel (#425): ohne Gruppe ``pruefung`` alter Ablauf, ohne git/Sperre."""
-    if pruefplan.eingerichtet(konfig):
-        return None
-    log.info("komplett_lauf: Spec %s %s", spec, pruefplan.NICHT_EINGERICHTET)
-    return Ergebnis(False, True, "Prüfung nicht eingerichtet, alter Ablauf", None, "")
+#: Meldung, wenn ``pruefung.komplett`` fehlt (Einrichtungs-Lücke, #451).
+_KOMPLETT_FEHLT = "pruefung.komplett fehlt in .to-spawn/config.json. Handlung: Befehl im Einrichtungs-Ticket eintragen."
 
 
 def _vorbereiten(
@@ -359,12 +353,12 @@ def nur_lesen(klon: Path, spec: int, moment: Moment, konfig: dict[str, Any]) -> 
     als geprüft). Fehlt ein gültiger Merker für den Kopf (oder liegt der Klon hinter ``@{u}``),
     ist ``ok=False`` mit „würde jetzt prüfen“ — der Probelauf zeigt dann kein Fertig.
     """
-    if (antwort := _nicht_eingerichtet(spec, konfig)) is not None:
-        return antwort
     kopf, antwort = _vorbereiten(klon, spec, Moment(moment), konfig, rot_zaehlt=True, nachziehen=False)
     if antwort is not None:
         return antwort
     assert kopf is not None
+    if not pruefplan.befehl(konfig, "komplett"):
+        return Ergebnis(False, False, _KOMPLETT_FEHLT, None, kopf)
     return Ergebnis(
         False,
         False,
@@ -418,9 +412,6 @@ def _pruefen(
     if abgelehnt is not None:
         # #474: eine Bau-Session (bau.py setzt die Variable, auch leer) ist nie ein Spec-Moment.
         return Ergebnis(False, False, abgelehnt, None, "")
-    if (antwort := _nicht_eingerichtet(spec, konfig)) is not None:
-        # Zuerst und ohne git: nicht eingerichtete Repos (laufende Specs) merken nichts davon.
-        return antwort
     # Sperre zuerst (Review b1bf884): läuft eine Prüfung, darf weder nachgezogen (der Arbeitsbaum
     # verschöbe sich unter ihr) noch neu gestartet werden. flock fällt mit dem Prozess, ein
     # abgestürzter Lauf sperrt also nie dauerhaft.
@@ -436,13 +427,7 @@ def _pruefen(
             assert kopf is not None
             befehl = pruefplan.befehl(konfig, "komplett")
             if not befehl:
-                return Ergebnis(
-                    False,
-                    False,
-                    "pruefung.komplett fehlt in .to-spawn/config.json. Handlung: Befehl im Einrichtungs-Ticket eintragen.",
-                    None,
-                    kopf,
-                )
+                return Ergebnis(False, False, _KOMPLETT_FEHLT, None, kopf)
             # Notnagel: Nachziehen meldete ok (z. B. Test-Naht), der Baum steht trotzdem nicht für origin.
             halt = _stand_halt(klon, kopf)
             if halt:

@@ -106,7 +106,7 @@ def pruefen(repo: Path, basis: str, ziel: str, art: pruefplan.Art | None = None,
 
     ``art`` = Antwort von ``pruefplan.welche`` (``schnell``/``komplett``); ``None`` = Leiter wie
     vor #425. ``keine`` ist kein Prüf-Auftrag (``ValueError``) — der Aufrufer ruft dann nicht.
-    ``warnung`` (z. B. ``pruefplan.NICHT_EINGERICHTET``) steht unverändert in der Protokoll-Zeile.
+    ``warnung`` steht unverändert in der Protokoll-Zeile.
     ``komplett`` aus einem Bau-Ticket: Gate-Fehler mit Handlung, nichts läuft (#496).
     """
     if art is not None and art not in _ARTEN:
