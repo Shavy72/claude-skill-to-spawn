@@ -7,14 +7,11 @@
 # Rolle des Bau-Servers:
 # - Ausschließlich Claude-Sessions und 'braucht Server'-Tests (@pytest.mark.braucht('server') / braucht_server).
 # - Alle übrigen Tests und Stufe-2-Komplettläufe laufen verteilt auf GitHub Actions (>= 2 Runner).
+# Stufe 2 läuft genau einmal je Spec vor Live — Auslöser deshalb ausschließlich manuell (workflow_dispatch).
 name: Pipeline Stufe 2 (Eigenanschluss)
 
 on:
   workflow_dispatch:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-  push:
-    branches: [main]
 
 permissions:
   contents: read

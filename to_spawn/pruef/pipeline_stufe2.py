@@ -10,8 +10,9 @@ Ergänzt die Stufe-0+1-Vorlage (:mod:`to_spawn.pruef.pipeline_vorlage`) im selbe
   (``pytest-split`` + ``pytest-xdist``), Ausschluss von Bau-Server-Tests auf GitHub-Runnern und
   bedingtem Staging-Probe-Job.
 - :func:`eigenanschluss_stufe2_yaml` — erzeugt den Eigenanschluss-Workflow für das Skill-Repo mit
-  Aufteilung auf ``>= 2`` Runner.
-- :func:`pruefe_stufe2_vorlage_text` — prüft eine Stufe-2-Vorlage rein mit der Standardbibliothek.
+  Aufteilung auf ``>= 2`` Runner (Auslöser ausschließlich ``workflow_dispatch``).
+- :func:`pruefe_stufe2_vorlage_text` / :func:`pruefe_eigenanschluss_stufe2_text` — prüfen eine
+  Stufe-2-Vorlage bzw. den Stufe-2-Eigenanschluss rein mit der Standardbibliothek.
 - :func:`stufe2_lauf` / :func:`staging_probe_lauf` — plattformübergreifende Ausführung für Linux
   und Windows (CLI: ``python -m to_spawn.pruef.pipeline_stufe2 {lauf,staging-probe,matrix,vorlage}``).
 - :func:`ist_stufe2_dran` — delegiert an :func:`to_spawn.pruefplan.welche` und
@@ -405,20 +406,17 @@ def eigenanschluss_stufe2_yaml(
     teile: int = 2,
     mit_staging_app: bool = False,
 ) -> str:
-    """Erzeugt den Eigenanschluss-Workflow für das Skill-Repo (Stufe 2 mit >= 2 Runnern)."""
+    """Erzeugt den Eigenanschluss-Workflow für das Skill-Repo (Stufe 2 mit >= 2 Runnern, nur ``workflow_dispatch``)."""
     teile_matrix(teile)
     staging_bool = "true" if mit_staging_app else "false"
     return (
         "# Eigenanschluss des Skill-Repos an die Pipeline-Vorlage Stufe 2 (#581, #797).\n"
         f"{pipeline_vorlage.kopf_doku_kommentar()}"
+        "# Stufe 2 läuft genau einmal je Spec vor Live — Auslöser deshalb ausschließlich manuell (workflow_dispatch).\n"
         "name: Pipeline Stufe 2 (Eigenanschluss)\n"
         "\n"
         "on:\n"
         "  workflow_dispatch:\n"
-        "  pull_request:\n"
-        "    types: [opened, synchronize, reopened, ready_for_review]\n"
-        "  push:\n"
-        "    branches: [main]\n"
         "\n"
         "permissions:\n"
         "  contents: read\n"
@@ -442,6 +440,34 @@ def eigenanschluss_stufe2_yaml(
         "      server-marker-ausschliessen: true\n"
         '      skill-pfad: "."\n'
     )
+
+
+def pruefe_eigenanschluss_stufe2_text(text: str) -> list[str]:
+    """Prüft den Eigenanschluss-Workflow für Stufe 2 rein mit der Standardbibliothek.
+
+    Stufe 2 läuft genau einmal je Spec vor Live — automatische PR-/Push-Auslöser sind deshalb verboten.
+    """
+    befunde: list[str] = []
+    if pipeline_vorlage._VERBOTENES_PLUGIN in text.lower():
+        befunde.append(f"verbotenes Plugin {pipeline_vorlage._VERBOTENES_PLUGIN!r} gefunden")
+    if not re.search(r"(?m)^  workflow_dispatch:\s*$", text):
+        befunde.append("manueller Auslöser 'workflow_dispatch:' fehlt")
+    for verboten in ("pull_request", "pull_request_target", "push"):
+        if re.search(rf"(?m)^  {re.escape(verboten)}\s*:", text):
+            befunde.append(
+                f"verbotener Auslöser '{verboten}' im Stufe-2-Eigenanschluss "
+                "(Stufe 2 läuft genau einmal je Spec vor Live, nur per workflow_dispatch)"
+            )
+    if "pipeline-stufe-2.yml" not in text or "uses:" not in text:
+        befunde.append("Verweis auf Vorlage 'pipeline-stufe-2.yml' per 'uses:' fehlt")
+    if not re.search(r"(?m)^permissions:\s*$", text) or "contents: read" not in text:
+        befunde.append("minimale Berechtigung 'permissions: contents: read' fehlt")
+    if "contents: write" in text:
+        befunde.append("verbotene Schreibberechtigung 'contents: write' gefunden")
+    teile_treffer = re.search(r"(?m)^\s+teile:\s*(\d+)\s*$", text)
+    if not teile_treffer or int(teile_treffer.group(1)) < MINDEST_RUNNER:
+        befunde.append(f"Eingabe 'teile' braucht mindestens {MINDEST_RUNNER} Runner")
+    return befunde
 
 
 def pruefe_stufe2_vorlage_text(text: str) -> list[str]:
@@ -976,7 +1002,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             if not args.pruefen.is_file():
                 sys.stderr.write(f"Vorlage fehlt: {args.pruefen}\n")
                 return leiter.GATE_FEHLER
-            befunde = pruefe_stufe2_vorlage_text(args.pruefen.read_text(encoding="utf-8"))
+            inhalt = args.pruefen.read_text(encoding="utf-8")
+            befunde = (
+                pruefe_eigenanschluss_stufe2_text(inhalt) if args.eigenanschluss else pruefe_stufe2_vorlage_text(inhalt)
+            )
             if befunde:
                 for befund in befunde:
                     sys.stderr.write(f"- {befund}\n")

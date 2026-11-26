@@ -61,12 +61,13 @@ Der Job `staging-probe` hängt hinter `stufe-2` und ist strikt an `if: ${{ input
 
 ## Einbindung im Skill-Repo (Eigenanschluss mit `>= 2` Runnern)
 
-Die erzeugten Workflow-Dateien `.github/workflows/pipeline-stufe-2.yml` (Vorlage) und `.github/workflows/pipeline-stufe-2-eigen.yml` (Eigenanschluss mit `teile: 2`) sind im Skill-Repo eingehängt. Zum Aktualisieren oder Prüfen aus der einen Quelle (`to_spawn/pruef/pipeline_stufe2.py`) reichen drei Befehle:
+Die erzeugten Workflow-Dateien `.github/workflows/pipeline-stufe-2.yml` (Vorlage) und `.github/workflows/pipeline-stufe-2-eigen.yml` (Eigenanschluss mit `teile: 2`, Auslöser ausschließlich `workflow_dispatch` — bewusst ohne `pull_request`/`push`, da Stufe 2 genau einmal je Spec vor Live läuft) sind im Skill-Repo eingehängt. Zum Aktualisieren oder Prüfen aus der einen Quelle (`to_spawn/pruef/pipeline_stufe2.py`) reichen vier Befehle:
 
 ```bash
 python -m to_spawn.pruef.pipeline_stufe2 vorlage --ausgabe .github/workflows/pipeline-stufe-2.yml
 python -m to_spawn.pruef.pipeline_stufe2 vorlage --eigenanschluss --teile 2 --ausgabe .github/workflows/pipeline-stufe-2-eigen.yml
 python -m to_spawn.pruef.pipeline_stufe2 vorlage --pruefen .github/workflows/pipeline-stufe-2.yml
+python -m to_spawn.pruef.pipeline_stufe2 vorlage --eigenanschluss --pruefen .github/workflows/pipeline-stufe-2-eigen.yml
 ```
 
 Alternativ steht derselbe Generator über den gemeinsamen Rahmen bereit:
@@ -88,7 +89,7 @@ Stufe 3 bündelt drei Aufräum-Bausteine ohne Feature-Bau mit strikt minimalen L
 
 ### Einbindung von Stufe 3 im Skill-Repo
 
-Die erzeugten Workflow-Dateien `.github/workflows/pipeline-stufe-3.yml` (Vorlage) und `.github/workflows/pipeline-stufe-3-eigen.yml` (wöchentlicher Eigenanschluss) sind im Skill-Repo eingehängt. Zum Aktualisieren oder Prüfen aus `to_spawn/pruef/aufraeumen.py`:
+Die Workflow-Dateien `.github/workflows/pipeline-stufe-3.yml` (Vorlage) und `.github/workflows/pipeline-stufe-3-eigen.yml` (wöchentlicher Eigenanschluss) werden in #800 bereitgestellt. Zum Aktualisieren oder Prüfen aus `to_spawn/pruef/aufraeumen.py`:
 
 ```bash
 python -m to_spawn.pruef.aufraeumen vorlage --ausgabe .github/workflows/pipeline-stufe-3.yml
