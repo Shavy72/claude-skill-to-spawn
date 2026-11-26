@@ -224,6 +224,7 @@ def wt_tab_befehl(repo: Path, ticket: int, auftrag: str, *schalter: str) -> list
     """argv für einen Windows-Terminal-Tab ``bau <N>`` (``bau.py <N> --sofort``) — einzige Stelle.
 
     ``schalter`` hängt weitere ``bau.py``-Schalter an (respawn am PC: ``--remote-control``).
+    Bei Exit 0 schließt der Tab von selbst; bei Fehler ≠ 0 hält ``-NoExit`` ihn offen (#782).
     """
     innen = f"python '{capo._bau_skript(repo)}' {ticket} --sofort"
     if auftrag:
@@ -231,6 +232,8 @@ def wt_tab_befehl(repo: Path, ticket: int, auftrag: str, *schalter: str) -> list
         innen += " --auftrag '" + auftrag.replace(";", ",").replace("'", "''") + "'"
     if schalter:
         innen += " " + " ".join(schalter)
+    # Kein ';' im -Command-Text (wt trennt Tabs an ';'); wie spawn_local.ps1 (#282/#782).
+    innen += " && & { if ($LASTEXITCODE -eq 0) { exit 0 } }"
     return [
         "wt",
         "-w",
@@ -308,18 +311,37 @@ def neustart(
     eintrag = ticket_eintrag(spec, ticket)
     print(f"#{ticket}: {eintrag.zustand} (bau.py {eintrag.pid or '-'}, Session {eintrag.session_pid or '-'})")
     if eintrag.zustand != "aus":
-        opfer = eintrag.session_pid or eintrag.pid
         if not beenden:
             log.error("#%s läuft noch (%s) — erst prüfen, dann mit --beenden neu starten.", ticket, eintrag.zustand)
             return 3
-        if dry_run:
-            print(f"würde beenden: PID {opfer} ({'Claude-Session' if eintrag.session_pid else 'bau.py ohne Session'})")
+        if sys.platform == "win32":
+            from . import pc_fenster  # spät: pc_fenster importiert spawn
+
+            tab = pc_fenster.tab_pid(ticket, int(eintrag.pid)) if eintrag.pid else None
+            if tab is not None:
+                opfer, rolle = tab, "Tab-pwsh samt bau.py"
+            elif eintrag.pid:
+                opfer = int(eintrag.pid)
+                rolle = "bau.py samt Session" if eintrag.session_pid else "bau.py ohne Session"
+            else:
+                opfer, rolle = eintrag.session_pid, "Claude-Session"
+            if dry_run:
+                print(f"würde beenden: PID {opfer} ({rolle})")
+            else:
+                if opfer is None or not pc_fenster.baum_beenden(int(opfer)):
+                    log.error("#%s: PID %s (%s) lebt nach taskkill noch — kein Neustart.", ticket, opfer, rolle)
+                    return 3
         else:
-            try:
-                os.kill(int(opfer), 15)
-            except OSError as fehler:
-                log.error("#%s: PID %s nicht beendbar (%s).", ticket, opfer, fehler)
-                return 2
+            opfer = eintrag.session_pid or eintrag.pid
+            if dry_run:
+                print(f"würde beenden: PID {opfer} ({'Claude-Session' if eintrag.session_pid else 'bau.py ohne Session'})")
+            else:
+                try:
+                    os.kill(int(opfer), 15)
+                except OSError as fehler:
+                    log.error("#%s: PID %s nicht beendbar (%s).", ticket, opfer, fehler)
+                    return 2
+        if not dry_run:
             ende = time.monotonic() + NEUSTART_WARTE_S
             while ticket_eintrag(spec, ticket).zustand != "aus":
                 if time.monotonic() > ende:

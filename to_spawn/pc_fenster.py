@@ -139,15 +139,57 @@ def _unix(filetime: int) -> float | None:
     return filetime / 1e7 - _FILETIME_ZU_UNIX if filetime else None
 
 
+def _kinder_karte(prozesse: dict[int, tuple[int, str, int]]) -> dict[int, list[int]]:
+    """Eltern-PID → echte Kinder (recycelte PIDs mit Start vor dem Eltern entfallen)."""
+    kinder: dict[int, list[int]] = {}
+    for pid, (eltern, _, start) in prozesse.items():
+        if eltern in prozesse and not (start and prozesse[eltern][2] > start):
+            kinder.setdefault(eltern, []).append(pid)
+    return kinder
+
+
+def _ist_ticket_tab(zeile: str, ticket: int) -> bool:
+    """True für einen eigenen ``bau <N>``-Tab (``wt_tab_befehl`` oder ``spawn_local.ps1``, #782)."""
+    return bool(re.search(rf"(?:bau\.py[\"']?|(?:^|[\s\"'])bau)\s+{ticket}(?:[\s\"']|$)", zeile, re.IGNORECASE))
+
+
+def _tab_pid_fuer(
+    prozesse: dict[int, tuple[int, str, int]],
+    kinder: dict[int, list[int]],
+    bau_pid: int,
+    ticket: int,
+) -> int | None:
+    """Eltern-``pwsh``-PID eines ``bau <N>``-Tabs, wenn er allein ``bau_pid`` (plus Konsole) trägt."""
+    if bau_pid not in prozesse:
+        return None
+    eltern = prozesse[bau_pid][0]
+    if eltern not in prozesse or bau_pid not in kinder.get(eltern, []):
+        return None
+    neben = [
+        k
+        for k in kinder.get(eltern, [])
+        # Kommandozeile wie ``\??\C:\…\conhost.exe 0x4``: Programmname zählt, nicht das Zeilenende.
+        if k != bau_pid and not any(b in prozesse[k][1].lower() for b in _TAB_BEIWERK)
+    ]
+    return eltern if _ist_ticket_tab(prozesse[eltern][1], ticket) and not neben else None
+
+
+def tab_pid_aus(prozesse: dict[int, tuple[int, str, int]], ticket: int, bau_pid: int) -> int | None:
+    """Alleiniger Tab-``pwsh`` über ``bau_pid`` aus einer Prozessliste (reine Logik, #782)."""
+    return _tab_pid_fuer(prozesse, _kinder_karte(prozesse), bau_pid, ticket)
+
+
+def tab_pid(ticket: int, bau_pid: int) -> int | None:
+    """:func:`tab_pid_aus` über die echte Prozessliste."""
+    return tab_pid_aus(prozessbaum.prozesse(), ticket, bau_pid)
+
+
 def lauf_aus(prozesse: dict[int, tuple[int, str, int]], ticket: int) -> Lauf:
     """:class:`Lauf` aus einer Prozessliste (PID → Eltern-PID, Kommandozeile, FILETIME-Start).
 
     Reine Logik; Kinder, die vor ihrem Eltern starteten, sind recycelte PIDs und zählen nicht.
     """
-    kinder: dict[int, list[int]] = {}
-    for pid, (eltern, _, start) in prozesse.items():
-        if eltern in prozesse and not (start and prozesse[eltern][2] > start):
-            kinder.setdefault(eltern, []).append(pid)
+    kinder = _kinder_karte(prozesse)
 
     def nachkommen(pid: int) -> list[int]:
         alle, offen = [], list(kinder.get(pid, []))
@@ -170,14 +212,7 @@ def lauf_aus(prozesse: dict[int, tuple[int, str, int]], ticket: int) -> Lauf:
             arbeitet = start is not None and any(
                 (t := _unix(prozesse[k][2])) is not None and t - start >= WERKZEUG_NACH_S for k in nachkommen(pid)
             )
-            eltern = prozesse[bau][0]
-            neben = [
-                k
-                for k in kinder.get(eltern, [])
-                # Kommandozeile wie ``\??\C:\…\conhost.exe 0x4``: Programmname zählt, nicht das Zeilenende.
-                if k != bau and not any(b in prozesse[k][1].lower() for b in _TAB_BEIWERK)
-            ]
-            tab = eltern if muster.search(prozesse.get(eltern, (0, "", 0))[1]) and not neben else None
+            tab = _tab_pid_fuer(prozesse, kinder, bau, ticket)
             return Lauf(tab, bau, pid, start, arbeitet)
     return Lauf(None, None, None, None, False)
 
