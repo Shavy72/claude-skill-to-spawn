@@ -131,15 +131,15 @@ def test_moment_ticket_ist_kein_komplett_auftrag(klon: Path, zaehl: Path) -> Non
     assert _laeufe(zaehl) == 0
 
 
-# --- Übergangsregel und Lücken ------------------------------------------------------------------
+# --- Einrichtungs-Lücken (#451: Übergangsregel zurückgebaut) ------------------------------------
 
 
 def test_nicht_eingerichtet_alter_ablauf(klon: Path, zaehl: Path) -> None:
     konfig = _konfig(zaehl, staging=True, eingerichtet=False)
     for moment in (Moment.ALLE_AUF_STAGING, Moment.VOR_LIVE):
         erg = komplett_lauf.komplett_einmal(klon, SPEC, moment, konfig)
-        assert (erg.gelaufen, erg.ok) == (False, True)
-        assert "nicht eingerichtet, alter Ablauf" in erg.grund
+        assert (erg.gelaufen, erg.ok) == (False, False)
+        assert "pruefung.komplett" in erg.grund
     assert _laeufe(zaehl) == 0
     assert komplett_lauf.lies_merker(klon, SPEC) is None
 

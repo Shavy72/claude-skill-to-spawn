@@ -159,8 +159,8 @@ def test_live_mit_staging_merker_anderer_kopf_prueft_neu(welt: dict[str, Path]) 
 def test_live_nicht_eingerichtet_alter_ablauf(welt: dict[str, Path]) -> None:
     _, live_zaehl = _einrichten(welt, staging=False, pruefung=False)
     erg = _live(welt["repo"])
-    assert erg.returncode == 0 and "nicht eingerichtet" in erg.stdout, _text(erg)
-    assert _laeufe(live_zaehl) == 1
+    assert erg.returncode == 1 and "pruefung.komplett" in erg.stdout, _text(erg)
+    assert _laeufe(live_zaehl) == 0
 
 
 def test_live_befehl_fehlt_exit_2_nach_gruener_pruefung(welt: dict[str, Path]) -> None:
