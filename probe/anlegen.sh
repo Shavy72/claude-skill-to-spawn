@@ -2,17 +2,19 @@
 # Neues Lauf-Repo für einen Probe-Lauf aus der Vorlage anlegen (#426 Teil F).
 #
 #   bash probe/anlegen.sh <ziel-ordner> <mit-staging|ohne-staging> \
-#        [--app-port N] [--staging-port N] [--live-port N] [--github <owner/name>]
+#        [--app-port N] [--staging-port N] [--live-port N] [--github <owner/name>] \
+#        [--mit-nachtrunde] [--nachtrunde-ref <uses-ref>]
 #
 # Kopiert probe/gemeinsam/ und darüber probe/<variante>/ nach <ziel-ordner>, setzt die Ports ein
 # (Vorgabe: lokal 18501, Staging lokal+1, Übungs-Live lokal+2), prüft vor dem Anlegen, ob die
 # benötigten Ports frei sind, macht `git init` und einen ersten Commit. Das Beschluss-Protokoll der
 # Probe-Spec liegt danach als docs/GRILL_<heute>_probe.md im Repo (Quelle
 # probe/gemeinsam/docs/GRILL_probe.md). Mit --github: privates Repo anlegen und main pushen, sonst
-# kein GitHub-Zugriff. Der Ziel-Ordner muss fehlen oder leer sein.
+# kein GitHub-Zugriff. Mit --mit-nachtrunde: legt .github/workflows/nachtrunde.yml an (#582).
+# Der Ziel-Ordner muss fehlen oder leer sein.
 set -euo pipefail
 
-hilfe() { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; }
+hilfe() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; }
 fehler() { echo "anlegen.sh: $*" >&2; exit 2; }
 braucht_wert() { [ $# -ge 2 ] && [ -n "$2" ] && [[ $2 != --* ]] || fehler "Schalter $1 braucht einen Wert"; }
 pruefe_port_zahl() {
@@ -75,12 +77,16 @@ app_port=18501
 staging_port=
 live_port=
 github=
+mit_nachtrunde=0
+nachtrunde_ref=
 while [ $# -gt 0 ]; do
   case $1 in
     --app-port) braucht_wert "$@"; app_port=$2; shift 2 ;;
     --staging-port) braucht_wert "$@"; staging_port=$2; shift 2 ;;
     --live-port) braucht_wert "$@"; live_port=$2; shift 2 ;;
     --github) braucht_wert "$@"; github=$2; shift 2 ;;
+    --mit-nachtrunde) mit_nachtrunde=1; shift ;;
+    --nachtrunde-ref) braucht_wert "$@"; mit_nachtrunde=1; nachtrunde_ref=$2; shift 2 ;;
     -h|--help) hilfe; exit 0 ;;
     *) fehler "unbekannter Schalter: $1" ;;
   esac
@@ -132,6 +138,26 @@ find "$ziel" -type f -exec sed -i \
   -e "s/@@STAGING_TEXT@@/$staging_text/g" {} +
 # Beschluss-Protokoll der Probe-Spec mit Tagesdatum (Format docs/GRILL_<datum>_<thema>.md).
 mv "$ziel/docs/GRILL_probe.md" "$ziel/docs/GRILL_$(date +%F)_probe.md"
+
+if [ "$mit_nachtrunde" -eq 1 ]; then
+  skill_wurzel=$(cd "$vorlage/.." && pwd)
+  py=""
+  for kandidat in "${TO_SPAWN_PY:-}" python3 python; do
+    if [ -n "$kandidat" ] && "$kandidat" -c 'import sys' >/dev/null 2>&1; then
+      py="$kandidat"
+      break
+    fi
+  done
+  [ -n "$py" ] || fehler "--mit-nachtrunde braucht Python (TO_SPAWN_PY, python3 oder python)"
+  nr_args=(-m to_spawn.pruef.nachtrunde vorlage --uebungsrepo --ausgabe "$ziel/.github/workflows/nachtrunde.yml")
+  if [ "$variante" = mit-staging ]; then
+    nr_args+=(--mit-staging-app)
+  fi
+  if [ -n "$nachtrunde_ref" ]; then
+    nr_args+=(--workflow-ref "$nachtrunde_ref")
+  fi
+  PYTHONPATH="$skill_wurzel${PYTHONPATH:+:$PYTHONPATH}" "$py" "${nr_args[@]}" >/dev/null
+fi
 
 cd "$ziel"
 variante_zweig=main
