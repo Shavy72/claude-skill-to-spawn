@@ -3,5 +3,7 @@ pytest
 pytest-xdist
 # Zeitgrenze je Test (tests/conftest.py aktiviert sie nur, wenn das Plugin da ist)
 pytest-timeout
+# Linter-Pflicht in CI (test_pruef_sofort_3b verlangt ruff, sobald CI gesetzt ist, #797)
+ruff
 # Zeitzonen-Namen (Europe/Berlin) — unter Windows fehlt die System-Zeitzonen-Datenbank
 tzdata; sys_platform == "win32"

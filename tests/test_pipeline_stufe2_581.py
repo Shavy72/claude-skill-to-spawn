@@ -528,3 +528,26 @@ def test_doku_rolle_bau_server_und_zielbild_vorhanden() -> None:
         assert eingabe.name in inhalt
     # Auch die gemeinsame Kopf-Doku aus pipeline_vorlage enthält das Zielbild
     assert any("Claude-Sessions" in z for z in pipeline_vorlage.KOPF_DOKU_ZEILEN)
+
+
+def test_workflow_dateien_im_repo_stimmen_mit_stufe2_vorlage_ueberein() -> None:
+    """Eingecheckte Workflow-Vorlage und Eigenanschluss entsprechen dem Generator (#797)."""
+    vorlage_pfad = SKILL / ".github" / "workflows" / "pipeline-stufe-2.yml"
+    eigen_pfad = SKILL / ".github" / "workflows" / "pipeline-stufe-2-eigen.yml"
+    assert vorlage_pfad.is_file(), f"Vorlage fehlt: {vorlage_pfad}"
+    assert eigen_pfad.is_file(), f"Eigenanschluss fehlt: {eigen_pfad}"
+
+    vorlage_text = vorlage_pfad.read_text(encoding="utf-8")
+    assert pipeline_stufe2.pruefe_stufe2_vorlage_text(vorlage_text) == []
+    assert vorlage_text == pipeline_stufe2.vorlage_stufe2_yaml()
+
+    eigen_text = eigen_pfad.read_text(encoding="utf-8")
+    assert eigen_text == pipeline_stufe2.eigenanschluss_stufe2_yaml(teile=2, mit_staging_app=False)
+    assert "uses: ./.github/workflows/pipeline-stufe-2.yml" in eigen_text
+    assert "teile: 2" in eigen_text
+    assert "mit-staging-app: false" in eigen_text
+    assert "server-marker-ausschliessen: true" in eigen_text
+
+    anforderungen = (SKILL / "tests" / "requirements.txt").read_text(encoding="utf-8")
+    pakete = {z.split("#", 1)[0].strip().lower() for z in anforderungen.splitlines() if z.strip()}
+    assert "ruff" in pakete
