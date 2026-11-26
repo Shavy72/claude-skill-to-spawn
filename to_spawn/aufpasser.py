@@ -322,6 +322,8 @@ LAUFEND_MARKER = ("esc to interrupt",)
 #: im Verlauf oben bleibt „✻ Waiting for 1 background agent to finish“ oft stehen,
 #: obwohl das Eingabefeld längst still ist.
 STATUSZEILEN_ARBEITS_MARKER = ("background agent",)
+#: Aktiver Subagent-Hinweis in der Statuszeile von ``agy`` (z. B. ``1 subagent(s)``, #288).
+_AGY_SUBAGENT_AKTIV = re.compile(r"\b[1-9]\d*\s+subagent\(s\)")
 # Warte-Zeile von bau.py (Blocker offen). Nur diese Form zählt — „nächste Prüfung“
 # allein stand am 21.09. als Claude-Prosa im Scrollback eines idle Fensters.
 BLOCKER_WARTEN = re.compile(r"Ticket #\d+ wartet \(.*\) — nächste Prüfung in \d+ (?:min|s)\b")
@@ -570,10 +572,10 @@ class SessionInfo:
 
 
 def arbeits_marker_aktiv(text: str) -> bool:
-    """Zeigt der Pane-Text einen laufenden Arbeits- oder Limit-Marker (#434)?
+    """Zeigt der Pane-Text einen laufenden Arbeits- oder Limit-Marker (#434, #288)?
 
-    :data:`ARBEITS_MARKER` und :data:`LIMIT_TEXT` gelten im ganzen Bild;
-    :data:`STATUSZEILEN_ARBEITS_MARKER` (``background agent``) nur in der
+    :data:`ARBEITS_MARKER`, :data:`LIMIT_TEXT` und aktive ``agy``-Subagenten gelten im
+    ganzen Bild; :data:`STATUSZEILEN_ARBEITS_MARKER` (``background agent``) nur in der
     :func:`statuszeile` unter dem Eingabefeld, damit stehengebliebene Verlaufszeilen
     wie ``✻ Waiting for 1 background agent to finish`` ein stilles Fenster nicht sperren.
     """
@@ -581,6 +583,7 @@ def arbeits_marker_aktiv(text: str) -> bool:
         any(m in text for m in ARBEITS_MARKER)
         or any(m in statuszeile(text) for m in STATUSZEILEN_ARBEITS_MARKER)
         or bool(LIMIT_TEXT.search(text))
+        or bool(_AGY_SUBAGENT_AKTIV.search(text))
     )
 
 
@@ -606,6 +609,7 @@ def arbeitet_echt(text: str, status: str | None = None) -> bool:
     return (
         any(m in text for m in LAUFEND_MARKER)
         or any(m in statuszeile(text) for m in STATUSZEILEN_ARBEITS_MARKER)
+        or bool(_AGY_SUBAGENT_AKTIV.search(text))
         or rueckfrage(text)
         or bool(BLOCKER_WARTEN.search(text))
     )
@@ -2540,17 +2544,70 @@ class Aufpasser:
             log.info("%s: inzwischen aktiv — kein Eingriff", f.name)
             schluessel = f"{f.sitzung}/{f.name}"
             if schluessel in self.stand.fenster and h_neu != hash_start:
-                self.eintrag(schluessel, hash_text, seit_hinweis=self._seit_hinweis(info, aktiv))
+                self.eintrag(
+                    schluessel,
+                    hash_text,
+                    seit_hinweis=self._seit_hinweis(f, repo, info, aktiv, ticket=ticket),
+                )
             return False
         return True
 
     # -- Regeln je Fenster -------------------------------------------------------
 
-    @staticmethod
-    def _seit_hinweis(info: SessionInfo | None, arbeitend: bool) -> float | None:
-        """Echter Stille-Beginn aus der Session-JSON (``mtime`` bei ``status == idle``), #624."""
-        if info is not None and info.aus_json and info.status == "idle" and not arbeitend:
+    def _agy_still_seit(self, f: Fenster, repo: Path | None, ticket: int | None) -> float | None:
+        """Letzte Aktivitätszeit (``mtime`` des Transkripts) einer laufenden ``agy``-Session (#288)."""
+        if not f.pane_pid:
+            return None
+        hat_agy = False
+        for pid in prozess_baum(f.pane_pid):
+            argv = _argv(pid)
+            if argv and any(prozessbaum.programm_name(a) == "agy" for a in argv[:2]):
+                hat_agy = True
+                break
+        if not hat_agy:
+            return None
+        agy_ordner = werkzeug.agy_daten_ordner(self.e.heim)
+        kandidaten: list[Path] = []
+        if ticket is not None and repo is not None:
+            try:
+                wt = worktree_finden(repo, ticket)
+            except RuntimeError:
+                wt = None
+            if wt is not None and wt.is_dir():
+                kandidaten.append(wt)
+        if f.pfad:
+            pane_ordner = Path(f.pfad)
+            if pane_ordner.is_dir() and pane_ordner not in kandidaten:
+                kandidaten.append(pane_ordner)
+        if repo is not None and repo.is_dir() and repo not in kandidaten:
+            kandidaten.append(repo)
+        for ordner in kandidaten:
+            cid = werkzeug.agy_gespraech_fuer_ordner(ordner, agy_ordner=agy_ordner)
+            if not cid:
+                continue
+            transkript = werkzeug.agy_transkript_pfad(cid, agy_ordner=agy_ordner)
+            try:
+                if transkript.is_file():
+                    return transkript.stat().st_mtime
+            except OSError:
+                continue
+        return None
+
+    def _seit_hinweis(
+        self,
+        f: Fenster,
+        repo: Path | None,
+        info: SessionInfo | None,
+        arbeitend: bool,
+        ticket: int | None = None,
+    ) -> float | None:
+        """Nachweislicher Beginn der Stille je Werkzeug: Claude-JSON ``mtime`` oder ``agy``-Transkript (#288/#624)."""
+        if arbeitend:
+            return None
+        if info is not None and info.aus_json and info.status == "idle":
             return info.mtime
+        if info is None:
+            return self._agy_still_seit(f, repo, ticket)
         return None
 
     def _gueltiger_seit_hinweis(self, seit_hinweis: float | None) -> float | None:
@@ -2562,11 +2619,12 @@ class Aufpasser:
         """Hash/Zeit fortschreiben. Ändert sich der Text nach einem Eingriff
         (``stufe`` > 0), hat der Eingriff gewirkt: Stufe 0 — kein Zeit-Reset.
 
-        ``seit_hinweis`` (``mtime`` der Session-JSON bei ``status: idle``, #624)
-        gilt bei realer Uhr beim Neuanlegen, bei Format-/Versionswechsel des Hashes und bei
-        unverändertem Eintrag ohne jüngeren Eingriff oder jüngere echte Pane-Änderung — so
-        bleibt ``seit`` auf dem echten Stille-Beginn statt bei Takt, Hash-Migration oder
-        flüchtigem UI-Rauschen zurückgesetzt zu werden.
+        ``seit_hinweis`` (``mtime`` der Session-JSON bei ``status: idle`` oder des
+        ``agy``-Transkripts, #624/#288) gilt bei realer Uhr beim Neuanlegen, bei
+        Format-/Versionswechsel des Hashes und bei unverändertem Eintrag ohne jüngeren
+        Eingriff oder jüngere echte Pane-Änderung — so bleibt ``seit`` auf dem echten
+        Stille-Beginn statt bei Takt, Hash-Migration oder flüchtigem UI-Rauschen
+        zurückgesetzt zu werden.
         """
         h = pane_hash(text)
         hinweis = self._gueltiger_seit_hinweis(seit_hinweis)
@@ -2616,12 +2674,17 @@ class Aufpasser:
         self.stand.fenster[schluessel] = e
         return e
 
-    def hashes_fortschreiben(self, sitzung: str, fenster: list[Fenster]) -> None:
+    def hashes_fortschreiben(self, sitzung: str, fenster: list[Fenster], repo: Path | None = None) -> None:
         for f in fenster:
             text, hash_text = self._pane_lesen(f.ziel)
             info = self.session(f)
             arbeitend = arbeitet_echt(text, info.status if info else None)
-            self.eintrag(f"{sitzung}/{f.name}", hash_text, seit_hinweis=self._seit_hinweis(info, arbeitend))
+            ticket = echtes_ticket(f)
+            self.eintrag(
+                f"{sitzung}/{f.name}",
+                hash_text,
+                seit_hinweis=self._seit_hinweis(f, repo, info, arbeitend, ticket=ticket),
+            )
 
     def _braucht_mensch(
         self,
@@ -2859,14 +2922,16 @@ class Aufpasser:
         text, hash_text = self._pane_lesen(f.ziel)
         info = self.session(f)
         status = info.status if info else None
+        ticket = echtes_ticket(f)
         arbeitend = arbeitet_echt(text, status)
-        e = self.eintrag(schluessel, hash_text, seit_hinweis=self._seit_hinweis(info, arbeitend))
+        seit_hinweis = self._seit_hinweis(f, repo, info, arbeitend, ticket=ticket)
+        e = self.eintrag(schluessel, hash_text, seit_hinweis=seit_hinweis)
         still_min = (self.jetzt - e["seit"]) / 60
         if self._fertiges_fenster(
             f,
             repo,
             offen,
-            echtes_ticket(f),
+            ticket,
             text,
             info,
             e,
@@ -3009,13 +3074,14 @@ class Aufpasser:
         text, hash_text = self._pane_lesen(f.ziel)
         info = self.session(f)
         status = info.status if info else None
-        echt_arbeitend = arbeitet_echt(text, status)
-        e = self.eintrag(schluessel, hash_text, seit_hinweis=self._seit_hinweis(info, echt_arbeitend))
-        hash_start = e["hash"]
-        still_min = (self.jetzt - e["seit"]) / 60
         ticket = echtes_ticket(f)
         if ticket != f.ticket:
             log.info("%s: bau.py arbeitet an Ticket %s", f.name, ticket)
+        echt_arbeitend = arbeitet_echt(text, status)
+        seit_hinweis = self._seit_hinweis(f, repo, info, echt_arbeitend, ticket=ticket)
+        e = self.eintrag(schluessel, hash_text, seit_hinweis=seit_hinweis)
+        hash_start = e["hash"]
+        still_min = (self.jetzt - e["seit"]) / 60
         arbeitend = arbeitet(text, status)
 
         if self._fertiges_fenster(f, repo, offen, ticket, text, info, e, still_min, schluessel, echt_arbeitend):
@@ -3484,8 +3550,8 @@ class Aufpasser:
             self.stand.starts.setdefault(self._start_schluessel(spec, ticket), []).append(self.jetzt)
         if not self.e.trocken and not self._start_nachweisen(sitzung, name):
             auszug = _start_log_auszug(log_pfad, log_offset)
-            if not auszug and log_pfad.is_file():
-                # Kurz warten, falls tee bei schnellem Ende die letzte Zeile noch flusht (#288).
+            if not auszug:
+                # Kurz warten, falls tee/spur bei schnellem Ende die Log-Datei noch anlegt oder flusht (#288).
                 time.sleep(0.2)
                 auszug = _start_log_auszug(log_pfad, log_offset)
             if auszug:
@@ -3713,9 +3779,9 @@ class Aufpasser:
             log.info("Deploy/Gate läuft (%s): nichts angefasst", "; ".join(deploy[:3]))
             if self.e.trocken:
                 print(f"[trocken] Deploy/Gate läuft ({deploy[0]}): nichts angefasst")
-            for sitzung, _, fenster, _ in gesehen:
+            for sitzung, _, fenster, repo in gesehen:
                 try:
-                    self.hashes_fortschreiben(sitzung, fenster)
+                    self.hashes_fortschreiben(sitzung, fenster, repo=repo)
                 except RuntimeError as fehler:
                     log.error("%s: Fenster nicht lesbar: %s", sitzung, fehler)
             return

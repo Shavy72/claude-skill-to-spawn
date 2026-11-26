@@ -925,12 +925,15 @@ def starte_session(cmd: list[str], umzug_datei: Path) -> tuple[int, dict | None]
 
     Taucht ``umzug_datei`` auf, wird die Session beendet (terminate, nach 20 s kill).
     Auf Linux achtet die Umzug-Wache zusätzlich auf ``BAU_FERTIG_DATEI`` (Stop-Hook meldet
-    geschlossenes/erledigtes Ticket → stille Session wird samt Kindern beendet).
+    geschlossenes/erledigtes Ticket → stille Session wird samt Kindern beendet); bei Werkzeugen
+    ohne Claude-Stop-Hook (z. B. ``agy``) prüft sie bei Stille regelmäßig über denselben Weg.
     .cmd-Shim auf Windows: ``shell=True``-Notnagel steckt in ``umzug.starte_mit_umzug_wache``.
     """
     fertig_roh = os.environ.get("BAU_FERTIG_DATEI", "").strip() if sys.platform != "win32" else ""
     fertig_datei = Path(fertig_roh) if fertig_roh else None
-    return umzug.starte_mit_umzug_wache(cmd, umzug_datei, fertig_datei=fertig_datei)
+    ist_claude = any(prozessbaum.programm_name(a) == "claude" for a in cmd[:2])
+    fertig_poll_s = umzug.FERTIG_POLL_S if (fertig_datei is not None and not ist_claude) else 0.0
+    return umzug.starte_mit_umzug_wache(cmd, umzug_datei, fertig_datei=fertig_datei, fertig_poll_s=fertig_poll_s)
 
 
 # --- Main -------------------------------------------------------------------
@@ -1334,15 +1337,6 @@ def main() -> int:
                 code,
             )
             return 0
-        fertig_daten = umzug.lies_fertig(fertig_datei) if fertig_datei is not None else None
-        if fertig_daten is not None and fertig_daten.get("beendet") is True:
-            staffel_datei.unlink(missing_ok=True)
-            log.info(
-                "Ticket #%s erledigt (%s) — Session beendet, Fenster schließt sich.",
-                ticket,
-                fertig_daten.get("grund") or "fertig",
-            )
-            return 0
         if runner == "agy":
             wt_pfad = Path(worktree_pfad(ticket)).expanduser()
             try:
@@ -1357,6 +1351,15 @@ def main() -> int:
                 )
             except OSError as fehler:
                 log.warning("agy-Bau-Log #%s nicht nachgetragen: %s", ticket, fehler)
+        fertig_daten = umzug.lies_fertig(fertig_datei) if fertig_datei is not None else None
+        if fertig_daten is not None and fertig_daten.get("beendet") is True:
+            staffel_datei.unlink(missing_ok=True)
+            log.info(
+                "Ticket #%s erledigt (%s) — Session beendet, Fenster schließt sich.",
+                ticket,
+                fertig_daten.get("grund") or "fertig",
+            )
+            return 0
         uebergabe = staffel_uebergabe(staffel_datei)
         if uebergabe is None and runner == "agy" and staffel_aktiv(konfig):
             fund = werkzeug.agy_staffel_handoff(
