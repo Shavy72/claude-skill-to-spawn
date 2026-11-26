@@ -50,6 +50,17 @@ def aktueller_rechner() -> str:
         return "unbekannt"
 
 
+def gleicher_rechner(a: str, b: str | None = None) -> bool:
+    """Vergleicht zwei Rechnernamen ohne Groß-/Kleinschreibung und Rand-Leerzeichen (#191, #271).
+
+    Einzige Vergleichs-Stelle für Teil-Auswahl und maschinenübergreifende Start-Sperre.
+    ``b is None`` vergleicht gegen :func:`aktueller_rechner`. Leere Namen sind nie gleich.
+    """
+    links = a.strip().lower()
+    rechts = (b if b is not None else aktueller_rechner()).strip().lower()
+    return bool(links) and links == rechts
+
+
 def pfad(repo: Path, spec: int | str) -> Path:
     """Ablageort der Auswahl-Datei im Repo (gitignored unter ``.to-spawn/``)."""
     return Path(repo) / ".to-spawn" / f"auswahl-{spec}.json"
@@ -73,8 +84,7 @@ class Auswahl:
             return False
         if not self.rechner:
             return True
-        ziel = (rechner if rechner is not None else aktueller_rechner()).strip().lower()
-        return self.rechner.strip().lower() == ziel
+        return gleicher_rechner(self.rechner, rechner)
 
     def ist_teilauswahl(self, rechner: str | None = None) -> bool:
         """Begrenzt diese Auswahl die Ticket-Menge der Spec (nicht die volle Spec)?"""

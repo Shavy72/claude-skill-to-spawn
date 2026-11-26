@@ -1191,7 +1191,13 @@ def main() -> int:
     # weiter und hält die Sperre — also Ablösung (höchstens eine je Ticket).
     start: startstelle.Entscheidung | None = None
     if not args.probesitz:
-        start = startstelle.betreten(ticket, GH_REPO, REPO, abloesung=args.ohne_prompt)
+        start = startstelle.betreten(
+            ticket,
+            GH_REPO,
+            REPO,
+            abloesung=args.ohne_prompt,
+            uebernahme=bool(args.umzug),
+        )
         if not start.erlaubt:
             print(start.grund, flush=True)
             return start.exit_code

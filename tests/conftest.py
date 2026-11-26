@@ -753,6 +753,7 @@ def _start_stelle_im_test(
     """
     monkeypatch.setenv("TO_SPAWN_START_SPERREN", str(tmp_path_factory.mktemp("start-sperren")))
     monkeypatch.setenv("TO_SPAWN_TEST_TICKET_OFFEN", "1")
+    monkeypatch.setenv("TO_SPAWN_TEST_FERN_SPERRE_AUS", "1")
 
 
 @pytest.fixture(autouse=True)

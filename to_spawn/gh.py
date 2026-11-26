@@ -14,7 +14,9 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import urllib.parse
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -251,17 +253,42 @@ def ticket_daten(ticket: str, cwd: Path | None = None) -> dict[str, Any] | None:
 GIT_ZEIT_S = 30.0
 #: Abfragen übers Netz (fetch, ls-remote):
 FETCH_ZEIT_S = 60.0
+#: Gültige Git-Objekt-ID (SHA-1 oder SHA-256).
+_GIT_SHA = re.compile(r"^[0-9a-fA-F]{40,64}$")
+#: Fehlermeldungen eines abgelehnten atomaren ``push --force-with-lease``-Versuchs (#191).
+_CAS_KONFLIKT = re.compile(
+    r"stale info|fetch first|rejected|cannot lock ref|reference already exists|non-fast-forward",
+    re.IGNORECASE,
+)
+#: Neutrale Identität für interne Git-Objekte ohne Nutzer-Konfig (z. B. Remote-Lease-Commits, #191).
+_INTERN_GIT_ENV = {
+    "GIT_AUTHOR_NAME": "to-spawn",
+    "GIT_AUTHOR_EMAIL": "to-spawn@localhost",
+    "GIT_COMMITTER_NAME": "to-spawn",
+    "GIT_COMMITTER_EMAIL": "to-spawn@localhost",
+}
 
 
-def _git_ausgabe(args: list[str], cwd: Path, timeout: float | None = None) -> tuple[int, str]:
-    """``git <args>`` im Ordner ``cwd``; (Exit-Code, stdout) — 127 wenn git fehlt, 124 bei Zeitablauf."""
+def _git_lauf(
+    args: list[str],
+    cwd: Path,
+    *,
+    timeout: float | None = None,
+    eingabe: str | None = None,
+    extra_env: dict[str, str] | None = None,
+) -> tuple[int, str, str]:
+    """``git <args>`` im Ordner ``cwd`` → ``(Exit, stdout, stderr)``; 127 = git fehlt, 124 = Zeit."""
     if timeout is None:
         timeout = GIT_ZEIT_S
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    if extra_env:
+        env.update(extra_env)
     try:
         fertig = subprocess.run(
             ["git", *args],
             cwd=str(cwd),
-            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+            env=env,
+            input=eingabe,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -272,11 +299,171 @@ def _git_ausgabe(args: list[str], cwd: Path, timeout: float | None = None) -> tu
         )
     except subprocess.TimeoutExpired:
         log.warning("git %s: Zeitgrenze %s s überschritten", args[:1], timeout)
-        return 124, ""
+        return 124, "", f"Zeitgrenze {timeout:g} s überschritten"
     except OSError as fehler:
         log.warning("git-Aufruf fehlgeschlagen: %s", fehler)
-        return 127, ""
-    return fertig.returncode, (fertig.stdout or "").strip()
+        return 127, "", str(fehler)
+    return fertig.returncode, fertig.stdout or "", fertig.stderr or ""
+
+
+def _git_fehler_kurz(code: int, stdout: str, stderr: str) -> str:
+    text = (stderr or stdout).strip()
+    zeilen = [z.strip() for z in text.splitlines() if z.strip()]
+    return (zeilen[-1] if zeilen else f"git Exit {code}")[:200]
+
+
+def _git_ausgabe(args: list[str], cwd: Path, timeout: float | None = None) -> tuple[int, str]:
+    """``git <args>`` im Ordner ``cwd``; (Exit-Code, stdout) — 127 wenn git fehlt, 124 bei Zeitablauf."""
+    code, stdout, _stderr = _git_lauf(args, cwd, timeout=timeout)
+    return code, stdout.strip()
+
+
+def hat_origin(cwd: Path | None) -> bool:
+    """Hat ``cwd`` einen konfigurierten Git-Remote ``origin``?"""
+    return bool(cwd is not None and _origin_url(cwd))
+
+
+def remote_ref_sha(repo: Path, ref: str, *, timeout: float | None = None) -> tuple[bool, str, str]:
+    """Liest den aktuellen Commit-SHA von ``ref`` auf ``origin`` per ``ls-remote`` (#191).
+
+    Rückgabe ``(ok, sha, fehler)``:
+    - ``(True, "", "")``: Remote erreichbar, Ref existiert nicht.
+    - ``(True, "<sha>", "")``: Remote erreichbar, Ref steht auf ``<sha>``.
+    - ``(False, "", "<grund>")``: Remote nicht erreichbar, Zeitgrenze oder unlesbare Antwort.
+    """
+    code, stdout, stderr = _git_lauf(
+        ["ls-remote", "origin", ref],
+        repo,
+        timeout=FETCH_ZEIT_S if timeout is None else timeout,
+    )
+    if code != 0:
+        return False, "", _git_fehler_kurz(code, stdout, stderr)
+    gefunden = ""
+    for zeile in stdout.splitlines():
+        if not zeile.strip():
+            continue
+        sha, trenner, name = zeile.partition("\t")
+        sha = sha.strip()
+        name = name.strip()
+        if not trenner or not _GIT_SHA.fullmatch(sha):
+            return False, "", f"unlesbare ls-remote-Zeile: {zeile[:120]!r}"
+        if name == ref:
+            gefunden = sha
+    return True, gefunden, ""
+
+
+def remote_ref_nachricht(repo: Path, ref: str, *, timeout: float | None = None) -> tuple[bool, str, str, str]:
+    """Holt ``ref`` von ``origin`` in eine flüchtige Ref und liest ``(ok, sha, nachricht, fehler)`` (#191).
+
+    Arbeitsbaum, Index und ``refs/heads/*`` bleiben unberührt; die flüchtige Ref wird immer entfernt.
+    """
+    temp_ref = f"refs/to-spawn/tmp/{os.getpid()}-{threading.get_ident()}-{uuid.uuid4().hex[:8]}"
+    code, stdout, stderr = _git_lauf(
+        ["fetch", "-q", "--no-tags", "origin", f"+{ref}:{temp_ref}"],
+        repo,
+        timeout=FETCH_ZEIT_S if timeout is None else timeout,
+    )
+    if code != 0:
+        return False, "", "", _git_fehler_kurz(code, stdout, stderr)
+    try:
+        c_sha, s_sha, e_sha = _git_lauf(["rev-parse", "--verify", f"{temp_ref}^{{commit}}"], repo, timeout=GIT_ZEIT_S)
+        sha = s_sha.strip()
+        if c_sha != 0 or not _GIT_SHA.fullmatch(sha):
+            return False, "", "", _git_fehler_kurz(c_sha, s_sha, e_sha)
+        c_msg, s_msg, e_msg = _git_lauf(["log", "-1", "--format=%B", temp_ref], repo, timeout=GIT_ZEIT_S)
+        if c_msg != 0:
+            return False, "", "", _git_fehler_kurz(c_msg, s_msg, e_msg)
+        return True, sha, s_msg.strip(), ""
+    finally:
+        _git_lauf(["update-ref", "-d", temp_ref], repo, timeout=GIT_ZEIT_S)
+
+
+def commit_mit_nachricht(repo: Path, nachricht: str, *, timeout: float | None = None) -> tuple[bool, str, str]:
+    """Erzeugt einen leeren verwaisten Commit mit ``nachricht`` im Objekt-Speicher von ``repo`` (#191).
+
+    Kein Arbeitsbaum-, Index- oder Zweig-Eingriff; läuft ohne ``user.name``/``user.email`` und
+    plattformgleich unter Linux und Windows (UTF-8 über stdin).
+    """
+    frist = GIT_ZEIT_S if timeout is None else timeout
+    c_baum, s_baum, e_baum = _git_lauf(["mktree"], repo, timeout=frist, eingabe="")
+    baum_sha = s_baum.strip()
+    if c_baum != 0 or not _GIT_SHA.fullmatch(baum_sha):
+        return False, "", _git_fehler_kurz(c_baum, s_baum, e_baum)
+    c_com, s_com, e_com = _git_lauf(
+        ["-c", "commit.gpgsign=false", "commit-tree", baum_sha, "-F", "-"],
+        repo,
+        timeout=frist,
+        eingabe=nachricht,
+        extra_env=_INTERN_GIT_ENV,
+    )
+    commit_sha = s_com.strip()
+    if c_com != 0 or not _GIT_SHA.fullmatch(commit_sha):
+        return False, "", _git_fehler_kurz(c_com, s_com, e_com)
+    return True, commit_sha, ""
+
+
+def remote_ref_cas_setzen(
+    repo: Path,
+    ref: str,
+    neu_sha: str,
+    erwartet_sha: str = "",
+    *,
+    timeout: float | None = None,
+) -> tuple[bool, bool, str]:
+    """Setzt ``ref`` auf ``origin`` atomar auf ``neu_sha``, wenn es auf ``erwartet_sha`` steht (#191).
+
+    Leeres ``erwartet_sha`` verlangt, dass ``ref`` auf ``origin`` noch nicht existiert.
+    Rückgabe ``(ok, konflikt, fehler)``.
+    """
+    code, stdout, stderr = _git_lauf(
+        [
+            "-c",
+            "push.useForceIfIncludes=false",
+            "push",
+            "-q",
+            "--no-verify",
+            f"--force-with-lease={ref}:{erwartet_sha}",
+            "origin",
+            f"{neu_sha}:{ref}",
+        ],
+        repo,
+        timeout=FETCH_ZEIT_S if timeout is None else timeout,
+    )
+    if code == 0:
+        return True, False, ""
+    konflikt = bool(_CAS_KONFLIKT.search(f"{stderr}\n{stdout}"))
+    return False, konflikt, _git_fehler_kurz(code, stdout, stderr)
+
+
+def remote_ref_cas_loeschen(
+    repo: Path,
+    ref: str,
+    erwartet_sha: str,
+    *,
+    timeout: float | None = None,
+) -> tuple[bool, bool, str]:
+    """Löscht ``ref`` auf ``origin`` atomar nur, wenn es noch auf ``erwartet_sha`` steht (#191).
+
+    Rückgabe ``(ok, konflikt, fehler)``.
+    """
+    code, stdout, stderr = _git_lauf(
+        [
+            "-c",
+            "push.useForceIfIncludes=false",
+            "push",
+            "-q",
+            "--no-verify",
+            f"--force-with-lease={ref}:{erwartet_sha}",
+            "origin",
+            f":{ref}",
+        ],
+        repo,
+        timeout=FETCH_ZEIT_S if timeout is None else timeout,
+    )
+    if code == 0:
+        return True, False, ""
+    konflikt = bool(_CAS_KONFLIKT.search(f"{stderr}\n{stdout}"))
+    return False, konflikt, _git_fehler_kurz(code, stdout, stderr)
 
 
 def commit_betreffe(repo: Path, nummer: int | str, *refs: str) -> list[str] | None:
