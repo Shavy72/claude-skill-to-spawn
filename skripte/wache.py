@@ -600,7 +600,12 @@ def main() -> int:
     log.info("Chrome: %s", "ja" if chrome else "nein")
     log.info("context-mode (Pflicht-MCP): %s", ctx_wurzel)
     if a.dry_run:
-        dry_ordner = Path(tempfile.mkdtemp(prefix=f"wache-{a.spec}-", dir=os.environ.get("TMPDIR")))
+        # #355/#136: Probelauf-Temp über die eine Temp-Stelle auf der Platte statt System-Temp
+        # (in Tests zeigt TO_SPAWN_TEMP_ORDNER in den eigenen pt-*-Ordner und räumt sich mit ab).
+        dry_umg = temp_ordner.umgebung(a.spec, repo=REPO, von="wache")
+        dry_ordner = Path(
+            tempfile.mkdtemp(prefix=f"wache-{a.spec}-", dir=dry_umg.get("TMPDIR") or os.environ.get("TMPDIR"))
+        )
         settings_path, mcp_path = _filter_dateien_schreiben(dry_ordner, overrides, mcp_servers)
         log.info("Temp: %s", dry_ordner)
         if a.resume:  # Aufpasser (#236 R1): Sicherheitskette auch für das Aufseher-Fenster

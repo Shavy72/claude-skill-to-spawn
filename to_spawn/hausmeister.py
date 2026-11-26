@@ -137,7 +137,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import ExitStack, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
@@ -388,6 +388,12 @@ STARTSPERRE_ANTEIL = 0.05
 INODE_WARN_ANTEIL = 0.70
 #: Ab diesem belegten Inode-Anteil der Temp-Wurzel startet keine neue Session (#355).
 INODE_SPERRE_ANTEIL = 0.90
+#: Marker-Datei eigener pytest-Temp-Ordner ``pt-*`` (#177, #355) — einzige Quelle auch für ``tests/conftest.py``.
+PT_MARKER = ".pt-lauf"
+#: Normale Schonfrist toter ``pt-*``-Reste in Sekunden (#177, #355).
+PT_RESTE_ALTER_S = 3600
+#: Verkürzte Schonfrist toter ``pt-*``-Reste bei Inode-Knappheit ab :data:`INODE_WARN_ANTEIL` (#355).
+PT_RESTE_ALTER_KNAPP_S = 600
 #: Läuft gerade :func:`_start_pruefen`? Dann schreibt :func:`_alle_ordner` keine doppelte Inode-Warnung.
 _IM_STARTCHECK: ContextVar[bool] = ContextVar("hausmeister_im_startcheck", default=False)
 #: Sperrdatei gegen parallele Aufräum-Läufe, im Ordner des Hausmeister-Logs.
@@ -692,6 +698,7 @@ def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> Rundgang:
         _WORKTREE_CACHE.reset(wt_token)
     _kennzahl_schreiben(ergebnisse, trocken=not loeschen)
     temp_ordner.aufraeumen(loeschen=loeschen, jetzt=jetzt)  # #136: Temp-Reste, wirft nie
+    _pt_reste_im_takt(loeschen=loeschen, jetzt=jetzt)  # #355: tote markierte pt-*-Reste räumen (Linux)
     _temp_inodes_im_takt()  # #355: Datei-Zähler (Inodes) der Temp-Wurzel prüfen
     _zweige_im_takt(loeschen, jetzt)
     # L5 #145: Netz für vergessene Ablösungen, wirft nie; Probelauf schreibt/lädt nichts (#169).
@@ -2641,6 +2648,111 @@ def _temp_inode_anteil() -> float | None:
         return anteil
     werte = [w for basis in _temp_inode_basen() if (w := inode_anteil(basis)) is not None]
     return max(werte) if werte else None
+
+
+def _pt_marker_retten(ordner: Path, pid: int, mtime: float | None = None) -> None:
+    """Steht ein ``pt-*``-Ordner nach ``rmtree`` noch ohne Marker, Marker neu schreiben (#355)."""
+    marker = ordner / PT_MARKER
+    if not ordner.is_dir() or marker.exists():
+        return
+    try:
+        marker.write_text(f"{pid}\n", encoding="utf-8")
+        if mtime is not None:
+            os.utime(marker, (mtime, mtime))
+    except OSError as fehler:
+        log.warning("Hausmeister: pt-Marker in %s nicht wiederherstellbar: %s", ordner, fehler)
+
+
+def _temp_pt_basen() -> list[Path]:
+    """Temp-Wurzeln für das Hausmeister-Räumen toter ``pt-*``-Reste (#355).
+
+    Bei gesetzter Test-Tür ``TO_SPAWN_TEMP_ORDNER`` nur dieser Ordner (nie fremde Läufe im
+    System-Temp während Tests); sonst alle existierenden Temp-Wurzeln (:func:`_temp_inode_basen`).
+    """
+    if os.environ.get("TO_SPAWN_TEMP_ORDNER", "").strip():
+        try:
+            ziel = temp_ordner._pfad_ohne_anlegen()
+            return [ziel] if ziel.is_dir() else []
+        except (OSError, config.KeinHeimOrdner):
+            return []
+    return _temp_inode_basen()
+
+
+def pt_reste_raeumen(
+    temp: Path,
+    *,
+    loeschen: bool = True,
+    jetzt: float | None = None,
+    inode_fn: Callable[[Path], float | None] | None = None,
+    mit_log: bool = False,
+) -> list[Path]:
+    """Räumt tote, markierte ``pt-*``-Ordner (Marker :data:`PT_MARKER`) unter ``temp`` (#355, Linux).
+
+    Ab :data:`INODE_WARN_ANTEIL` greift die kurze Schonfrist :data:`PT_RESTE_ALTER_KNAPP_S` (10 min),
+    sonst :data:`PT_RESTE_ALTER_S` (1 h). Unmarkierte Ordner, Symlinks, ungültige PIDs und laufende
+    Prozesse bleiben immer unberührt. Windows-Zweig unberührt (dort räumt ``tests/conftest.py``).
+    """
+    if _ist_windows():
+        return []
+    stichtag = time.time() if jetzt is None else jetzt
+    anteil = (inode_fn or inode_anteil)(temp)
+    knapp = _ist_inode_knapp(anteil)
+    grenze = stichtag - (PT_RESTE_ALTER_KNAPP_S if knapp else PT_RESTE_ALTER_S)
+    try:
+        kandidaten = sorted(p for p in temp.iterdir() if p.name.startswith("pt-"))
+    except OSError as fehler:
+        log.warning("Hausmeister: pt-Reste unter %s nicht lesbar: %s", temp, fehler)
+        return []
+    geraeumt: list[Path] = []
+    for ordner in kandidaten:
+        marker = ordner / PT_MARKER
+        try:
+            if ordner.is_symlink():
+                continue
+            marker_mtime = marker.stat().st_mtime
+            if marker_mtime > grenze:
+                continue
+            pid = int(marker.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            continue
+        if not 0 < pid < 2**31 or prozessbaum.lebt(pid):
+            continue
+        if not loeschen:
+            geraeumt.append(ordner)
+            continue
+        grund = (
+            f"toter pt-Rest (PID {pid}, Inodes knapp)"
+            if knapp
+            else f"toter pt-Rest (PID {pid}, abgelaufene Schonfrist)"
+        )
+        if mit_log and not _log_schreiben(Ergebnis(ordner, "gelöscht", grund, None, trocken=False)):
+            continue
+        try:
+            shutil.rmtree(ordner)
+        except OSError as fehler:
+            log.warning("Hausmeister: pt-Rest %s nicht löschbar: %s", ordner, fehler)
+            if mit_log:
+                _log_schreiben(
+                    Ergebnis(ordner, "bleibt", f"Löschen gescheitert: {fehler}", None, trocken=False, fehler=True)
+                )
+        finally:
+            _pt_marker_retten(ordner, pid, marker_mtime)
+        if not ordner.exists():
+            geraeumt.append(ordner)
+    return geraeumt
+
+
+def _pt_reste_im_takt(*, loeschen: bool, jetzt: float | None) -> None:
+    """#355 (Linux): räumt im Hausmeister-Takt tote markierte ``pt-*``-Reste; wirft nie."""
+    if _ist_windows():
+        return
+    hat_naht = bool(os.environ.get("TO_SPAWN_HAUSMEISTER_INODES", "").strip())
+    messung: Callable[[Path], float | None] = (lambda _p: _temp_inode_anteil()) if hat_naht else inode_anteil
+    for basis in _temp_pt_basen():
+        try:
+            pt_reste_raeumen(basis, loeschen=loeschen, jetzt=jetzt, inode_fn=messung, mit_log=True)
+        except Exception:  # Vertrag: wirft nie
+            log.exception("Hausmeister: pt-Reste unter %s gescheitert", basis)
 
 
 def _temp_inodes_im_takt() -> None:
