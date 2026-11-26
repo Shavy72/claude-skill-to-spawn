@@ -17,6 +17,8 @@ DATEI = "protokoll.jsonl"
 WACKLER_DATEI = "wackler.jsonl"
 #: Quarantäne-Ledger für wiederkehrende Wackler (Stufe 3, #798).
 QUARANTAENE_DATEI = "quarantaene.json"
+#: Aufräum-Bericht mit Doppelte-Vorschlägen und Schutzlisten-Status (Stufe 3, #800).
+AUFRAEUMEN_DATEI = "aufraeumen.json"
 URTEIL = {0: "grün", 1: "rot", 2: "gate-fehler"}
 
 

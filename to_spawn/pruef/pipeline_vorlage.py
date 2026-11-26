@@ -690,7 +690,7 @@ def _parser() -> argparse.ArgumentParser:
     p1.add_argument("--json", dest="als_json", action="store_true", help="Ergebnis als JSON ausgeben")
 
     pv = unter.add_parser("vorlage", help="workflow_call-Vorlage oder Eigenanschluss ausgeben bzw. prüfen.")
-    pv.add_argument("--stufe", choices=("0-1", "2"), default="0-1", help="Zielstufe der Vorlage (Standard: 0-1)")
+    pv.add_argument("--stufe", choices=("0-1", "2", "3"), default="0-1", help="Zielstufe der Vorlage (Standard: 0-1)")
     pv.add_argument("--eigenanschluss", action="store_true", help="Eigenanschluss-Workflow statt Vorlage ausgeben")
     pv.add_argument("--ausgabe", type=Path, default=None, help="Zieldatei zum Schreiben der Vorlage")
     pv.add_argument("--pruefen", type=Path, default=None, help="Bestehende YAML-Vorlage gegen Vertrag prüfen")
@@ -704,9 +704,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
 
     if args.befehl == "vorlage":
-        if args.stufe == "2":
-            from to_spawn.pruef import pipeline_stufe2
-
+        if args.stufe in ("2", "3"):
             weiter: list[str] = ["vorlage"]
             if args.eigenanschluss:
                 weiter.append("--eigenanschluss")
@@ -714,7 +712,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 weiter.extend(["--ausgabe", str(args.ausgabe)])
             if args.pruefen is not None:
                 weiter.extend(["--pruefen", str(args.pruefen)])
-            return pipeline_stufe2.main(weiter)
+            if args.stufe == "2":
+                from to_spawn.pruef import pipeline_stufe2
+
+                return pipeline_stufe2.main(weiter)
+            from to_spawn.pruef import aufraeumen
+
+            return aufraeumen.main(weiter)
         if args.pruefen is not None:
             if not args.pruefen.is_file():
                 sys.stderr.write(f"Vorlage fehlt: {args.pruefen}\n")
