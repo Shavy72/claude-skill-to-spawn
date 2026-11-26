@@ -6,6 +6,7 @@ dürfen das Wort tragen; jeder unbekannte Starter mit dem Wort sperrt (fail-clos
 
 from __future__ import annotations
 
+import base64
 import io
 import json
 
@@ -592,3 +593,77 @@ COMMIT_UMLEITUNG_FREI_621 = [
 @pytest.mark.parametrize("befehl", COMMIT_UMLEITUNG_FREI_621)
 def test_621_commit_mit_log_umleitung_bleibt_frei(befehl: str) -> None:
     assert not _sperrt(befehl), repr(befehl)
+
+
+# --- #621, Fix-Runde 2: Sicherheitsprüfung (Lücken und Regressionen gegenüber main) ---
+
+
+def _enc_utf16(text: str) -> str:
+    return base64.b64encode(text.encode("utf-16-le")).decode()
+
+
+#: Regressionen gegenüber main (Ersetzungen vor Schreib-Teil, cd .git + relative Umleitung).
+REGRESSIONEN_621_R2 = [
+    "mkdir -p b/objects b/refs && echo 'ref: refs/heads/m' > b/HEAD && "
+    "printf '%s\\n' '[remote \"o\"]' 'url = .' 'uploadpack = ja 5' > b/config && "
+    'echo "$(git -C b fetch o)"',
+    "mkdir -p b/objects b/refs && git commit -q --allow-empty -m x -m '[remote \"o\"]' "
+    "-m 'url = .' -m 'uploadpack = ja 5' && git log -1 --format=%b > b/config && "
+    "echo 'ref: refs/heads/m' > b/HEAD && echo \"$(git -C b fetch o)\"",
+    "mkdir -p b/objects b/refs && echo 'ref: refs/heads/m' > b/HEAD && "
+    "printf '%s\\n' '[remote \"o\"]' 'url = .' 'uploadpack = ja 5' > b/config && "
+    "cat <(git -C b fetch o)",
+    "mkdir -p b/objects b/refs && echo 'ref: refs/heads/m' > b/HEAD && "
+    "printf '%s\\n' '[remote \"o\"]' 'url = .' 'uploadpack = ja 5' > b/config && "
+    "echo `git -C b fetch o`",
+    "mkdir -p b/objects b/refs && echo 'ref: refs/heads/m' > b/HEAD && "
+    "echo $(printf '%s\\n' '[remote \"o\"]' 'url = .' 'uploadpack = ja 5' > b/config; "
+    "echo $(git -C b fetch o))",
+    "cd .git && git -C .. commit -q --allow-empty -m x -m '[core]' -m 'pager = ja 5' && "
+    "git -C .. log -1 --format=%b >> config",
+    "cd ~/.config/gh && git -C /tmp commit -q --allow-empty -m 'pager: ja 5' && "
+    "git -C /tmp log -1 --format=%s > config.yml",
+    "git -C .. commit -q --allow-empty -m x -m '[core]' -m 'pager = ja 5' && git -C .. log -1 --format=%b >> config",
+    "git -C b fetch o && printf 'ja 5' > /tmp/x.txt",
+]
+
+#: Punkt 1 — ``ext::`` und Programm-Schalter über Befehls-, Klammer- oder Variablen-Erweiterung.
+EXT_ERWEITERUNG_621_R2 = [
+    "git commit -q --allow-empty -m 'ja 5' && git fetch \"$(echo ext)::sh -c git% log% -1% --format=%%s|sh\"",
+    "git commit -q --allow-empty -m 'ja 5' && git fetch {ext::'sh -c git% log% -1% --format=%%s|sh',HEAD}",
+    "git commit -q --allow-empty -m 'ja 5' && git fetch \"e${UNSET}xt::sh -c git% log% -1% --format=%%s|sh\"",
+    "git commit -q --allow-empty -m 'ja 5' && git fetch \"--up${UNSET}load-pack=sh\" origin",
+    "git commit -q --allow-empty -m 'ja 5' && git fetch \"$REMOTE_URL\"",
+    "git commit -q --allow-empty -m 'ja 5' && git push {--receive-pack=sh,origin}",
+]
+
+#: Punkt 2 — Windows-Pfad auf cmd/powershell (einfacher und doppelter Backslash) und Punkt am Ende.
+WIN_PFAD_UND_PUNKT_621_R2 = [
+    "C:\\\\Windows\\\\System32\\\\cmd.exe /cJA.BAT 5",
+    "C:\\Windows\\System32\\cmd.exe /cJA.BAT 5",
+    "C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe "
+    f"-EncodedCommand {_enc_utf16('ja.bat 5')}",
+    f"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -EncodedCommand {_enc_utf16('ja.bat 5')}",
+    f"powershell.exe -EncodedCommand:{_enc_utf16('ja.bat 5')}",
+    "ja.bat. 5",
+    "JA.BAT. 5",
+    "cmd /cJA.BAT. 5",
+    "C:\\tools\\JA.BAT. 5",
+]
+
+#: Rest-Lücke ``tee -- -b/config`` (und ``uniq`` mit ``--`` oder ``-`` als Eingabe).
+TEE_STRICH_621_R2 = [
+    "mkdir -p ./-b/objects ./-b/refs && tee -- -b/HEAD <<< 'ref: refs/heads/m' >/dev/null && "
+    "tee -- -b/config <<< $'[remote \"o\"]\\nurl = .\\nuploadpack = ja 5' >/dev/null && "
+    "git -C ./-b fetch o",
+    "echo 'ja 5' | uniq - ~/.bashrc",
+    "echo 'ja 5' > f; uniq -- f -b/config",
+]
+
+
+@pytest.mark.parametrize(
+    "befehl",
+    REGRESSIONEN_621_R2 + EXT_ERWEITERUNG_621_R2 + WIN_PFAD_UND_PUNKT_621_R2 + TEE_STRICH_621_R2,
+)
+def test_621_runde2_luecken_und_regressionen_gesperrt(befehl: str) -> None:
+    assert _sperrt(befehl), repr(befehl)
