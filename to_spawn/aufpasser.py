@@ -804,28 +804,82 @@ _CLAUDE_UMFRAGE = re.compile(
 #: Eingeblendeter Kontext-Hinweis direkt über dem Eingabefeld (``new task? /clear to save … tokens``) —
 #: flüchtiges UI-Rauschen ohne Antwort-Inhalt (#624).
 _CLAUDE_CLEAR_HINWEIS = re.compile(r"^new task\?\s+/clear\s+to\s+save\s+\S+\s+tokens$", re.IGNORECASE)
+#: Eingeblendeter Remote-Control-Hinweis über dem Eingabefeld samt Sitzungs-URL — flüchtiges
+#: Claude-Code-UI-Rauschen ohne Antwort-Inhalt (#624).
+_CLAUDE_REMOTE_CONTROL = re.compile(r"^/remote-control\s+is\s+active(?:\s*[·•].*)?$", re.IGNORECASE)
+_CLAUDE_REMOTE_URL = re.compile(r"^https://claude\.ai/code/session_[A-Za-z0-9_-]+$", re.IGNORECASE)
+#: Eingeblendete Claude-Code-Tipps (``⎿ Tip: …`` / ``Tip: …``) — flüchtiges UI-Rauschen (#624).
+_CLAUDE_TIP_ZEILE = re.compile(r"^(?:⎿\s+)?Tip:\s+.+$", re.IGNORECASE)
+#: Flüchtige Claude-Code-Update-Hinweise — kein Antwort-Inhalt (#624).
+_CLAUDE_UPDATE_HINWEIS = re.compile(
+    r"^(?:Checking for updates(?:\.\.\.|…)|Update available!\s+Run:|Auto-update failed\b).*$",
+    re.IGNORECASE,
+)
+#: Klartext-Rückfall für den gedimmten Claude-Code-Eingabe-Platzhalter (``❯ Try "…"``), falls
+#: ``pane_hash`` ein Bild ohne ANSI-Farben (``capture-pane -p``) bekommt (#624).
+_CLAUDE_EINGABE_PLATZHALTER = re.compile(r'^❯\s+Try\s+["“][^"”]+["”]$')
+#: Führende blinkende Status- und Spinner-Zeichen aus Claude-Code- bzw. Terminal-Ausgaben, die
+#: bei demselben unberührten Bild zwischen zwei Aufnahmen wechseln können (#372, #624).
+#: Einzige Quelle für Aufpasser und Aufseher-Stand.
+STATUS_PRAEFIX = re.compile(r"^(?:[●⏺○◯◐◓◑◒◔◕◌✻✶✳✢✽✦✧∗·⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⣾⣽⣻⢿⡿⣟⣯⣷](?:\s+|$))+")
+#: Unsichtbare flüchtige Zeichen (Zero-Width-Space/Joiner, BOM), die den Hash nicht ändern dürfen (#624).
+_NULLBREITE = re.compile(r"[\u200b\u200c\u200d\ufeff]")
+
+
+def _fluechtige_zeichen_bereinigen(zeile: str) -> str:
+    """Entfernt flüchtige unsichtbare Zeichen (CR, NBSP, Nullbreite) und nachlaufenden Leerraum (#624)."""
+    return _NULLBREITE.sub("", zeile.replace("\r", "").replace("\xa0", " ")).rstrip()
 
 
 def _ist_fluechtiges_ui_rauschen(zeile: str) -> bool:
     """Flüchtige Claude-Code-UI-Einblendungen über dem Eingabefeld (#624):
-    Feedback-Umfrage (:data:`_CLAUDE_UMFRAGE`) und ``/clear``-Hinweis (:data:`_CLAUDE_CLEAR_HINWEIS`).
+    Feedback-Umfrage (:data:`_CLAUDE_UMFRAGE`), ``/clear``-Hinweis (:data:`_CLAUDE_CLEAR_HINWEIS`),
+    ``/remote-control``-Banner, ``Tip:``-Hinweise und Update-Meldungen.
     Ihr Erscheinen oder Verschwinden ist weder Aktivität noch eine Rückfrage."""
-    sauber = ohne_farben(zeile).strip()
+    sauber = _fluechtige_zeichen_bereinigen(ohne_farben(zeile)).strip()
     if not sauber:
         return False
-    return bool(_CLAUDE_UMFRAGE.fullmatch(sauber) or _CLAUDE_CLEAR_HINWEIS.fullmatch(sauber))
+    ohne_status = STATUS_PRAEFIX.sub("", sauber).strip()
+    return bool(
+        _CLAUDE_UMFRAGE.fullmatch(sauber)
+        or (ohne_status and _CLAUDE_UMFRAGE.fullmatch(ohne_status))
+        or _CLAUDE_CLEAR_HINWEIS.fullmatch(sauber)
+        or _CLAUDE_REMOTE_CONTROL.fullmatch(sauber)
+        or _CLAUDE_REMOTE_URL.fullmatch(sauber)
+        or _CLAUDE_TIP_ZEILE.fullmatch(sauber)
+        or _CLAUDE_UPDATE_HINWEIS.fullmatch(sauber)
+    )
 
 
 def _ohne_fluechtiges_rauschen(text: str) -> str:
-    """Text ohne :func:`_ist_fluechtiges_ui_rauschen` samt umgebender Leerzeilen (#624)."""
+    """Text ohne :func:`_ist_fluechtiges_ui_rauschen` (inkl. umgebrochener ``Tip:``-Folgezeilen)
+    samt umgebender Leerzeilen (#624)."""
     zeilen = text.splitlines()
     if not any(_ist_fluechtiges_ui_rauschen(z) for z in zeilen):
         return text
     raus: list[str] = []
     entfernt = False
+    tip_einzug: int | None = None
     for z in zeilen:
+        sauber = _fluechtige_zeichen_bereinigen(ohne_farben(z))
+        kern = sauber.lstrip()
+        if tip_einzug is not None:
+            einzug = len(sauber) - len(kern)
+            if (
+                kern
+                and einzug > tip_einzug
+                and not EINGABEFELD_LINIE.fullmatch(kern)
+                and not kern.startswith(("❯", "⎿"))
+                and not STATUS_PRAEFIX.match(kern)
+                and not _ist_fluechtiges_ui_rauschen(z)
+            ):
+                entfernt = True
+                continue
+            tip_einzug = None
         if _ist_fluechtiges_ui_rauschen(z):
             entfernt = True
+            if _CLAUDE_TIP_ZEILE.fullmatch(kern):
+                tip_einzug = len(sauber) - len(kern)
             continue
         if entfernt:
             entfernt = False
@@ -846,10 +900,10 @@ def ist_pane_rauschen(zeile: str) -> bool:
     Einzige Stelle für Aufpasser und Aufseher-Stand: erkennt waagerechte Trennlinien
     (:data:`EINGABEFELD_LINIE`), abgesetzte Dauer-/Abschluss-Fußzeilen
     (``✻ Crunched for 6s · done 7:25 PM``, ``✻ Baked for 40s``), die Feedback-Umfrage
-    (``How is Claude doing this session?`` samt Auswahlzeile ``1: Bad … 0: Dismiss``) und
-    den ``/clear``-Hinweis (``new task? /clear to save … tokens``).
+    (``How is Claude doing this session?`` samt Auswahlzeile ``1: Bad … 0: Dismiss``),
+    den ``/clear``-Hinweis, ``/remote-control``-Banner und ``Tip:``-Hinweise.
     """
-    sauber = ohne_farben(zeile).strip()
+    sauber = _fluechtige_zeichen_bereinigen(ohne_farben(zeile)).strip()
     if not sauber:
         return False
     return bool(
@@ -869,7 +923,7 @@ def ohne_statuszeile(text: str) -> str:
     (Shell, Dialog mit nur einer Linie, fremdes Programm) bleibt der Text ganz.
     """
     zeilen = text.splitlines()
-    feld = _eingabefeld(zeilen)
+    feld = _eingabefeld([ohne_farben(z) for z in zeilen])
     return text if feld is None else "\n".join(zeilen[: feld[1]])
 
 
@@ -993,9 +1047,66 @@ def eingabe_leer(text: str) -> bool:
     return inhalt.removeprefix("❯").strip() == ""
 
 
+#: Format-Version von :func:`pane_hash` (#624). Bei neuer Normalisierung hochzählen, damit
+#: bestehende ``stand.json``-Einträge mit älterem Hash-Format sauber migrieren, ohne ``seit``
+#: oder ``pane_aenderung`` als vermeintliche Aktivität zurückzusetzen.
+PANE_HASH_VERSION = 2
+
+
+def _pane_hash_version(wert: object) -> int:
+    """Format-Version eines gespeicherten ``pane_hash``-Werts (unversionierte Alt-Hashes ⇒ 1)."""
+    if not isinstance(wert, str) or not wert:
+        return 0
+    if wert.startswith("v"):
+        praefix, trenner, _ = wert[1:].partition(":")
+        if trenner and praefix.isdigit():
+            return int(praefix)
+    return 1
+
+
+def _zeile_fuer_hash(zeile: str) -> str:
+    """Einzelne Inhaltszeile für :func:`pane_hash` ohne blinkende Status-/Spinner-Präfixe (#624)."""
+    sauber = _fluechtige_zeichen_bereinigen(zeile)
+    if not sauber:
+        return ""
+    einzug = len(sauber) - len(sauber.lstrip())
+    kern = STATUS_PRAEFIX.sub("", sauber[einzug:])
+    return f"{sauber[:einzug]}{kern}".rstrip() if kern else ""
+
+
+def _pane_hash_text(text: str) -> str:
+    """Kanonischer Pane-Inhalt für :func:`pane_hash` (#429, #624):
+    ohne Statuszeile, Steuerfolgen, gedimmte Eingabe-Platzhalter, flüchtige UI-Einblendungen
+    (Umfrage, ``/clear``-Hinweis, ``/remote-control``, ``Tip:``, Update-Hinweise) sowie blinkende
+    Status-/Spinner-Zeichen und nachlaufenden Leerraum."""
+    zeilen = text.splitlines()
+    feld = _eingabefeld([ohne_farben(z) for z in zeilen])
+    if feld is not None:
+        oben, unten = feld
+        eingabe: list[str] = []
+        for z in zeilen[oben + 1 : unten]:
+            sauber = _fluechtige_zeichen_bereinigen(_ohne_gedimmtes(z))
+            if _CLAUDE_EINGABE_PLATZHALTER.fullmatch(sauber.lstrip()):
+                sauber = "❯"
+            eingabe.append(sauber)
+        kopf = _ohne_fluechtiges_rauschen("\n".join(ohne_farben(z) for z in zeilen[:oben]))
+        kopf_zeilen = [_zeile_fuer_hash(z) for z in kopf.splitlines()]
+        while kopf_zeilen and not kopf_zeilen[-1]:
+            kopf_zeilen.pop()
+        rahmen = _fluechtige_zeichen_bereinigen(ohne_farben(zeilen[oben]))
+        return "\n".join([*kopf_zeilen, rahmen, *eingabe])
+    sauber = _ohne_fluechtiges_rauschen(ohne_farben(text))
+    raus = [_zeile_fuer_hash(z) for z in sauber.splitlines()]
+    while raus and not raus[-1]:
+        raus.pop()
+    return "\n".join(raus)
+
+
 def pane_hash(text: str) -> str:
-    """Hash für „arbeitet oder still“: Statuszeile (#429) und flüchtiges UI-Rauschen (#624) zählen nicht mit."""
-    return hashlib.sha1(_ohne_fluechtiges_rauschen(ohne_statuszeile(text)).encode("utf-8", "replace")).hexdigest()
+    """Versionierter Hash für „arbeitet oder still“: Statuszeile (#429), flüchtiges UI-Rauschen
+    und flüchtige Zeichen (#624) zählen nicht mit."""
+    digest = hashlib.sha1(_pane_hash_text(text).encode("utf-8", "replace")).hexdigest()
+    return f"v{PANE_HASH_VERSION}:{digest}"
 
 
 #: Programmname aus ``argv[0]`` bzw. einem Befehlswort, plattformfest
@@ -1924,6 +2035,25 @@ class Aufpasser:
     def pane_text(self, ziel: str) -> str:
         return self.tmux("capture-pane", "-p", "-t", ziel)
 
+    _ORIGINAL_PANE_TEXT = pane_text
+
+    def _pane_lesen(self, ziel: str) -> tuple[str, str]:
+        """Liefert ``(klartext, farbig)`` für ein tmux-Pane (#624).
+
+        Mit ``capture-pane -e -p`` erkennt :func:`pane_hash` auch gedimmte Claude-Code-
+        Eingabevorschläge (SGR 2) über :func:`_ohne_gedimmtes`. Ist :meth:`pane_text`
+        (z. B. per ``monkeypatch.setattr(Aufpasser, "pane_text", …)``) überschrieben,
+        wird dessen Rückgabe für beide Werte genutzt.
+        """
+        if type(self).pane_text is not Aufpasser._ORIGINAL_PANE_TEXT or "pane_text" in self.__dict__:
+            text = self.pane_text(ziel)
+            return text, text
+        farbig = self.tmux("capture-pane", "-e", "-p", "-t", ziel)
+        klartext = "\n".join(z.rstrip() for z in ohne_farben(farbig).splitlines())
+        if farbig.endswith("\n"):
+            klartext += "\n"
+        return klartext, farbig
+
     def session(self, f: Fenster) -> SessionInfo | None:
         if not f.pane_pid:
             return None
@@ -2402,16 +2532,15 @@ class Aufpasser:
         if gate:
             log.info("%s: Gate läuft in diesem Fenster (%s) — kein Eingriff", f.name, gate)
             return False
-        text = self.pane_text(f.ziel)
+        text, hash_text = self._pane_lesen(f.ziel)
         status = info.status if info else None
         aktiv = arbeitet_echt(text, status) if limit_ignorieren else arbeitet(text, status)
-        if pane_hash(text) != hash_start or aktiv:
+        h_neu = pane_hash(hash_text)
+        if h_neu != hash_start or aktiv:
             log.info("%s: inzwischen aktiv — kein Eingriff", f.name)
-            e = self.stand.fenster.get(f"{f.sitzung}/{f.name}")
-            if e is not None and pane_hash(text) != hash_start:
-                e["hash"], e["seit"], e["pane_aenderung"] = pane_hash(text), self.jetzt, self.jetzt
-                if e.get("stufe", 0):
-                    e["stufe"] = 0
+            schluessel = f"{f.sitzung}/{f.name}"
+            if schluessel in self.stand.fenster and h_neu != hash_start:
+                self.eintrag(schluessel, hash_text, seit_hinweis=self._seit_hinweis(info, aktiv))
             return False
         return True
 
@@ -2434,9 +2563,10 @@ class Aufpasser:
         (``stufe`` > 0), hat der Eingriff gewirkt: Stufe 0 — kein Zeit-Reset.
 
         ``seit_hinweis`` (``mtime`` der Session-JSON bei ``status: idle``, #624)
-        gilt bei realer Uhr beim Neuanlegen und bei unverändertem Eintrag ohne jüngeren
-        Eingriff oder jüngere echte Pane-Änderung — so bleibt ``seit`` auf dem echten
-        Stille-Beginn statt bei jedem Takt oder Erstblick zurückgesetzt zu werden.
+        gilt bei realer Uhr beim Neuanlegen, bei Format-/Versionswechsel des Hashes und bei
+        unverändertem Eintrag ohne jüngeren Eingriff oder jüngere echte Pane-Änderung — so
+        bleibt ``seit`` auf dem echten Stille-Beginn statt bei Takt, Hash-Migration oder
+        flüchtigem UI-Rauschen zurückgesetzt zu werden.
         """
         h = pane_hash(text)
         hinweis = self._gueltiger_seit_hinweis(seit_hinweis)
@@ -2448,22 +2578,34 @@ class Aufpasser:
             e = vorhanden
         e.setdefault("stufe", 0)
         sperr_zeit = max(float(e.get("eingriff") or 0), float(e.get("pane_aenderung") or 0))
-        if e.get("hash") != h:
+        alt_hash = e.get("hash")
+        if alt_hash != h:
             alt_seit = float(e.get("seit") or 0)
             e["hash"] = h
-            if hinweis is not None and hinweis > alt_seit and hinweis > sperr_zeit:
-                e["seit"] = hinweis
-                e.pop("pane_aenderung", None)
+            if _pane_hash_version(alt_hash) != _pane_hash_version(h):
+                # Hash-Format-/Versionswechsel (#624): bestehenden Stand migrieren, ohne
+                # ``seit``/``pane_aenderung`` als vermeintliche Aktivität zurückzusetzen.
+                if "pane_aenderung" in e and eingabe_leer(text):
+                    e.pop("pane_aenderung", None)
+                    sperr_zeit = float(e.get("eingriff") or 0)
+                if hinweis is not None and not e["stufe"] and hinweis > sperr_zeit:
+                    e["seit"] = hinweis
+                elif not alt_seit:
+                    e["seit"] = self.jetzt
             else:
-                e["seit"] = self.jetzt
-                e["pane_aenderung"] = self.jetzt
-            if e["stufe"]:
-                log.info(
-                    "%s: Text geändert nach Eingriff (Stufe %s) — Kette zurück auf 0",
-                    schluessel,
-                    e["stufe"],
-                )
-                e["stufe"] = 0
+                if hinweis is not None and hinweis > alt_seit and hinweis > sperr_zeit:
+                    e["seit"] = hinweis
+                    e.pop("pane_aenderung", None)
+                else:
+                    e["seit"] = self.jetzt
+                    e["pane_aenderung"] = self.jetzt
+                if e["stufe"]:
+                    log.info(
+                        "%s: Text geändert nach Eingriff (Stufe %s) — Kette zurück auf 0",
+                        schluessel,
+                        e["stufe"],
+                    )
+                    e["stufe"] = 0
         elif (
             hinweis is not None
             and not e["stufe"]
@@ -2476,10 +2618,10 @@ class Aufpasser:
 
     def hashes_fortschreiben(self, sitzung: str, fenster: list[Fenster]) -> None:
         for f in fenster:
-            text = self.pane_text(f.ziel)
+            text, hash_text = self._pane_lesen(f.ziel)
             info = self.session(f)
             arbeitend = arbeitet_echt(text, info.status if info else None)
-            self.eintrag(f"{sitzung}/{f.name}", text, seit_hinweis=self._seit_hinweis(info, arbeitend))
+            self.eintrag(f"{sitzung}/{f.name}", hash_text, seit_hinweis=self._seit_hinweis(info, arbeitend))
 
     def _braucht_mensch(
         self,
@@ -2714,11 +2856,11 @@ class Aufpasser:
 
     def _platz_fenster(self, f: Fenster, repo: Path, offen: set[int]) -> int:
         schluessel = f"{f.sitzung}/{f.name}"
-        text = self.pane_text(f.ziel)
+        text, hash_text = self._pane_lesen(f.ziel)
         info = self.session(f)
         status = info.status if info else None
         arbeitend = arbeitet_echt(text, status)
-        e = self.eintrag(schluessel, text, seit_hinweis=self._seit_hinweis(info, arbeitend))
+        e = self.eintrag(schluessel, hash_text, seit_hinweis=self._seit_hinweis(info, arbeitend))
         still_min = (self.jetzt - e["seit"]) / 60
         if self._fertiges_fenster(
             f,
@@ -2864,11 +3006,11 @@ class Aufpasser:
 
     def fenster_pruefen(self, f: Fenster, repo: Path, offen: set[int]) -> None:
         schluessel = f"{f.sitzung}/{f.name}"
-        text = self.pane_text(f.ziel)
+        text, hash_text = self._pane_lesen(f.ziel)
         info = self.session(f)
         status = info.status if info else None
         echt_arbeitend = arbeitet_echt(text, status)
-        e = self.eintrag(schluessel, text, seit_hinweis=self._seit_hinweis(info, echt_arbeitend))
+        e = self.eintrag(schluessel, hash_text, seit_hinweis=self._seit_hinweis(info, echt_arbeitend))
         hash_start = e["hash"]
         still_min = (self.jetzt - e["seit"]) / 60
         ticket = echtes_ticket(f)
@@ -2952,7 +3094,7 @@ class Aufpasser:
                 return
             self.anstupsen(f.ziel, still_min)
             if not self.e.trocken:
-                nachher = self.pane_text(f.ziel)
+                _, nachher = self._pane_lesen(f.ziel)
                 e.update(hash=pane_hash(nachher))
                 e["stupser"].append(self.jetzt)
             e.update(stufe=1, eingriff=self.jetzt, seit=self.jetzt)
@@ -2998,7 +3140,8 @@ class Aufpasser:
             return False  # Kette unten entscheidet (braucht den Menschen / nächster Lauf)
         self._eingeben(f.ziel, blocker_frei_text(blocker, ticket))
         e["stupser"].append(self.jetzt)
-        e.update(hash=pane_hash(self.pane_text(f.ziel)), seit=self.jetzt)
+        _, nachher = self._pane_lesen(f.ziel)
+        e.update(hash=pane_hash(nachher), seit=self.jetzt)
         return True
 
     def wartet_umsonst(self, text: str, ticket: int | None, repo: Path) -> bool:
@@ -3202,7 +3345,7 @@ class Aufpasser:
             # Unter Last kann die Session gleich nach dem Nachweis wieder sterben;
             # dann ist das Fenster weg und der Lauf darf nicht abbrechen (#149).
             try:
-                text_neu = self.pane_text(neu.fest)
+                _, text_neu = self._pane_lesen(neu.fest)
             except RuntimeError as fehler:
                 log.error("Fenster %s nach dem Nachweis weg: %s", neu.ziel, fehler)
                 nachgewiesen = False
