@@ -921,12 +921,16 @@ def umzug_anfragen_aufraeumen(ticket: str) -> Path:
 
 
 def starte_session(cmd: list[str], umzug_datei: Path) -> tuple[int, dict | None]:
-    """Interaktiv: stdin/stdout durchreichen, dabei auf die Umzug-Datei achten (#212).
+    """Interaktiv: stdin/stdout durchreichen, dabei auf Umzug- und Fertig-Datei achten (#212, #288).
 
     Taucht ``umzug_datei`` auf, wird die Session beendet (terminate, nach 20 s kill).
+    Auf Linux achtet die Umzug-Wache zusätzlich auf ``BAU_FERTIG_DATEI`` (Stop-Hook meldet
+    geschlossenes/erledigtes Ticket → stille Session wird samt Kindern beendet).
     .cmd-Shim auf Windows: ``shell=True``-Notnagel steckt in ``umzug.starte_mit_umzug_wache``.
     """
-    return umzug.starte_mit_umzug_wache(cmd, umzug_datei)
+    fertig_roh = os.environ.get("BAU_FERTIG_DATEI", "").strip() if sys.platform != "win32" else ""
+    fertig_datei = Path(fertig_roh) if fertig_roh else None
+    return umzug.starte_mit_umzug_wache(cmd, umzug_datei, fertig_datei=fertig_datei)
 
 
 # --- Main -------------------------------------------------------------------
@@ -1254,6 +1258,14 @@ def main() -> int:
     umzug_datei = out / "umzug.json"
     os.environ["BAU_UMZUG_DATEI"] = str(umzug_datei)
     os.environ["BAU_UMZUG_ANFRAGE"] = str(umzug_anfragen_aufraeumen(ticket))
+    # Fertig-Abschluss (nur Linux, #288): Stop-Hook meldet geschlossenes/erledigtes Ticket
+    # über ``fertig.json``; bau.py beendet die stille Session dann mit Exit 0 (Fenster schließt).
+    fertig_datei: Path | None = None
+    if sys.platform != "win32" and not args.probesitz:
+        fertig_datei = out / "fertig.json"
+        os.environ["BAU_FERTIG_DATEI"] = str(fertig_datei)
+    else:
+        os.environ.pop("BAU_FERTIG_DATEI", None)
 
     if args.probesitz:
         # ``claude -p`` liest eine Pipe auf stdin bis zum Ende — ohne Terminal würde die
@@ -1320,6 +1332,15 @@ def main() -> int:
                 "Umzug nach %s bestätigt — lokale Session beendet (Exit %s).",
                 umzug_daten.get("ziel") or "?",
                 code,
+            )
+            return 0
+        fertig_daten = umzug.lies_fertig(fertig_datei) if fertig_datei is not None else None
+        if fertig_daten is not None and fertig_daten.get("beendet") is True:
+            staffel_datei.unlink(missing_ok=True)
+            log.info(
+                "Ticket #%s erledigt (%s) — Session beendet, Fenster schließt sich.",
+                ticket,
+                fertig_daten.get("grund") or "fertig",
             )
             return 0
         if runner == "agy":
