@@ -60,9 +60,7 @@ EXIT_ABWEICHUNG = 3
 EXIT_KAPUTT = 4
 NICHT_GESPEICHERT = "nicht gespeichert – `--schreiben` fehlt"
 _VERBOTENES_PLUGIN = pipeline_vorlage._VERBOTENES_PLUGIN
-_STANDARD_SKILL_REPO = (
-    config.OEFFENTLICHE_SLUGS[0] if config.OEFFENTLICHE_SLUGS else "Shavy72/claude-skill-to-spawn"
-)
+_STANDARD_SKILL_REPO = config.OEFFENTLICHE_SLUGS[0] if config.OEFFENTLICHE_SLUGS else ""
 
 # Schlüssel → Anzeige, feste Reihenfolge.
 KATEGORIEN: dict[str, str] = {
@@ -1091,17 +1089,11 @@ def _pruefe_kein_cache_plugin(k: BereitschaftsKontext) -> tuple[bool, str, str]:
 
 
 def _workflow_nutzt_stufe01(text: str) -> bool:
-    return (
-        "pipeline-stufe-0-1.yml" in text
-        or ("workflow_call:" in text and "stufe-0:" in text and "stufe-1:" in text)
-    )
+    return "pipeline-stufe-0-1.yml" in text or ("workflow_call:" in text and "stufe-0:" in text and "stufe-1:" in text)
 
 
 def _workflow_nutzt_stufe2(text: str) -> bool:
-    return (
-        "pipeline-stufe-2.yml" in text
-        or ("workflow_call:" in text and "stufe-2:" in text)
-    )
+    return "pipeline-stufe-2.yml" in text or ("workflow_call:" in text and "stufe-2:" in text)
 
 
 def _pruefe_test_schutz_ci(k: BereitschaftsKontext) -> tuple[bool, str, str]:
@@ -1153,8 +1145,7 @@ def _pruefe_pipeline_vorlage(k: BereitschaftsKontext) -> tuple[bool, str, str]:
         )
     if k.mit_staging:
         staging_an = any(
-            re.search(r"mit-staging-app\s*:\s*true", t.lower()) or "inputs.mit-staging-app" in t
-            for t in stufe2_texte
+            re.search(r"mit-staging-app\s*:\s*true", t.lower()) or "inputs.mit-staging-app" in t for t in stufe2_texte
         )
         if not staging_an:
             return (
@@ -1169,6 +1160,8 @@ def _regele_pipeline_vorlage(k: BereitschaftsKontext) -> tuple[bool, str]:
     """Legt fehlende Anschluss-Workflows für Stufe 0+1 und Stufe 2 risikoarm neu an (überschreibt nie)."""
     wf_ordner = k.repo / ".github" / "workflows"
     ist_skill_repo = (k.repo / "to_spawn" / "pruef" / "pipeline_vorlage.py").is_file()
+    if not ist_skill_repo and not _STANDARD_SKILL_REPO:
+        return False, "Standard-Skill-Repo fehlt (config.OEFFENTLICHE_SLUGS leer)"
     basis_ref = "./.github/workflows" if ist_skill_repo else f"{_STANDARD_SKILL_REPO}/.github/workflows"
     suffix = "" if ist_skill_repo else "@main"
     angelegt: list[str] = []

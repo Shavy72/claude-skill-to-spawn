@@ -67,9 +67,7 @@ def _uebungs_repo(
             "komplett": "pytest -q tests",
         },
         "live": {"ohne": True},
-        "staging": {"url": "http://127.0.0.1:18502/", "ohne": False}
-        if mit_staging
-        else {"url": "", "ohne": True},
+        "staging": {"url": "http://127.0.0.1:18502/", "ohne": False} if mit_staging else {"url": "", "ohne": True},
         "staging_start": "python skripte/ausrollen.py staging" if mit_staging else "",
     }
     (repo / ".to-spawn").mkdir()
@@ -127,7 +125,9 @@ def _heim(tmp_path: Path) -> Path:
     return home
 
 
-def _cli(repo: Path, home: Path, *args: str, env_extra: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+def _cli(
+    repo: Path, home: Path, *args: str, env_extra: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["HOME"] = str(home)
     env["USERPROFILE"] = str(home)
@@ -214,8 +214,12 @@ def test_repo_art_kommt_aus_425_profil(tmp_path: Path) -> None:
     repo_mit = _uebungs_repo(tmp_path, name="mit-app", mit_staging=True, sauber=True)
     repo_ohne = _uebungs_repo(tmp_path, name="ohne-app", mit_staging=False, sauber=True)
 
-    inv_mit = inventur.erstelle(repo_mit, claude_home=home / ".claude", home_json=home / ".claude.json", home=home, environ={"PATH": ""})
-    inv_ohne = inventur.erstelle(repo_ohne, claude_home=home / ".claude", home_json=home / ".claude.json", home=home, environ={"PATH": ""})
+    inv_mit = inventur.erstelle(
+        repo_mit, claude_home=home / ".claude", home_json=home / ".claude.json", home=home, environ={"PATH": ""}
+    )
+    inv_ohne = inventur.erstelle(
+        repo_ohne, claude_home=home / ".claude", home_json=home / ".claude.json", home=home, environ={"PATH": ""}
+    )
 
     assert inv_mit.projekt["repo_profil"]["repo_art"] == "mit-staging"
     assert inv_mit.projekt["repo_profil"]["mit_staging"] is True
