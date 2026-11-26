@@ -1092,6 +1092,7 @@ def _session_aktiv_nach_stop(prozess_pid: int, daten: dict[str, Any]) -> bool:
                 errors="replace",
                 timeout=5,
                 check=False,
+                **prozessbaum.fensterlos(),
             )
             if erg.returncode == 0 and aufpasser.arbeits_marker_aktiv(erg.stdout):
                 return True

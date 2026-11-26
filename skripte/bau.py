@@ -924,7 +924,7 @@ def starte_session(cmd: list[str], umzug_datei: Path) -> tuple[int, dict | None]
     """Interaktiv: stdin/stdout durchreichen, dabei auf Umzug- und Fertig-Datei achten (#212, #288).
 
     Taucht ``umzug_datei`` auf, wird die Session beendet (terminate, nach 20 s kill).
-    Auf Linux achtet die Wache zusätzlich auf ``BAU_FERTIG_DATEI`` (Stop-Hook meldet
+    Auf Linux achtet die Umzug-Wache zusätzlich auf ``BAU_FERTIG_DATEI`` (Stop-Hook meldet
     geschlossenes/erledigtes Ticket → stille Session wird samt Kindern beendet).
     .cmd-Shim auf Windows: ``shell=True``-Notnagel steckt in ``umzug.starte_mit_umzug_wache``.
     """
