@@ -697,8 +697,11 @@ def _befehlskern(woerter: list[str]) -> list[str]:
 
 
 def _name(wort: str) -> str:
-    """Befehlsname ohne Pfad und ``.exe`` (``/usr/bin/gh`` → ``gh``)."""
-    return wort.rsplit("/", 1)[-1].removesuffix(".exe")
+    """Befehlsname ohne Pfad, Windows-Endpunkt und ``.exe`` (``/usr/bin/gh`` → ``gh``, ``C:\\…\\cmd.exe`` → ``cmd``)."""
+    basis = wort.replace("\\", "/").rsplit("/", 1)[-1]
+    if basis not in (".", ".."):
+        basis = basis.rstrip(".") or basis
+    return basis[:-4] if basis.lower().endswith(".exe") else basis
 
 
 def _shell_text(args: list[str]) -> str | None:
@@ -872,7 +875,7 @@ def ja_aufrufe(befehl: str) -> bool:
         return (
             not _ja_rumpf_ok(teile, ersetzung=False)
             or _ja_teile_sperren(teile, suchtext)
-            or _ja_traeger_sperren(alle + teile)
+            or _ja_traeger_sperren(alle, teile)
         )
     except _JaTreffer:
         return True
@@ -976,7 +979,7 @@ def _ja_zerlegen(
                 i += 1
             continue
         elif text.startswith("<<<", i):
-            puffer.append("<<<")
+            puffer.append(" <<< ")
             i += 3
             continue
         elif text.startswith("<<", i):
@@ -985,6 +988,13 @@ def _ja_zerlegen(
             continue
         elif zeichen == "&" and puffer and puffer[-1] in ("<", ">"):
             puffer.append(zeichen)  # ``2>&1``, ``>&2``, ``<&3``: Deskriptor-Kopie, kein Trenner (Runde 5)
+            i += 1
+            continue
+        elif zeichen == ">":
+            vor = "".join(puffer).rsplit(None, 1)[-1] if puffer and puffer[-1] not in " \t" else ""
+            if vor and vor[-1] not in "<>&" and not vor.isdigit():
+                puffer.append(" ")
+            puffer.append(zeichen)
             i += 1
             continue
         elif zeichen in _TRENNER:
@@ -1107,22 +1117,41 @@ def _ja_teile_sperren(teile: list[_JaTeil], befehl: str) -> bool:
             fluss = fluss or teil.eingabe
             continue
         zufluss = teil.eingabe or (fluss and "|" in trenner)
-        if _ja_im_einfachen(woerter + (["ja"] if zufluss else []), befehl):
+        kern_roh = _befehlskern(teil.text.split())
+        roh_befehl = kern_roh[0].strip("'\"") if kern_roh and "\\" in kern_roh[0] else ""
+        if _ja_im_einfachen(woerter + (["ja"] if zufluss else []), befehl, roh_befehl=roh_befehl):
             return True
         fluss, trenner = zufluss or any(_ja_wort_in(w) for w in roh), []
     return False
 
 
-def _ja_traeger_sperren(alle: list[_JaTeil]) -> bool:
+def _ja_ist_relatives_ziel(ziel: str) -> bool:
+    """Datei-Schreibziel relativ zum aktuellen Ordner (kein ``/dev/null``, kein ``>&2``, kein absoluter Pfad)."""
+    if _JA_KEINE_DATEI.fullmatch(ziel):
+        return False
+    return not (ziel.startswith(("/", "~/")) or bool(re.match(r"^[A-Za-z]:[/\\]", ziel)))
+
+
+def _ja_ist_text_git(roh: list[str]) -> bool:
+    """``git``/``gh``-Text-Unterbefehl (:data:`_JA_TEXT_UNTERBEFEHLE`) ohne Präfix — nur der darf
+    seine eigene Ausgabe in eine ungefährliche Datei umleiten (#621)."""
+    woerter, _, _ = _ja_umleitungen(roh)
+    if not woerter or woerter[0] not in ("git", "gh"):
+        return False
+    return _ja_unterbefehl(woerter, woerter[0])[0] in _JA_TEXT_UNTERBEFEHLE
+
+
+def _ja_traeger_sperren(innere: list[_JaTeil], teile: list[_JaTeil]) -> bool:
     """Träger-Regel (PR 610, Runde 2): Gibt ein Teil das Wort aus oder schreibt es (:func:`_ja_traeger`),
     muss JEDER Teil des ganzen Befehls frei sein (:func:`_ja_teil_frei`) — gleich, wie er verbunden ist
     (Pipe, ``;``, ``&&``, ``&``, Gruppe, Schleife, Subshell, Prozess-Ersetzung). So braucht kein Weg der
     Ausgabe zu einem ausführenden Programm (Umleitung in eine Datei, Deskriptor, FIFO, Gruppe) eine eigene
-    Erkennung. ``alle`` = alle einfachen Befehle, auch die aus Ersetzungen; ein reines
+    Erkennung. ``innere`` = Teile aus Ersetzungen (``$(…)``, Backticks, ``<(…)``); ein reines
     ``$(cat <<'WORT' …)`` fehlt darin — seine Ausgabe prüft der Empfänger über den Platzhalter.
 
     Wert-Teil (Runde 3): steht das Wort nur in Text-Werten (``git commit -m``), ist der Teil selbst frei,
     aber jeder andere Teil muss es auch sein — sonst liest ihn ``git log … | awk`` zurück und führt ihn aus."""
+    alle = innere + teile
     zerlegt: list[tuple[_JaTeil, list[str]]] = []
     for teil in alle:
         try:
@@ -1134,10 +1163,26 @@ def _ja_traeger_sperren(alle: list[_JaTeil]) -> bool:
     strikt = any(_ja_traeger(roh, teil.eingabe) for teil, roh in zerlegt)
     if not strikt and not any(_ja_wort_in(w) for _, roh in zerlegt for w in roh):
         return False
-    # Runde 4: schreibt ein Teil in eine Datei, kann sie Konfiguration für git/gh sein (``b/config``).
-    # Runde 5: auch ohne Träger — ``git log --format=%b > b/config`` liest das Wort aus dem Wert-Teil zurück.
-    schreibt = any(_ja_schreibt(roh) for _, roh in zerlegt)
-    return not all(_ja_teil_frei(roh, schreibt=schreibt) or (not strikt and _ja_wert_teil(roh)) for _, roh in zerlegt)
+    # Nach ``cd`` ist jedes relative Schreib-Ziel mehrdeutig (z. B. ``cd .git && … >> config``).
+    hat_cd = any((woerter := _ja_umleitungen(roh)[0]) and woerter[0] == "cd" for _, roh in zerlegt)
+    if hat_cd and any(_ja_ist_relatives_ziel(z) for _, roh in zerlegt for z in _ja_umleitungen(roh)[2]):
+        return True
+    # Runde 4/5: schreibt ein Teil in eine Datei, kann sie Konfiguration für git/gh sein (``b/config``).
+    # #621: nur eine einzelne eigene Ausgabe-Umleitung eines git/gh-Text-Unterbefehls
+    # (``git log … > ~/tmp-bau/x.txt``) ohne Ersetzungen (``innere``), ohne Schleife und ohne ``&``/``|``
+    # bleibt frei; jeder andere Fall bleibt fail-closed wie main.
+    schreib_indices = [idx for idx, (_, roh) in enumerate(zerlegt) if _ja_schreibt(roh)]
+    unsichere_folge = (
+        bool(innere)
+        or any(teil.trenner in _JA_NEBENLAEUFIG for teil in alle)
+        or any(w in _JA_SCHLEIFE for _, roh in zerlegt for w in roh)
+    )
+    for idx, (_, roh) in enumerate(zerlegt):
+        eigene_umleitung = not unsichere_folge and schreib_indices == [idx] and _ja_ist_text_git(roh)
+        schreibt_hier = bool(schreib_indices) and not eigene_umleitung
+        if not (_ja_teil_frei(roh, schreibt=schreibt_hier) or (not strikt and _ja_wert_teil(roh))):
+            return True
+    return False
 
 
 def _ja_wert_teil(roh: list[str]) -> bool:
@@ -1164,6 +1209,10 @@ _JA_HARMLOS = {"cd", "pwd", "true", "false", ":", "mkdir", "test", "["}
 #: Shell-Schlüsselwörter, die nur Gruppen/Bedingungen öffnen oder schließen — der Befehl dahinter zählt.
 #: ``for``, ``case``, ``select``, ``function``, ``exec``, ``coproc`` fehlen bewusst: dort sperrt der Teil.
 _JA_KLAMMERWORTE = {"{", "}", "!", "do", "done", "then", "else", "elif", "fi", "if", "while", "until", "time"}
+#: Schlüsselwörter für Schleifen — dort kann ein späterer Schreib-Teil vor einem früheren git/gh laufen (#621).
+_JA_SCHLEIFE = {"while", "until", "do", "done"}
+#: Trenner für nebenläufige Ausführung — ein späterer Schreib-Teil kann mit git/gh rennen (#621).
+_JA_NEBENLAEUFIG = {"&", "|"}
 #: Umleitungs-Wort (``>``, ``>>f``, ``2>``, ``&>``, ``<<<`` …); Gruppe 1 = angeklebtes Ziel.
 _JA_UMLEITUNG = re.compile(r"(?:\d+|&)?(?:>>|>\||>&|<&|<<<|<>|>|<)(.*)", re.S)
 #: Umleitung auf einen eigenen Deskriptor (``3>``, ``>&4``) — Weg zu ``exec``/``coproc``-Empfängern.
@@ -1178,37 +1227,76 @@ _JA_XARGS_OHNE_WERT = {"-0", "-r", "-t", "-x", "--null", "--no-run-if-empty", "-
 _JA_XARGS_MIT_WERT = {"-I", "-n", "-L", "-P", "-s", "-d", "-E", "-a"}
 _JA_XARGS_LANG = {"--max-args", "--max-lines", "--max-procs", "--max-chars", "--delimiter", "--arg-file", "--replace"}
 _JA_FIND_SCHREIBT = ("-fprint", "-fls")
-#: Git-Konfiguration: ``textconv``, ``core.pager``, Attribute starten Programme beim nächsten git-Befehl.
-_JA_GIT_DATEIEN = {".gitconfig", ".gitattributes"}
+#: Git-/gh-Konfiguration: ``textconv``, ``core.pager``, Attribute starten Programme beim nächsten git/gh-Befehl.
+#: Auch nackte Dateinamen (``config``, ``config.yml``, ``attributes``, ``HEAD``) für Arbeitsordner ``.git``/``gh``.
+_JA_GIT_DATEIEN = {".gitconfig", ".gitattributes", "config", "config.yml", "hosts.yml", "attributes", "head"}
+#: Git-Hook-Namen — verhindern Schreiben bei Arbeitsordner ``.git/hooks`` (#621).
+_JA_GIT_HOOKS = {
+    *("applypatch-msg", "pre-applypatch", "post-applypatch", "pre-commit", "pre-merge-commit"),
+    *("prepare-commit-msg", "commit-msg", "post-commit", "pre-rebase", "post-checkout", "post-merge"),
+    *("pre-push", "pre-receive", "update", "proc-receive", "post-receive", "post-update"),
+    *("reference-transaction", "push-to-checkout", "pre-auto-gc", "post-rewrite"),
+    *("sendemail-validate", "fsmonitor-watchman", "post-index-change"),
+}
 #: Schreib-Ziel, das erst die Shell festlegt (Glob, Klammer, Variable, Ersetzung, ``~user``/``~+``).
 _JA_ZIEL_ERWEITERUNG = re.compile(r"[*?\[{$`]|^~(?!/|$)")
 #: git-Unterbefehle ohne Programmstart, frei neben einem Wert-Teil (Runde 3).
 _JA_GIT_FREI = {("git", "add"), ("git", "push"), ("git", "status"), ("git", "fetch")}
 #: Lange Schalter, die ein Programm starten — auch abgekürzt (``--up=sh``), git nimmt eindeutige Präfixe.
 _JA_GIT_STARTER = ("--upload-pack", "--receive-pack", "--exec")
+#: Shell-Erweiterungen oder Remote-Helper-Trenner ``::`` in git-Argumenten (fail-closed, #621).
+_JA_GIT_UNSICHER = re.compile(r"[$`{]|::")
+#: Für ``git fetch``/``push`` sperren auch Globs (können zu ``ext::`` oder Schaltern erweitern, #621).
+_JA_GIT_GLOB = re.compile(r"[*?\[]")
+#: Schalter mit Shell-Erweiterung (``--ou${X}tput=…``, ``{-w,5}``) — fail-closed (#621).
+_JA_SCHALTER_ERWEITERUNG = re.compile(r"[$`{*?\[]")
 
 
 def _ja_startdatei(pfad: str) -> bool:
-    """``pfad`` (schon ohne Quotes) ist eine Datei, die später von selbst läuft oder git steuert;
+    """``pfad`` (schon ohne Quotes) ist eine Datei, die später von selbst läuft oder git/gh steuert;
     normalisiert (``.git//hooks``, ``a/../.bashrc``)."""
     pfad = posixpath.normpath(pfad.replace("\\", "/")).lower()
     basis = _ja_basis(pfad)
     return (
         basis in _JA_STARTDATEIEN
         or basis in _JA_GIT_DATEIEN
+        or basis in _JA_GIT_HOOKS
         or pfad.endswith("profile.ps1")
         or "/.git/" in f"/{pfad}/"
         or "/.config/git/" in f"/{pfad}/"
+        or "/.config/gh/" in f"/{pfad}/"
     )
 
 
-def _ja_git_frei(woerter: list[str]) -> bool:
-    """``git add|push|status|fetch`` ohne das Wort und ohne Programm-Schalter (:data:`_JA_GIT_STARTER`)."""
+def _ja_git_frei(woerter: list[str], unter: tuple[str, ...]) -> bool:
+    """``git add|push|status|fetch`` ohne das Wort, ohne Programm-Schalter (:data:`_JA_GIT_STARTER`),
+    ohne ``::``-Remote-Helper (``ext::`` …) und ohne Shell-Erweiterungen (fail-closed, #621)."""
+    netz = unter in (("git", "fetch"), ("git", "push"))
     for wort in woerter:
-        lang = wort.split("=", 1)[0]
-        if _ja_wort_in(wort) or (len(lang) > 2 and any(s.startswith(lang) for s in _JA_GIT_STARTER)):
+        lang, _, wert = wort.partition("=")
+        lang_klein = lang.lower()
+        if (
+            _ja_wort_in(wort)
+            or (len(lang_klein) > 2 and any(s.startswith(lang_klein) for s in _JA_GIT_STARTER))
+            or _JA_GIT_UNSICHER.search(wort)
+            or (netz and _JA_GIT_GLOB.search(wort))
+            or lang_klein.startswith("ext::")
+            or wert.lower().startswith("ext::")
+        ):
             return False
     return True
+
+
+def _positions_args(args: list[str], *, minus_zaehlt: bool = False) -> list[str]:
+    """Datei-/Positions-Argumente: hinter ``--`` zählt jedes Wort, auch mit führendem ``-`` (#621)."""
+    ergebnis: list[str] = []
+    nach_trenner = False
+    for wort in args:
+        if not nach_trenner and wort == "--":
+            nach_trenner = True
+        elif nach_trenner or not wort.startswith("-") or (minus_zaehlt and wort == "-"):
+            ergebnis.append(wort)
+    return ergebnis
 
 
 def _ja_umleitungen(roh: list[str]) -> tuple[list[str], list[str], list[str]]:
@@ -1229,7 +1317,7 @@ def _ja_umleitungen(roh: list[str]) -> tuple[list[str], list[str], list[str]]:
     while woerter and woerter[0] in _JA_KLAMMERWORTE:
         woerter = woerter[1:]
     if woerter and woerter[0] == "tee":
-        schreib_ziele += [w for w in woerter[1:] if not w.startswith("-")]
+        schreib_ziele += _positions_args(woerter[1:])
     return woerter, ziele, schreib_ziele
 
 
@@ -1243,8 +1331,14 @@ def _ja_schreibt(roh: list[str]) -> bool:
 
 
 def _ja_gh_web(woerter: list[str]) -> bool:
-    """``gh … --web``/``-w`` (auch in einem Bündel kurzer Schalter): startet den Browser aus der Konfiguration."""
-    return any(w == "--web" or w.startswith("--web=") or re.fullmatch(r"-[A-Za-z]*w[A-Za-z]*", w) for w in woerter)
+    """``gh … --web``/``-w`` (auch gebündelt oder mit Shell-Erweiterung): startet den Browser."""
+    return any(
+        w == "--web"
+        or w.startswith("--web=")
+        or re.fullmatch(r"-[A-Za-z]*w[A-Za-z]*", w)
+        or (w[:1] in ("-", "{") and _JA_SCHALTER_ERWEITERUNG.search(w))
+        for w in woerter
+    )
 
 
 def _ja_teil_frei(roh: list[str], *, schreibt: bool = False) -> bool:
@@ -1267,7 +1361,7 @@ def _ja_teil_frei(roh: list[str], *, schreibt: bool = False) -> bool:
     name = woerter[0]
     if name == "printf" and len(woerter) > 1 and woerter[1][:1] in "-$`*?[{":
         return False  # ``printf -v 'x[$(…)]'``: bash wertet den Array-Index aus
-    if name == "uniq" and len([w for w in woerter[1:] if not w.startswith("-")]) > 1:
+    if name == "uniq" and len(_positions_args(woerter[1:], minus_zaehlt=True)) > 1:
         return False  # zweites Datei-Argument ist die Ausgabe-Datei
     if name == "rg":
         return not any(
@@ -1278,18 +1372,18 @@ def _ja_teil_frei(roh: list[str], *, schreibt: bool = False) -> bool:
     if name == "find":
         return not any(w in _JA_FIND_START or w.startswith(_JA_FIND_SCHREIBT) for w in woerter)
     if name == "xargs":
-        return _ja_xargs_frei(woerter)
+        return _ja_xargs_frei(woerter, schreibt=schreibt)
     if name in ("git", "gh"):
         if schreibt or (name == "gh" and _ja_gh_web(woerter)):
             return False
         unter, ab = _ja_unterbefehl(woerter, name)
         if unter in _JA_GIT_FREI:
-            return _ja_git_frei(woerter)
+            return _ja_git_frei(woerter, unter)
         return unter in _JA_TEXT_UNTERBEFEHLE and not _ja_git_ausgabe_weg(unter, woerter[ab:])
     return False
 
 
-def _ja_xargs_frei(woerter: list[str]) -> bool:
+def _ja_xargs_frei(woerter: list[str], *, schreibt: bool = False) -> bool:
     """``xargs`` nur mit bekannten Schaltern; das Ziel (ohne Ziel: ``echo``) muss selbst frei sein.
     Ein unbekannter Schalter sperrt — sein Wert könnte sonst für das Ziel gehalten werden.
     Ziel ``tee`` sperrt (Runde 5): es schreibt in Dateien, die die Schreib-Prüfung hier nicht sieht."""
@@ -1306,7 +1400,7 @@ def _ja_xargs_frei(woerter: list[str]) -> bool:
             i += 1
         else:
             return False
-    return i >= len(woerter) or (woerter[i] != "tee" and _ja_teil_frei(woerter[i:]))
+    return i >= len(woerter) or (woerter[i] != "tee" and _ja_teil_frei(woerter[i:], schreibt=schreibt))
 
 
 def _ja_wort_in(wort: str) -> bool:
@@ -1314,29 +1408,34 @@ def _ja_wort_in(wort: str) -> bool:
     return bool(_JA_WORT.search(wort) or _JA_GEKLEBT.match(wort))
 
 
-def _ja_im_einfachen(woerter: list[str], befehl: str) -> bool:
-    """Ein einfacher Befehl ab dem Befehlsnamen; ``befehl`` = ganzer Text für Interpreter-Fälle."""
+def _ja_im_einfachen(woerter: list[str], befehl: str, *, roh_befehl: str = "") -> bool:
+    """Ein einfacher Befehl ab dem Befehlsnamen; ``befehl`` = ganzer Text für Interpreter-Fälle.
+    ``roh_befehl`` erhält Windows-Pfade mit einfachem Backslash, die ``shlex.split`` sonst verliert."""
     name = _name(woerter[0].lower()).removesuffix(".cmd")
-    if name == "cmd" and _JA_CMD.search(re.sub(r"['\"^]", "", befehl)):
+    namen = {name}
+    if roh_befehl:
+        namen.add(_name(roh_befehl.lower()).removesuffix(".cmd"))
+    if "cmd" in namen and _JA_CMD.search(re.sub(r"['\"^]", "", befehl)):
         return True
-    if name == "eval" and ja_aufrufe(" ".join(woerter[1:])):
+    if "eval" in namen and ja_aufrufe(" ".join(woerter[1:])):
         return True
-    if name in _SHELLS and (text := _shell_text(woerter[1:])) is not None and ja_aufrufe(text):
+    if namen & _SHELLS and (text := _shell_text(woerter[1:])) is not None and ja_aufrufe(text):
         return True
-    if name in _JA_WIN_SHELLS and _ja_in_win_shell(woerter[1:]):
+    if namen & _JA_WIN_SHELLS and _ja_in_win_shell(woerter[1:]):
         return True
-    if name == "rg" and _rg_vorfilter_ja(woerter):
+    if "rg" in namen and _rg_vorfilter_ja(woerter):
         return True
     if (
         _ist_ja_name(woerter[0])
+        or (roh_befehl and _ist_ja_name(roh_befehl))
         or "nutzer-antwort" in woerter
         or (any(_name(w) == "to_spawn.py" for w in woerter[:3]) and JA_UNTERBEFEHLE & set(woerter))
         or _ja_als_argument(woerter)
     ):
         return True
-    if (name in _JA_INTERPRETER or _JA_DYNAMISCH.search(woerter[0])) and _ja_im_text(befehl):
+    if (namen & _JA_INTERPRETER or _JA_DYNAMISCH.search(woerter[0])) and _ja_im_text(befehl):
         return True
-    if name == "xargs":
+    if "xargs" in namen:
         i = 1
         while i < len(woerter) and woerter[i].startswith("-"):
             i += 2 if woerter[i] in _JA_SCHALTER_MIT_WERT else 1
@@ -1388,7 +1487,10 @@ def _ja_unterbefehl(woerter: list[str], name: str) -> tuple[tuple[str, ...], int
 
 def _ja_git_ausgabe_weg(unter: tuple[str, ...], rest: list[str]) -> bool:
     """Ein Text-Unterbefehl gibt seine Ausgabe an ein Programm oder eine Datei (``git grep -O``/
-    ``--open-files-in-pager``, ``git log --output``, auch abgekürzt) — dann ist er kein Text-Befehl."""
+    ``--open-files-in-pager``, ``git log --output``, auch abgekürzt oder mit Shell-Erweiterung) —
+    dann ist er kein Text-Befehl."""
+    if any(w[:1] in ("-", "{") and _JA_SCHALTER_ERWEITERUNG.search(w) for w in rest):
+        return True
     if unter == ("git", "grep"):
         return any(w.startswith("--o") or re.match(r"-[^-]*O", w) for w in rest)
     return unter[0] == "git" and any(w.startswith("--ou") for w in rest)
@@ -1415,19 +1517,23 @@ _JA_TEXT_WERTE: dict[tuple[str, ...], frozenset[str]] = {
         for unter in ("create", "comment", "edit")
     },
 }
+#: Datei-Endungen, unter denen der Freigabe-Befehl (auch unter Windows) ausführbar ist (#591, #621).
+_JA_ENDUNGEN = ("", ".cmd", ".bat", ".ps1", ".exe")
+_JA_NAMEN = frozenset(f"ja{e}" for e in _JA_ENDUNGEN)
+_JA_ENDUNG_RE = rf"(?:\.(?:{'|'.join(e[1:] for e in _JA_ENDUNGEN if e)}))?\.*"
 #: Das Wort an eine Kurz-Schalter-Gruppe geklebt (``-x'ja 5'`` → ``-xja 5``).
-_JA_GEKLEBT = re.compile(r"-[A-Za-z0-9]+?ja(?:\.cmd)?(?![\w.-])", re.IGNORECASE)
+_JA_GEKLEBT = re.compile(rf"-[A-Za-z0-9]+?ja{_JA_ENDUNG_RE}(?![\w.-])", re.IGNORECASE)
 #: Programme, die Befehle aus Text, Datei oder Eingabe lesen (``echo 'ja 5' | sh``, ``bash <(…)``).
 _JA_INTERPRETER = {
     *_SHELLS,
     *("ksh", "ash", "fish", "busybox", "source", ".", "eval", "wsl"),
     *("python", "python3", "py", "node", "perl", "ruby", "php", "powershell", "pwsh", "cmd"),
 }
-#: ``ja``/``ja.cmd`` als eigenes Wort (auch in ``X=ja``, ``a,ja``, ``{ja,}``), Groß/klein egal.
-_JA_WORT = re.compile(r"(?<![\w.-])ja(?:\.cmd)?(?![\w.-])", re.IGNORECASE)
+#: ``ja`` (auch mit Endung aus :data:`_JA_ENDUNGEN`) als eigenes Wort, Groß/klein egal.
+_JA_WORT = re.compile(rf"(?<![\w.-])ja{_JA_ENDUNG_RE}(?![\w.-])", re.IGNORECASE)
 #: Unter ``cmd`` zählt das Wort auch an einen Schalter geklebt (``/cja``, ``//c"ja 5"``, ``/Kja``):
 #: cmd trennt ``/c`` nicht per Leerzeichen ab. Geprüft auf dem Text ohne Quotes und ``^``.
-_JA_CMD = re.compile(r"(?:^|[^\w.-]|/[a-z]+)ja(?:\.cmd)?(?![\w.-])", re.IGNORECASE)
+_JA_CMD = re.compile(rf"(?:^|[^\w.-]|/[a-z]+)ja{_JA_ENDUNG_RE}(?![\w.-])", re.IGNORECASE)
 #: Befehlsname, den erst die Shell festlegt (Variable, Ersetzung, Glob, Klammern).
 _JA_DYNAMISCH = re.compile(r"[$`*?\[{]")
 #: ANSI-C-Quote ``$'…'``: bash löst ``\\x6a``, ``\\152`` … auf, shlex nicht.
@@ -1457,11 +1563,12 @@ def _klammer_varianten(wort: str, tiefe: int = 0) -> list[str]:
 
 
 def _ist_ja_name(wort: str) -> bool:
-    """Befehlsname ist ``ja``/``ja.cmd`` — Groß/klein egal, auch über Klammern oder Glob (``j?``)."""
+    """Befehlsname ist ``ja`` (auch mit Endung aus :data:`_JA_ENDUNGEN`) — Groß/klein egal,
+    auch über Klammern oder Glob (``j?``)."""
     for variante in _klammer_varianten(wort):
-        basis = _ja_basis(variante).lower().removesuffix(".exe")
-        if basis in ("ja", "ja.cmd") or (
-            re.search(r"[*?\[]", basis) and any(fnmatch.fnmatchcase(z, basis) for z in ("ja", "ja.cmd"))
+        basis = _ja_basis(variante).lower()
+        if basis in _JA_NAMEN or (
+            re.search(r"[*?\[]", basis) and any(fnmatch.fnmatchcase(z, basis) for z in _JA_NAMEN)
         ):
             return True
     return False
@@ -1470,16 +1577,17 @@ def _ist_ja_name(wort: str) -> bool:
 #: Wörter, hinter denen das nächste Wort ein Befehl/Skript ist (``bash ja``, ``xargs ja``, ``. ja``).
 _JA_STARTER = {"bash", "sh", "zsh", "dash", "source", ".", "xargs", "python", "python3", "env", "command"}
 #: Grobe Erkennung auf Roh-Text, wenn die Prüfung ausfällt (kaputte Eingabe, Ausnahme).
-_JA_GROB = re.compile(r"[/\\]ja(\.cmd)?(?![\w.-])|nutzer-antwort|to_spawn\.py\s+ja\b")
+_JA_GROB = re.compile(rf"[/\\]ja{_JA_ENDUNG_RE}(?![\w.-])|nutzer-antwort|to_spawn\.py\s+ja\b", re.IGNORECASE)
 
 
 #: Schalter von xargs/python/env …, deren nächstes Wort sein Wert ist (``xargs -n 1 ja``, ``python -X utf8 …``).
 _JA_SCHALTER_MIT_WERT = {"-I", "-n", "-L", "-P", "-s", "-d", "-E", "-X", "-W", "-u", "-C"}
-_JA_WIN_PFAD = re.compile(r"\\ja(\.cmd)?(?![\w.-])", re.IGNORECASE)
+_JA_WIN_PFAD = re.compile(rf"\\ja{_JA_ENDUNG_RE}(?![\w.-])", re.IGNORECASE)
 
 
 def _ja_basis(wort: str) -> str:
-    return wort.replace("\\", "/").rsplit("/", 1)[-1]
+    basis = wort.replace("\\", "/").rsplit("/", 1)[-1]
+    return basis.rstrip(".") or basis if basis not in (".", "..") else basis
 
 
 def _ja_als_argument(woerter: list[str]) -> bool:
@@ -1497,13 +1605,13 @@ def _ja_als_argument(woerter: list[str]) -> bool:
         return woerter[i] if i < len(woerter) else ""
 
     for i, wort in enumerate(woerter):
-        if i and _ja_basis(wort) in ("ja", "ja.cmd") and ("/" in wort or "\\" in wort):
+        if i and _ja_basis(wort).lower() in _JA_NAMEN and ("/" in wort or "\\" in wort):
             return True
         # ``.``/``source`` sind nur als Befehlsname Starter — als Argument (``find . -name …``) ein Ordner.
-        starter = _name(wort) in _JA_STARTER and (i == 0 or wort not in (".", "source"))
-        if starter and _ja_basis(ziel(i + 1)) in ("ja", "ja.cmd"):
+        starter = _name(wort.lower()) in _JA_STARTER and (i == 0 or wort not in (".", "source"))
+        if starter and _ja_basis(ziel(i + 1)).lower() in _JA_NAMEN:
             return True
-        if _ja_basis(wort) == "to_spawn.py" and ziel(i + 1) in JA_UNTERBEFEHLE:
+        if _ja_basis(wort).lower() == "to_spawn.py" and ziel(i + 1) in JA_UNTERBEFEHLE:
             return True
     return False
 
@@ -1572,7 +1680,7 @@ def _rg_vorfilter_ja(woerter: list[str]) -> bool:
     for k, wort in enumerate(woerter):
         if (wort.startswith("--pre") and not wort.startswith("--pre-")) or wort.startswith("--hostname-bin"):
             wert = wort.split("=", 1)[1] if "=" in wort else (woerter[k + 1] if k + 1 < len(woerter) else "")
-            if ja_aufrufe(wert) or _ja_basis(wert) in ("ja", "ja.cmd"):
+            if ja_aufrufe(wert) or _ja_basis(wert).lower() in _JA_NAMEN:
                 return True
     return False
 
@@ -1589,13 +1697,15 @@ def _ja_in_win_shell(args: list[str]) -> bool:
     Befehlsanfang verdecken (fail-closed; ``-Command Write-Host ja`` ohne Quotes sperrt mit).
     """
     for k, arg in enumerate(args):
-        schalter = arg.lstrip("-/").lower()
+        teile = re.split(r"[:=]", arg, maxsplit=1)
+        schalter = teile[0].lstrip("-/").lower()
         if arg[:1] in ("-", "/") and schalter and (schalter == "ec" or "encodedcommand".startswith(schalter)):
+            roh_b64 = teile[1] if len(teile) > 1 else (args[k + 1] if k + 1 < len(args) else "")
             try:
-                text = base64.b64decode(args[k + 1], validate=True).decode("utf-16-le")
-            except (IndexError, ValueError):
+                text = base64.b64decode(roh_b64, validate=True).decode("utf-16-le")
+            except ValueError:
                 return True
-            if ja_aufrufe(text):
+            if not roh_b64 or ja_aufrufe(text) or _ja_traegt(re.sub(r"[`‘’‚“”„]", "", text)):
                 return True
     return any(ja_aufrufe(" ".join(args[k:])) for k in range(len(args)))
 

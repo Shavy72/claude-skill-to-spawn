@@ -6,6 +6,7 @@ dürfen das Wort tragen; jeder unbekannte Starter mit dem Wort sperrt (fail-clos
 
 from __future__ import annotations
 
+import base64
 import io
 import json
 
@@ -525,4 +526,144 @@ CMD_GEKLEBT_RUNDE6 = [
 
 @pytest.mark.parametrize("befehl", CMD_GEKLEBT_RUNDE6)
 def test_runde6_cmd_geklebt_wird_gesperrt(befehl: str) -> None:
+    assert _sperrt(befehl), repr(befehl)
+
+
+# --- #621: ext-Weg neben Wert-Teil, Datei-Endungen (.bat/.ps1/Großschreibung), Fehlalarm Commit + Umleitung ---
+
+#: Punkt 1 — ``git fetch``/``git push`` mit ``ext::``-Transport neben einem Wert-Teil sperrt.
+EXT_WEG_621 = [
+    "git commit -m 'ja 5' && git fetch 'ext::sh -c \"git log -1 --format=%s | sh\"'",
+    "git commit -m 'ja 5' && git fetch 'ext::sh -c true'",
+    "git commit -m 'ja 5' && git fetch 'EXT::sh -c true'",
+    "git commit -m 'ja 5' && git push 'ext::sh -c true'",
+    "git commit -m 'ja 5' && git push --repo='ext::sh -c true'",
+]
+
+#: Punkt 2 — Aufruf als ``.bat``/``.ps1`` oder mit Pfad in Großschreibung sperrt.
+DATEI_ENDUNGEN_621 = [
+    "ja.bat 5",
+    "ja.ps1 5",
+    "JA.BAT 5",
+    "JA.PS1 5",
+    "~/.claude/bin/JA.BAT 5",
+    "~/.claude/bin/JA.PS1 5",
+    "C:\\Users\\x\\.claude\\bin\\JA.BAT 5",
+    "C:\\Users\\x\\.claude\\bin\\JA.PS1 5",
+    "bash ~/.claude/bin/JA.BAT 5",
+    "cmd /c ja.bat 5",
+    "cmd /cJA.BAT 5",
+    "powershell -c ja.ps1 5",
+    "echo 5 | xargs ~/.claude/bin/JA.BAT",
+    "rg --pre ~/.claude/bin/JA.BAT x .",
+]
+
+#: Gegenproben zu Punkt 3 — Umleitung vor weiterem git, Start-/Konfig-Ziel, Schleife, Nebenläufigkeit, xargs.
+UMLEITUNG_UMGEHUNG_621 = [
+    "git commit -m 'ja 5' && git log -1 --format=%s > /tmp/x.txt && git -C b fetch o",
+    "git commit -m 'ja 5' && git log -1 --format=%s > .git/config",
+    "git commit -m 'ja 5' && git log -1 --format=%s > ~/.config/gh/config.yml",
+    "while true; do git -C b fetch o; printf 'uploadpack = ja 5\\n' > b/config; done",
+    "(git -C b fetch o) & (printf 'uploadpack = ja 5\\n' > b/config)",
+    "echo 'uploadpack = ja 5' > b/config && echo o | xargs git -C b fetch",
+]
+
+
+@pytest.mark.parametrize("befehl", EXT_WEG_621 + DATEI_ENDUNGEN_621 + UMLEITUNG_UMGEHUNG_621)
+def test_621_ext_weg_und_endungen_werden_gesperrt(befehl: str) -> None:
+    assert _sperrt(befehl), repr(befehl)
+
+
+@pytest.mark.parametrize(
+    "befehl",
+    ["ja.bat 5", "ja.ps1 5", "~/.claude/bin/JA.BAT 5", "C:\\tools\\JA.PS1 5"],
+)
+def test_621_endungen_im_powershell_werkzeug_gesperrt(befehl: str) -> None:
+    assert _sperrt(befehl, "PowerShell"), repr(befehl)
+
+
+#: Punkt 3 — Commit-Nachricht mit dem Wort + eigene Umleitung von ``git log`` bleibt frei.
+COMMIT_UMLEITUNG_FREI_621 = [
+    "git commit -m 'ja 5' && git log -1 --format=%s > /tmp/x.txt",
+    "git commit -m 'Bitte ja 5 eingeben' && git log -1 --format=%s > /tmp/x.txt",
+    "git commit -m \"$(cat <<'EOF'\nfix: ja 5\nEOF\n)\" && git log -1 --format=%s > /tmp/x.txt",
+]
+
+
+@pytest.mark.parametrize("befehl", COMMIT_UMLEITUNG_FREI_621)
+def test_621_commit_mit_log_umleitung_bleibt_frei(befehl: str) -> None:
+    assert not _sperrt(befehl), repr(befehl)
+
+
+# --- #621, Fix-Runde 2: Sicherheitsprüfung (Lücken und Regressionen gegenüber main) ---
+
+
+def _enc_utf16(text: str) -> str:
+    return base64.b64encode(text.encode("utf-16-le")).decode()
+
+
+#: Regressionen gegenüber main (Ersetzungen vor Schreib-Teil, cd .git + relative Umleitung).
+REGRESSIONEN_621_R2 = [
+    "mkdir -p b/objects b/refs && echo 'ref: refs/heads/m' > b/HEAD && "
+    "printf '%s\\n' '[remote \"o\"]' 'url = .' 'uploadpack = ja 5' > b/config && "
+    'echo "$(git -C b fetch o)"',
+    "mkdir -p b/objects b/refs && git commit -q --allow-empty -m x -m '[remote \"o\"]' "
+    "-m 'url = .' -m 'uploadpack = ja 5' && git log -1 --format=%b > b/config && "
+    "echo 'ref: refs/heads/m' > b/HEAD && echo \"$(git -C b fetch o)\"",
+    "mkdir -p b/objects b/refs && echo 'ref: refs/heads/m' > b/HEAD && "
+    "printf '%s\\n' '[remote \"o\"]' 'url = .' 'uploadpack = ja 5' > b/config && "
+    "cat <(git -C b fetch o)",
+    "mkdir -p b/objects b/refs && echo 'ref: refs/heads/m' > b/HEAD && "
+    "printf '%s\\n' '[remote \"o\"]' 'url = .' 'uploadpack = ja 5' > b/config && "
+    "echo `git -C b fetch o`",
+    "mkdir -p b/objects b/refs && echo 'ref: refs/heads/m' > b/HEAD && "
+    "echo $(printf '%s\\n' '[remote \"o\"]' 'url = .' 'uploadpack = ja 5' > b/config; "
+    "echo $(git -C b fetch o))",
+    "cd .git && git -C .. commit -q --allow-empty -m x -m '[core]' -m 'pager = ja 5' && "
+    "git -C .. log -1 --format=%b >> config",
+    "cd ~/.config/gh && git -C /tmp commit -q --allow-empty -m 'pager: ja 5' && "
+    "git -C /tmp log -1 --format=%s > config.yml",
+    "git -C .. commit -q --allow-empty -m x -m '[core]' -m 'pager = ja 5' && git -C .. log -1 --format=%b >> config",
+    "git -C b fetch o && printf 'ja 5' > /tmp/x.txt",
+]
+
+#: Punkt 1 — ``ext::`` und Programm-Schalter über Befehls-, Klammer- oder Variablen-Erweiterung.
+EXT_ERWEITERUNG_621_R2 = [
+    "git commit -q --allow-empty -m 'ja 5' && git fetch \"$(echo ext)::sh -c git% log% -1% --format=%%s|sh\"",
+    "git commit -q --allow-empty -m 'ja 5' && git fetch {ext::'sh -c git% log% -1% --format=%%s|sh',HEAD}",
+    "git commit -q --allow-empty -m 'ja 5' && git fetch \"e${UNSET}xt::sh -c git% log% -1% --format=%%s|sh\"",
+    "git commit -q --allow-empty -m 'ja 5' && git fetch \"--up${UNSET}load-pack=sh\" origin",
+    "git commit -q --allow-empty -m 'ja 5' && git fetch \"$REMOTE_URL\"",
+    "git commit -q --allow-empty -m 'ja 5' && git push {--receive-pack=sh,origin}",
+]
+
+#: Punkt 2 — Windows-Pfad auf cmd/powershell (einfacher und doppelter Backslash) und Punkt am Ende.
+WIN_PFAD_UND_PUNKT_621_R2 = [
+    "C:\\\\Windows\\\\System32\\\\cmd.exe /cJA.BAT 5",
+    "C:\\Windows\\System32\\cmd.exe /cJA.BAT 5",
+    "C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe "
+    f"-EncodedCommand {_enc_utf16('ja.bat 5')}",
+    f"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -EncodedCommand {_enc_utf16('ja.bat 5')}",
+    f"powershell.exe -EncodedCommand:{_enc_utf16('ja.bat 5')}",
+    "ja.bat. 5",
+    "JA.BAT. 5",
+    "cmd /cJA.BAT. 5",
+    "C:\\tools\\JA.BAT. 5",
+]
+
+#: Rest-Lücke ``tee -- -b/config`` (und ``uniq`` mit ``--`` oder ``-`` als Eingabe).
+TEE_STRICH_621_R2 = [
+    "mkdir -p ./-b/objects ./-b/refs && tee -- -b/HEAD <<< 'ref: refs/heads/m' >/dev/null && "
+    "tee -- -b/config <<< $'[remote \"o\"]\\nurl = .\\nuploadpack = ja 5' >/dev/null && "
+    "git -C ./-b fetch o",
+    "echo 'ja 5' | uniq - ~/.bashrc",
+    "echo 'ja 5' > f; uniq -- f -b/config",
+]
+
+
+@pytest.mark.parametrize(
+    "befehl",
+    REGRESSIONEN_621_R2 + EXT_ERWEITERUNG_621_R2 + WIN_PFAD_UND_PUNKT_621_R2 + TEE_STRICH_621_R2,
+)
+def test_621_runde2_luecken_und_regressionen_gesperrt(befehl: str) -> None:
     assert _sperrt(befehl), repr(befehl)
