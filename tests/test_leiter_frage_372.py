@@ -229,7 +229,7 @@ EINGABE = "─" * 40
 
 def test_frage_im_text_still_endet_mit_frage() -> None:
     text = f"● Tests grün.\n\n● {FRAGE}\n\n{EINGABE}\n❯ \n{EINGABE}\n  Kontext 80k"
-    assert aufseher_stand.frage_im_text(text) == f"● {FRAGE}"
+    assert aufseher_stand.frage_im_text(text) == FRAGE
 
 
 def test_frage_im_text_ohne_frage_leer() -> None:
@@ -593,7 +593,7 @@ def test_system_eingabe_macht_harmlose_frage_nicht_zu_klasse_2(getippt: str) -> 
         + FUSS
     )
     frage = aufseher_stand.frage_im_text(text)
-    assert frage == "● Soll ich mit Ticket 13 weitermachen?"
+    assert frage == "Soll ich mit Ticket 13 weitermachen?"
     assert not befugnis.ist_klasse_2(frage)
 
 
@@ -605,7 +605,7 @@ def test_entscheider_antwort_bleibt_grenze_seine_frage_war_schon_klasse_2() -> N
         "❯ mach weiter\n\n● Tests grün. Soll ich vorher noch aufräumen?\n\n"
         "❯ Ja, erst aufräumen, dann weiter.\n\n● Aufgeräumt. Passt das so?" + FUSS
     )
-    assert aufseher_stand.frage_im_text(nachher) == "● Aufgeräumt. Passt das so?"
+    assert aufseher_stand.frage_im_text(nachher) == "Aufgeräumt. Passt das so?"
 
 
 # --- Nachfix #372 (Probe 5, 26.11.): Claude-Fußzeile & Feedback-Umfrage sind Rauschen ---------
@@ -637,7 +637,7 @@ ECHTE_AUFNAHME_372 = (
     "  ⏸ manual mode on\n"
 )
 
-ECHTE_FRAGE_372 = "● Soll für die Statistik-Seite Variante A (Tabelle) oder Variante B (Karten) genutzt werden?"
+ECHTE_FRAGE_372 = "Soll für die Statistik-Seite Variante A (Tabelle) oder Variante B (Karten) genutzt werden?"
 
 
 def test_frage_im_text_echte_aufnahme_mit_claude_fusszeile() -> None:
@@ -658,7 +658,7 @@ def test_frage_im_text_echte_aufnahme_mit_claude_fusszeile() -> None:
 @pytest.mark.parametrize("trenner", ["\n\n", "\n"], ids=["absatz", "direkt"])
 def test_frage_im_text_ueberspringt_claude_fusszeilen_varianten(fusszeile: str, trenner: str) -> None:
     text = f"● Tests grün.\n\n● {FRAGE}{trenner}{fusszeile}" + FUSS
-    assert aufseher_stand.frage_im_text(text) == f"● {FRAGE}"
+    assert aufseher_stand.frage_im_text(text) == FRAGE
 
 
 @pytest.mark.parametrize(
@@ -672,7 +672,7 @@ def test_frage_im_text_ueberspringt_claude_fusszeilen_varianten(fusszeile: str, 
 )
 def test_frage_im_text_ueberspringt_feedback_umfrage_nach_frage(umfrage: str) -> None:
     text = f"● {FRAGE}\n\n✻ Crunched for 6s · done 7:25 PM\n\n{umfrage}" + FUSS
-    assert aufseher_stand.frage_im_text(text) == f"● {FRAGE}"
+    assert aufseher_stand.frage_im_text(text) == FRAGE
 
 
 @pytest.mark.parametrize(
@@ -758,3 +758,175 @@ def test_leiter_echte_aufnahme_still_2_min_loest_entscheider_aus(baum: Path, mon
     assert "Frage schon weitergegeben" in zweit.zeile, zweit.zeile
     assert len(briefkasten.offene([TICKET], hauptbaum=baum)) == 1
     assert sitzung in (umwelt.lage(SPEC, TICKET, None).ziel or "")
+
+
+# --- Nachfix #372 (Mini-Probe 6 / L233, 26.11.): blinkender Werkzeug-Punkt im Rückfrage-Dialog ---
+
+#: Echter Bash-Freigabe-Dialog aus ``l233_nachweis_372.log`` (Zeilen 15–30) samt darüberliegender
+#: Werkzeug-Zeile aus ``l233_blink_372.log``: beim Warten blinkt das führende ``●`` an/aus.
+_L233_DIALOG_UNTEN = (
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n"
+    " Bash command\n"
+    ' Tip: auto mode handles these prompts for you — choose "switch to auto mode" below\n'
+    " Run python one-liner printing 40+2\n"
+    "╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n"
+    " python3 -c 'print(40+2)'\n"
+    "╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n"
+    " This command requires approval\n"
+    "\n"
+    " Do you want to proceed?\n"
+    " ❯ 1. Yes\n"
+    "   2. Yes, and don’t ask again for: python3 *\n"
+    "   3. Yes, and switch to auto mode · auto mode handles these prompts for you\n"
+    "   4. No\n"
+    "\n"
+    " Esc to cancel · Tab to amend\n"
+)
+
+
+def _l233_aufnahme(praefix: str) -> str:
+    kopf = (
+        f"{praefix} Running python3 one-liner printing 40+2" if praefix else "  Running python3 one-liner printing 40+2"
+    )
+    return (
+        "❯ Führe bitte python3 -c 'print(40+2)' aus.\n\n"
+        f"{kopf}\n"
+        "  ⎿ $ python3 -c 'print(40+2)'\n\n" + _L233_DIALOG_UNTEN
+    )
+
+
+L233_FRAGE_KANONISCH = "Running python3 one-liner printing 40+2 ⎿ $ python3 -c 'print(40+2)'"
+L233_KEY_KANONISCH = "20c81112eafdb059"
+
+
+def test_frage_im_text_und_schluessel_stabil_bei_blinkendem_punkt() -> None:
+    """Rot-Beweis L233 #372: beide Aufnahmen (mit/ohne blinkendem ``●``) ergeben gleichen Text + Schlüssel."""
+    mit_punkt = _l233_aufnahme("●")
+    ohne_punkt = _l233_aufnahme("")
+
+    frage_mit = aufseher_stand.frage_im_text(mit_punkt)
+    frage_ohne = aufseher_stand.frage_im_text(ohne_punkt)
+    assert frage_mit == L233_FRAGE_KANONISCH
+    assert frage_ohne == L233_FRAGE_KANONISCH
+    assert leiter.frage_schluessel(frage_mit) == L233_KEY_KANONISCH
+    assert leiter.frage_schluessel(frage_ohne) == L233_KEY_KANONISCH
+    # Auch direkter Aufruf von frage_schluessel normalisiert ein noch vorhandenes Status-Zeichen.
+    assert leiter.frage_schluessel(f"● {L233_FRAGE_KANONISCH}") == L233_KEY_KANONISCH
+
+
+@pytest.mark.parametrize(
+    "praefix",
+    ["●", "⏺", "◐", "◑", "✻", "⠋", "\x1b[32m●\x1b[0m"],
+    ids=["punkt", "record", "halbkreis_l", "halbkreis_r", "stern", "braille", "ansi_punkt"],
+)
+def test_frage_normalisierung_entfernt_blinkende_status_zeichen(praefix: str) -> None:
+    """Blinkende Status-/Spinner-Zeichen (auch auf Folgezeilen) ändern weder Frage noch Schlüssel."""
+    assert aufseher_stand.frage_im_text(_l233_aufnahme(praefix)) == L233_FRAGE_KANONISCH
+    assert leiter.frage_schluessel(f"{praefix} {L233_FRAGE_KANONISCH}") == L233_KEY_KANONISCH
+
+    mehrzeilig_an = (
+        "❯ Führe aus.\n\n"
+        "● Checked git status\n"
+        "  ⎿ clean\n\n"
+        f"{praefix} Running python3 one-liner printing 40+2\n"
+        "  ⎿ $ python3 -c 'print(40+2)'\n\n" + _L233_DIALOG_UNTEN
+    )
+    mehrzeilig_aus = (
+        "❯ Führe aus.\n\n"
+        "● Checked git status\n"
+        "  ⎿ clean\n\n"
+        "  Running python3 one-liner printing 40+2\n"
+        "  ⎿ $ python3 -c 'print(40+2)'\n\n" + _L233_DIALOG_UNTEN
+    )
+    assert aufseher_stand.frage_im_text(mehrzeilig_an) == aufseher_stand.frage_im_text(mehrzeilig_aus)
+
+
+def test_leiter_rueckfrage_blinkender_punkt_kein_doppelter_auftrag(baum: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """L233 Teil A komplett über ``leiter._EchteUmwelt``: Blinken zwischen zwei Takten → 1 Auftrag."""
+    import json
+
+    from to_spawn import aufpasser, waechter_lauf
+
+    monkeypatch.setenv("TO_SPAWN_AUFSEHER_STAND", str(baum / "stand"))
+    sid = "9ce26afd-d0d8-4e55-af8e-e9a505730720"
+    transkript = waechter_lauf.transkript_ordner(baum) / f"{sid}.jsonl"
+    transkript.parent.mkdir(parents=True, exist_ok=True)
+    eintrag = {
+        "type": "assistant",
+        "uuid": "a-372-l233",
+        "sessionId": sid,
+        "message": {"role": "assistant", "content": [{"type": "text", "text": "Run python one-liner printing 40+2"}]},
+    }
+    transkript.write_text(json.dumps(eintrag, ensure_ascii=False) + "\n", encoding="utf-8")
+    monkeypatch.setattr(
+        aufpasser,
+        "session_finden",
+        lambda *_a, **_kw: aufpasser.SessionInfo(sid, baum, "idle", 4321),
+    )
+
+    jetzt = 1_764_190_105.0
+    aufnahmen = [_l233_aufnahme(""), _l233_aufnahme("●"), _l233_aufnahme("◐")]
+    bild = {"text": aufnahmen[0]}
+
+    def fake_tmux(args: list[str]) -> str | None:
+        if args[:1] == ["list-windows"]:
+            return f"@4\tbau {TICKET}\t{jetzt - 3.0}\t{baum}\n"
+        if args[:1] == ["display-message"]:
+            return "4321 @4 %1\n"
+        if args[:1] == ["capture-pane"]:
+            return bild["text"]
+        return None
+
+    quellen = aufseher_stand.Quellen(
+        repo=baum,
+        kinder=lambda _s: [{"number": TICKET, "state": "open", "comments": 0, "labels": []}],
+        tmux=fake_tmux,
+        jetzt=lambda: jetzt,
+    )
+    umwelt = leiter._EchteUmwelt(baum, quellen)
+
+    erst = leiter.eingreifen(baum, SPEC, TICKET, umwelt=umwelt)
+    assert erst.exit == leiter.EXIT_OK, erst.zeile
+    assert "Entscheider-Auftrag" in erst.zeile, erst.zeile
+    offen = briefkasten.offene([TICKET], hauptbaum=baum)
+    assert len(offen) == 1
+    assert offen[0]["frage"] == L233_FRAGE_KANONISCH
+
+    # 1 s später: derselbe Dialog, aber blinkendes ``●`` ist sichtbar (wie l233_nachweis_372.log:35).
+    bild["text"] = aufnahmen[1]
+    zweit = leiter.eingreifen(baum, SPEC, TICKET, umwelt=umwelt)
+    assert zweit.exit == leiter.EXIT_OK, zweit.zeile
+    assert "Frage schon weitergegeben" in zweit.zeile, zweit.zeile
+    assert len(briefkasten.offene([TICKET], hauptbaum=baum)) == 1
+
+    # Weiterer Takt mit anderem Spinner-Zeichen: weiterhin kein zweiter Auftrag.
+    bild["text"] = aufnahmen[2]
+    dritt = leiter.eingreifen(baum, SPEC, TICKET, umwelt=umwelt)
+    assert dritt.exit == leiter.EXIT_OK, dritt.zeile
+    assert "Frage schon weitergegeben" in dritt.zeile, dritt.zeile
+    assert len(briefkasten.offene([TICKET], hauptbaum=baum)) == 1
+
+
+def test_frage_einwerfen_blinkender_punkt_kein_doppel(baum: Path) -> None:
+    """Auch ohne Leitstand-Notiz erkennt ``frage_einwerfen`` dieselbe Frage mit/ohne Status-Zeichen."""
+    erst = leiter.frage_einwerfen(baum, SPEC, TICKET, L233_FRAGE_KANONISCH)
+    zweit = leiter.frage_einwerfen(baum, SPEC, TICKET, f"● {L233_FRAGE_KANONISCH}")
+    dritt = leiter.frage_einwerfen(baum, SPEC, TICKET, f"◐ {L233_FRAGE_KANONISCH}")
+    assert erst == zweit == dritt
+    offen = briefkasten.offene([TICKET], hauptbaum=baum)
+    assert len(offen) == 1
+    assert offen[0]["frage"] == L233_FRAGE_KANONISCH
+
+    # Altdaten-Fall: liegt schon ein roher Briefkasten-Eintrag mit ``●`` offen, kein zweiter Einwurf.
+    ticket_alt = TICKET + 1
+    alt_id = briefkasten.einwerfen(
+        ticket_alt,
+        f"● {L233_FRAGE_KANONISCH}",
+        "",
+        None,
+        ["Altdaten"],
+        art="fenster-frage",
+        hauptbaum=baum,
+    )
+    assert leiter.frage_einwerfen(baum, SPEC, ticket_alt, L233_FRAGE_KANONISCH) == alt_id
+    assert len(briefkasten.offene([ticket_alt], hauptbaum=baum)) == 1
