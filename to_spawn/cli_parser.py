@@ -243,6 +243,26 @@ def baue_parser() -> _Parser:
         default=inventur.HISTORIE_VORGABE,
         help=f"so viele neueste Historie-Dateien (JSONL) auswerten (Standard {inventur.HISTORIE_VORGABE}, 0 = keine)",
     )
+    p_inv.add_argument(
+        "--doctor",
+        action="store_true",
+        help="Bereitschafts-Prüfung (#583) mit Exit 3 bei offener Abweichung",
+    )
+    p_inv.add_argument(
+        "--regeln",
+        action="store_true",
+        help="risikoarme Bereitschafts-Abweichungen selbst regeln (z. B. Pipeline-Vorlage anschließen)",
+    )
+    p_inv.add_argument(
+        "--mit-ticket",
+        action="store_true",
+        help="verbleibende nicht-risikoarme Bereitschafts-Lücken als Einrichtungs-Ticket (T0) anlegen",
+    )
+    p_inv.add_argument(
+        "--trocken",
+        action="store_true",
+        help="Probelauf für --regeln/--mit-ticket: nichts schreiben, kein Ticket anlegen",
+    )
 
     p_status = unter.add_parser(
         "deploy-status",

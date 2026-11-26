@@ -697,6 +697,10 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
             schreiben=args.schreiben,
             ausgabe=args.ausgabe,
             letzte=args.letzte,
+            doctor=args.doctor,
+            regeln=args.regeln,
+            mit_ticket=args.mit_ticket,
+            trocken=args.trocken,
         )
     if args.befehl == "setup":
         return _setup(repo, args)
