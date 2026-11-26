@@ -43,6 +43,11 @@ from to_spawn.pruef import leiter, nachtrunde
 
 ANLEGEN = SKILL / "probe" / "anlegen.sh"
 DOKU = SKILL / "docs" / "PIPELINE_VORLAGE.md"
+WORKFLOW_VORLAGE = SKILL / ".github" / "workflows" / "pipeline-nachtrunde.yml"
+WORKFLOW_EIGEN = SKILL / ".github" / "workflows" / "pipeline-nachtrunde-eigen.yml"
+
+#: Erlaubte kostenfreie Standard-GitHub-Runner (keine bezahlten/großen Runner, kein self-hosted).
+ERLAUBTE_RUNNER = frozenset({"ubuntu-latest", "windows-latest", "${{ matrix.os }}"})
 
 #: Muster für verbotene Mail-/Benachrichtigungs-Schritte in der Nachtrunden-Vorlage (grep-Prüfung).
 BENACHRICHTIGUNG_MUSTER = re.compile(
@@ -711,3 +716,67 @@ def test_doku_enthaelt_nachtrunde_und_budget_hinweis_30_dollar() -> None:
         assert begriff in text, f"Pflicht-Begriff {begriff!r} fehlt in docs/PIPELINE_VORLAGE.md"
     for eingabe in nachtrunde.EINGABEN_NACHTRUNDE:
         assert f"`{eingabe.name}`" in text, f"Eingabe {eingabe.name!r} nicht in docs/PIPELINE_VORLAGE.md dokumentiert"
+
+
+# --- Eingecheckte GitHub-Workflows gegen Vorlage aus to_spawn/pruef/nachtrunde.py -------------
+
+
+def test_eingecheckte_workflow_vorlage_entspricht_generator_und_vertrag() -> None:
+    """Prüft ``.github/workflows/pipeline-nachtrunde.yml`` gegen Generator, Vertrag, Runner und Secrets."""
+    assert WORKFLOW_VORLAGE.is_file(), f"Workflow-Vorlage fehlt: {WORKFLOW_VORLAGE}"
+    text = WORKFLOW_VORLAGE.read_text(encoding="utf-8")
+    assert text == nachtrunde.vorlage_nachtrunde_yaml()
+    assert nachtrunde.pruefe_nachtrunde_vorlage_text(text) == []
+    assert BENACHRICHTIGUNG_MUSTER.findall(text) == []
+    assert "secrets." not in text.lower()
+    assert "self-hosted" not in text.lower()
+
+    runner = re.findall(r"(?m)^\s*runs-on:\s*(.+?)\s*$", text)
+    assert runner, "mindestens ein runs-on-Eintrag erwartet"
+    assert set(runner) <= ERLAUBTE_RUNNER, f"Unerlaubter/bezahlter Runner: {set(runner) - ERLAUBTE_RUNNER}"
+
+    try:
+        import yaml  # type: ignore[import-untyped]
+    except ImportError:
+        return
+    daten = yaml.safe_load(text)
+    assert isinstance(daten, dict)
+    on_block = daten.get("on") or daten.get(True)
+    assert isinstance(on_block, dict) and "workflow_call" in on_block
+    eingaben = on_block["workflow_call"]["inputs"]
+    for eingabe in nachtrunde.EINGABEN_NACHTRUNDE:
+        assert eingabe.name in eingaben
+        assert eingaben[eingabe.name]["type"] == eingabe.typ
+    assert daten["concurrency"]["cancel-in-progress"] is False
+    assert daten["permissions"] == {"contents": "read", "actions": "read", "issues": "write"}
+    assert set(daten["jobs"]) == {"vorab", "vorbereiten", "stufe-2", "staging-probe", "ticket-abgleich"}
+
+
+def test_eingecheckter_eigenanschluss_hat_zeitplan_workflow_dispatch_und_keine_secrets() -> None:
+    """Prüft ``.github/workflows/pipeline-nachtrunde-eigen.yml`` gegen Generator, Zeitplan und Vertrag."""
+    assert WORKFLOW_EIGEN.is_file(), f"Eigenanschluss-Workflow fehlt: {WORKFLOW_EIGEN}"
+    text = WORKFLOW_EIGEN.read_text(encoding="utf-8")
+    assert text == nachtrunde.eigenanschluss_nachtrunde_yaml()
+    assert nachtrunde.pruefe_anschluss_nachtrunde_text(text) == []
+    assert BENACHRICHTIGUNG_MUSTER.findall(text) == []
+    assert "secrets." not in text.lower()
+    assert "self-hosted" not in text.lower()
+    assert f'cron: "{nachtrunde.STANDARD_CRON}"' in text
+    assert "workflow_dispatch:" in text
+    assert "uses: ./.github/workflows/pipeline-nachtrunde.yml" in text
+
+    try:
+        import yaml  # type: ignore[import-untyped]
+    except ImportError:
+        return
+    daten = yaml.safe_load(text)
+    assert isinstance(daten, dict)
+    on_block = daten.get("on") or daten.get(True)
+    assert isinstance(on_block, dict)
+    assert on_block["schedule"] == [{"cron": nachtrunde.STANDARD_CRON}]
+    assert "workflow_dispatch" in on_block
+    assert daten["concurrency"]["cancel-in-progress"] is False
+    job = daten["jobs"]["nachtrunde"]
+    assert job["uses"] == "./.github/workflows/pipeline-nachtrunde.yml"
+    betriebssysteme = json.loads(job["with"]["betriebssysteme"])
+    assert set(betriebssysteme) <= {"ubuntu-latest", "windows-latest"}

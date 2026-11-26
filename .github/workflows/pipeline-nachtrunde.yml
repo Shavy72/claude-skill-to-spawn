@@ -1,0 +1,402 @@
+# Wiederverwendbare Nachtrunden-Vorlage (#582, Beschluss E32).
+# Zielbild der Pipeline-Vorlage (#581, #797):
+# - Triage neuer Befunde und Tickets vor dem Bau.
+# - Risikoarme Fixes gehen bei grüner CI automatisch durch.
+# - Restliche Änderungen gehen nur per Beweis (Prüf-Beleg / Freigabe) weiter.
+# - Nächtliche Audits (Stufe 3 / Nachtrunde) prüfen Qualität, Wackler und Mutationen.
+# Rolle des Bau-Servers:
+# - Ausschließlich Claude-Sessions und 'braucht Server'-Tests (@pytest.mark.braucht('server') / braucht_server).
+# - Alle übrigen Tests und Stufe-2-Komplettläufe laufen verteilt auf GitHub Actions (>= 2 Runner).
+# Ablauf der Nachtrunde (läuft ausschließlich auf GitHub Actions, nie auf dem Bau-Server):
+# 1. Vorab-Prüfung: gab es seit der letzten grünen Nachtrunde neue Commits? Nein -> Abbruch in Sekunden (grün).
+# 2. Stufe 2 (Komplett-Prüfung aus #581): verteilt auf >= 2 Runner (pytest-split + pytest-xdist).
+# 3. Ticket-Abgleich: Rot pflegt genau ein offenes Ticket 'Nachtrunde rot', Grün schließt es selbst.
+name: Pipeline Nachtrunde
+
+on:
+  workflow_call:
+    inputs:
+      hauptzweig:
+        description: "Hauptzweig für die Commit-Vorabprüfung (leer = Standardzweig des Repos, z. B. main)."
+        required: false
+        type: string
+        default: ""
+      workflow-datei:
+        description: "Optionaler Dateiname des aufrufenden Nachtrunden-Workflows (leer = automatisch aus aktuellem Lauf)."
+        required: false
+        type: string
+        default: ""
+      immer-laufen:
+        description: "Commit-Vorabprüfung überspringen und Stufe 2 immer ausführen (z. B. manueller Prüflauf)."
+        required: false
+        type: boolean
+        default: false
+      python-version:
+        description: "Python-Version für die GitHub-Actions-Runner."
+        required: false
+        type: string
+        default: "3.13"
+      teile:
+        description: "Anzahl paralleler Runner-Teile für Stufe 2 (pytest-split, mindestens 2)."
+        required: false
+        type: number
+        default: 2
+      xdist-worker:
+        description: "Anzahl pytest-xdist-Worker je Runner (z. B. 'auto', Zahl oder '0')."
+        required: false
+        type: string
+        default: "auto"
+      test-pfade:
+        description: "Test-Wurzelordner oder Test-Pfade für Stufe 2 (leerzeichengetrennt)."
+        required: false
+        type: string
+        default: "tests"
+      anforderungen:
+        description: "Pfad zu pip-Abhängigkeiten für Tests (pytest-split und pytest-xdist werden sichergestellt)."
+        required: false
+        type: string
+        default: "tests/requirements.txt"
+      pytest-befehl:
+        description: "Optionale zusätzliche pytest-Argumente für Stufe 2."
+        required: false
+        type: string
+        default: ""
+      auslassungen:
+        description: "Optionaler Pfad zu einer Auslassungs-Liste im Format '<test-id>  # <grund>'."
+        required: false
+        type: string
+        default: ""
+      dauer-datei:
+        description: "Optionale Laufzeit-Datei für pytest-split (least_duration, falls vorhanden)."
+        required: false
+        type: string
+        default: ".test_durations"
+      betriebssysteme:
+        description: "JSON-Array der Runner-Betriebssysteme für Stufe 2 (z. B. ubuntu-latest und windows-latest)."
+        required: false
+        type: string
+        default: "[\"ubuntu-latest\"]"
+      mit-staging-app:
+        description: "Schalter 'mit Staging-App': aktiviert den bedingten Staging-Probe-Schritt in Stufe 2."
+        required: false
+        type: boolean
+        default: false
+      staging-probe-befehl:
+        description: "Befehl für den Staging-Probe-Schritt (läuft ausschließlich bei mit-staging-app=true)."
+        required: false
+        type: string
+        default: ""
+      server-marker-ausschliessen:
+        description: "Bau-Server-Tests ('braucht Server' / Marker braucht_server) auf GitHub-Runnern ausschließen."
+        required: false
+        type: boolean
+        default: true
+      ticket-titel:
+        description: "Titel des genau einen offenen GitHub-Tickets bei roter Nachtrunde."
+        required: false
+        type: string
+        default: "Nachtrunde rot"
+      skill-pfad:
+        description: "Pfad zum Skill-Repo im Runner (Eigenanschluss '.', Fremdrepo z. B. '.to-spawn-skill')."
+        required: false
+        type: string
+        default: "."
+      skill-repo:
+        description: "Optionales Skill-Repo ('owner/name') zum automatischen Checkout bei Fremdrepos; leer = lokal."
+        required: false
+        type: string
+        default: ""
+      skill-ref:
+        description: "Git-Ref des Skill-Repos beim automatischen Checkout über skill-repo."
+        required: false
+        type: string
+        default: "main"
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+concurrency:
+  group: nachtrunde-vorlage-${{ github.repository }}-${{ inputs.hauptzweig || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  vorab:
+    name: Vorab-Prüfung (neue Commits seit letzter grüner Nachtrunde)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      laufen: ${{ steps.pruefen.outputs.laufen }}
+      hauptzweig: ${{ steps.pruefen.outputs.hauptzweig }}
+      aktueller_sha: ${{ steps.pruefen.outputs.aktueller_sha }}
+      letzter_gruener_sha: ${{ steps.pruefen.outputs.letzter_gruener_sha }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skill-Repo auschecken (Fremdrepo)
+        if: ${{ inputs.skill-repo != '' }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.skill-repo }}
+          ref: ${{ inputs.skill-ref }}
+          path: ${{ inputs.skill-pfad }}
+          sparse-checkout: to_spawn
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ inputs.python-version }}"
+
+      - id: pruefen
+        name: Neue Commits seit letzter grüner Nachtrunde prüfen
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SKILL_PFAD: ${{ inputs.skill-pfad }}
+          HAUPTZWEIG: ${{ inputs.hauptzweig || github.ref_name }}
+          WORKFLOW_DATEI: ${{ inputs.workflow-datei }}
+          IMMER_LAUFEN: ${{ inputs.immer-laufen }}
+          AKTUELLER_LAUF_ID: ${{ github.run_id }}
+          AKTUELLER_SHA: ${{ github.sha }}
+          REPO_SLUG: ${{ github.repository }}
+        run: |
+          if [ -n "${PYTHONPATH:-}" ]; then
+            SEP=":"
+            [ "${RUNNER_OS:-}" = "Windows" ] && SEP=";"
+            export PYTHONPATH="${SKILL_PFAD}${SEP}${PYTHONPATH}"
+          else
+            export PYTHONPATH="${SKILL_PFAD}"
+          fi
+          args=(--repo . --repo-slug "$REPO_SLUG" --hauptzweig "$HAUPTZWEIG" --aktueller-sha "$AKTUELLER_SHA" --aktueller-lauf-id "$AKTUELLER_LAUF_ID" --github-output "$GITHUB_OUTPUT" --summary-pfad "$GITHUB_STEP_SUMMARY")
+          [ -n "$WORKFLOW_DATEI" ] && args+=(--workflow-datei "$WORKFLOW_DATEI")
+          [ "$IMMER_LAUFEN" = "true" ] && args+=(--immer-laufen)
+          python -m to_spawn.pruef.nachtrunde vorab "${args[@]}"
+
+  vorbereiten:
+    name: Aufteilung prüfen (>= 2 Runner)
+    needs: vorab
+    if: ${{ needs.vorab.outputs.laufen == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      teile: ${{ steps.matrix.outputs.teile }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skill-Repo auschecken (Fremdrepo)
+        if: ${{ inputs.skill-repo != '' }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.skill-repo }}
+          ref: ${{ inputs.skill-ref }}
+          path: ${{ inputs.skill-pfad }}
+          sparse-checkout: to_spawn
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ inputs.python-version }}"
+
+      - id: matrix
+        name: Runner-Matrix erzeugen (>= 2 Teile)
+        env:
+          SKILL_PFAD: ${{ inputs.skill-pfad }}
+          TEILE: ${{ inputs.teile }}
+        run: |
+          if [ -n "${PYTHONPATH:-}" ]; then
+            SEP=":"
+            [ "${RUNNER_OS:-}" = "Windows" ] && SEP=";"
+            export PYTHONPATH="${SKILL_PFAD}${SEP}${PYTHONPATH}"
+          else
+            export PYTHONPATH="${SKILL_PFAD}"
+          fi
+          python -m to_spawn.pruef.pipeline_stufe2 matrix --teile "$TEILE" --github-output "$GITHUB_OUTPUT"
+
+  stufe-2:
+    name: Nachtrunde Stufe 2 (${{ matrix.os }}, Teil ${{ matrix.teil }}/${{ inputs.teile }})
+    needs: [vorab, vorbereiten]
+    if: ${{ needs.vorab.outputs.laufen == 'true' }}
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJson(inputs.betriebssysteme) }}
+        teil: ${{ fromJson(needs.vorbereiten.outputs.teile) }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skill-Repo auschecken (Fremdrepo)
+        if: ${{ inputs.skill-repo != '' }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.skill-repo }}
+          ref: ${{ inputs.skill-ref }}
+          path: ${{ inputs.skill-pfad }}
+          sparse-checkout: to_spawn
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ inputs.python-version }}"
+
+      - name: tmux installieren (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q tmux
+
+      - name: Test-Abhängigkeiten installieren (inkl. pytest-split + pytest-xdist)
+        env:
+          ANFORDERUNGEN: ${{ inputs.anforderungen }}
+        run: |
+          if [ -n "$ANFORDERUNGEN" ] && [ -f "$ANFORDERUNGEN" ]; then
+            python -m pip install -q -r "$ANFORDERUNGEN" pytest-split pytest-xdist
+          else
+            python -m pip install -q pytest pytest-split pytest-xdist
+          fi
+
+      - name: git-Identität für Tests setzen
+        env:
+          SKILL_PFAD: ${{ inputs.skill-pfad }}
+        run: |
+          if [ -n "${PYTHONPATH:-}" ]; then
+            SEP=":"
+            [ "${RUNNER_OS:-}" = "Windows" ] && SEP=";"
+            export PYTHONPATH="${SKILL_PFAD}${SEP}${PYTHONPATH}"
+          else
+            export PYTHONPATH="${SKILL_PFAD}"
+          fi
+          python -m to_spawn.pruef.nachtrunde git-identitaet
+
+      - name: Stufe 2 Komplett-Prüfung ausführen
+        env:
+          SKILL_PFAD: ${{ inputs.skill-pfad }}
+          TEILE: ${{ inputs.teile }}
+          TEIL: ${{ matrix.teil }}
+          XDIST_WORKER: ${{ inputs.xdist-worker }}
+          TEST_PFADE: ${{ inputs.test-pfade }}
+          PYTEST_BEFEHL: ${{ inputs.pytest-befehl }}
+          AUSLASSUNGEN: ${{ inputs.auslassungen }}
+          DAUER_DATEI: ${{ inputs.dauer-datei }}
+          SERVER_AUSSCHLIESSEN: ${{ inputs.server-marker-ausschliessen }}
+        run: |
+          if [ -n "${PYTHONPATH:-}" ]; then
+            SEP=":"
+            [ "${RUNNER_OS:-}" = "Windows" ] && SEP=";"
+            export PYTHONPATH="${SKILL_PFAD}${SEP}${PYTHONPATH}"
+          else
+            export PYTHONPATH="${SKILL_PFAD}"
+          fi
+          args=(--repo . --splits "$TEILE" --group "$TEIL" --xdist-worker "$XDIST_WORKER" --split-modus pytest-split --junitxml "$RUNNER_TEMP/junit-nachtrunde-${TEIL}.xml" --summary-pfad "$GITHUB_STEP_SUMMARY")
+          [ -n "$TEST_PFADE" ] && args+=(--test-pfade "$TEST_PFADE")
+          [ -n "$PYTEST_BEFEHL" ] && args+=(--pytest-befehl "$PYTEST_BEFEHL")
+          [ -n "$AUSLASSUNGEN" ] && args+=(--auslassungen "$AUSLASSUNGEN")
+          [ -n "$DAUER_DATEI" ] && args+=(--dauer-datei "$DAUER_DATEI")
+          [ "$SERVER_AUSSCHLIESSEN" = "false" ] && args+=(--server-behalten)
+          python -m to_spawn.pruef.pipeline_stufe2 lauf "${args[@]}"
+
+      - name: JUnit-Artefakt (Nachtrunde)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-nachtrunde-${{ matrix.os }}-teil-${{ matrix.teil }}
+          path: ${{ runner.temp }}/junit-nachtrunde-${{ matrix.teil }}.xml
+          if-no-files-found: ignore
+
+  staging-probe:
+    name: Staging-Probe (nur mit Staging-App)
+    needs: [vorab, stufe-2]
+    if: ${{ needs.vorab.outputs.laufen == 'true' && inputs.mit-staging-app }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skill-Repo auschecken (Fremdrepo)
+        if: ${{ inputs.skill-repo != '' }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.skill-repo }}
+          ref: ${{ inputs.skill-ref }}
+          path: ${{ inputs.skill-pfad }}
+          sparse-checkout: to_spawn
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ inputs.python-version }}"
+
+      - name: Staging-Probe ausführen
+        env:
+          SKILL_PFAD: ${{ inputs.skill-pfad }}
+          STAGING_PROBE_BEFEHL: ${{ inputs.staging-probe-befehl }}
+        run: |
+          if [ -n "${PYTHONPATH:-}" ]; then
+            SEP=":"
+            [ "${RUNNER_OS:-}" = "Windows" ] && SEP=";"
+            export PYTHONPATH="${SKILL_PFAD}${SEP}${PYTHONPATH}"
+          else
+            export PYTHONPATH="${SKILL_PFAD}"
+          fi
+          python -m to_spawn.pruef.pipeline_stufe2 staging-probe --repo . --mit-staging-app --befehl "$STAGING_PROBE_BEFEHL" --summary-pfad "$GITHUB_STEP_SUMMARY"
+
+  ticket-abgleich:
+    name: Ticket-Abgleich (Nachtrunde rot)
+    needs: [vorab, vorbereiten, stufe-2, staging-probe]
+    if: ${{ always() && needs.vorab.outputs.laufen == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skill-Repo auschecken (Fremdrepo)
+        if: ${{ inputs.skill-repo != '' }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.skill-repo }}
+          ref: ${{ inputs.skill-ref }}
+          path: ${{ inputs.skill-pfad }}
+          sparse-checkout: to_spawn
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ inputs.python-version }}"
+
+      - name: Ein offenes Ticket pflegen oder schließen
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SKILL_PFAD: ${{ inputs.skill-pfad }}
+          REPO_SLUG: ${{ github.repository }}
+          TICKET_TITEL: ${{ inputs.ticket-titel }}
+          HAUPTZWEIG: ${{ needs.vorab.outputs.hauptzweig || github.ref_name }}
+          AKTUELLER_SHA: ${{ needs.vorab.outputs.aktueller_sha || github.sha }}
+          LAUF_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          VORBEREITEN_STATUS: ${{ needs.vorbereiten.result }}
+          STUFE2_STATUS: ${{ needs.stufe-2.result }}
+          STAGING_STATUS: ${{ needs.staging-probe.result }}
+        run: |
+          if [ -n "${PYTHONPATH:-}" ]; then
+            SEP=":"
+            [ "${RUNNER_OS:-}" = "Windows" ] && SEP=";"
+            export PYTHONPATH="${SKILL_PFAD}${SEP}${PYTHONPATH}"
+          else
+            export PYTHONPATH="${SKILL_PFAD}"
+          fi
+          if [ "$VORBEREITEN_STATUS" = "success" ] && [ "$STUFE2_STATUS" = "success" ] && { [ "$STAGING_STATUS" = "success" ] || [ "$STAGING_STATUS" = "skipped" ]; }; then
+            ERGEBNIS="gruen"
+          else
+            ERGEBNIS="rot"
+          fi
+          DETAILS="vorbereiten=${VORBEREITEN_STATUS}, stufe-2=${STUFE2_STATUS}, staging-probe=${STAGING_STATUS}"
+          python -m to_spawn.pruef.nachtrunde ticket --repo . --repo-slug "$REPO_SLUG" --ergebnis "$ERGEBNIS" --titel "$TICKET_TITEL" --zweig "$HAUPTZWEIG" --sha "$AKTUELLER_SHA" --lauf-url "$LAUF_URL" --details "$DETAILS" --summary-pfad "$GITHUB_STEP_SUMMARY"
