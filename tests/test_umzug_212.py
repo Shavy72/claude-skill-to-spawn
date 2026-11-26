@@ -12,7 +12,6 @@ import os
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -124,14 +123,18 @@ def _manifest(repo: Path) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _ein_umzug_test_zur_zeit() -> Iterator[None]:
-    """Tests dieser Datei laufen rechnerweit nacheinander (Datei-Sperre, auch über xdist-Worker).
+def _ein_umzug_test_zur_zeit(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """Tests dieser Datei laufen im Lauf nacheinander (Datei-Sperre, auch über xdist-Worker).
 
     Mehrere Tests starten ``bau.py 9121`` (echt oder als Schläfer), andere prüfen, dass
     #9121 nicht läuft. ``sessions_stand.ordner_fremd`` zählt einen Prozess, dessen
     Ordner nicht lesbar ist, bewusst mit (lieber kein Doppelstart) — auch einen, der
     zwischen ``ps`` und dem Ordner-Blick endet. Parallel sah so ein Test den eben
     beendeten Prozess eines Nachbartests als „wartet“ (#1411).
+
+    Die Sperrdatei liegt im gemeinsamen Lauf-Basetemp (unter xdist ``pt-*/``, nicht in der
+    äußeren Temp-Wurzel ``~/tmp-bau``), damit alle Worker sie teilen und sie mit ``pt-*``
+    wieder verschwindet (#355).
     """
     # ponytail: Sperre nur mit fcntl (Linux); Windows-Lauf mit xdist ungeprüft — dort bei
     # Bedarf msvcrt.locking ergänzen.
@@ -140,7 +143,10 @@ def _ein_umzug_test_zur_zeit() -> Iterator[None]:
     except ImportError:
         yield
         return
-    with open(Path(tempfile.gettempdir()) / "to-spawn-test-umzug-212.lock", "a") as sperre:
+    basis = tmp_path_factory.getbasetemp()
+    if basis.name.startswith("popen-gw"):
+        basis = basis.parent
+    with open(basis / "to-spawn-test-umzug-212.lock", "a") as sperre:
         fcntl.flock(sperre, fcntl.LOCK_EX)
         try:
             yield
