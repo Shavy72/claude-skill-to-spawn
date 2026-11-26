@@ -210,7 +210,7 @@ Fehlt die Datei, gelten die Vorgaben aus `to_spawn/config.py`:
 für Antigravity; auch per `to_spawn.py setup --runner claude|agy`, `to_spawn.py probesitz --runner …`
 und `skripte/bau.py --runner …` setzbar; Standardmodell bei `"agy"` ist `gemini-4-neon-high`, sofern
 `modelle.ticket` kein eigenes Nicht-Claude-Modell setzt oder `--model` übergeben wird — einzige Stelle:
-`to_spawn/werkzeug.py`, #660). Auf Linux lesen `sessions_stand.py`, `aufseher_stand.py`, `leiter.py` und
+`to_spawn/werkzeug.py`, #660). Auf Linux und Windows lesen `sessions_stand.py`, `aufseher_stand.py`, `leiter.py` und
 `bau.py` den Spitzen-Kontext und die Token-Zahlen von `agy`-Sessions aus
 `~/.gemini/antigravity-cli/conversation_summaries.db` und `brain/<id>/.system_generated/logs/transcript.jsonl`.
 `staffel.grenze_k` ist nur der Ticket-Schnitt (Planungs-Grenze je Ticket), keine Ablöse-Grenze:

@@ -1316,7 +1316,7 @@ def main() -> int:
                 code,
             )
             return 0
-        if runner == "agy" and sys.platform != "win32":
+        if runner == "agy":
             wt_pfad = Path(worktree_pfad(ticket)).expanduser()
             try:
                 werkzeug.agy_bau_log_nachtragen(
@@ -1331,7 +1331,7 @@ def main() -> int:
             except OSError as fehler:
                 log.warning("agy-Bau-Log #%s nicht nachgetragen: %s", ticket, fehler)
         uebergabe = staffel_uebergabe(staffel_datei)
-        if uebergabe is None and runner == "agy" and sys.platform != "win32" and staffel_aktiv(konfig):
+        if uebergabe is None and runner == "agy" and staffel_aktiv(konfig):
             fund = werkzeug.agy_staffel_handoff(
                 [Path(p) for p in handoff_dirs(ticket)],
                 ticket,
