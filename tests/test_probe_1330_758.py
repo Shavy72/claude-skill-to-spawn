@@ -180,8 +180,8 @@ def test_punkt1_auf_platte_warten_fragt_fremde_tickets_doppelt_und_prozesse_je_o
     assert gh_abfragen == [], "Kern-Fix #781: auf_platte_warten startet bei 9,5 % ohne synchronen Fremd-Ticket-Scan"
     assert prozess_aufrufe == 0
 
-    # Direkter Hausmeister-Rundgang bei Platznot: Ticket-Daten gecacht (#781 Kern),
-    # Windows-Verstärker (_prozesse-Cache) bleibt offen für den Windows-Teil von #781.
+    # Direkter Hausmeister-Rundgang bei Platznot: Ticket-Daten (#781 Kern) und
+    # Windows-Prozessliste (#781 Windows) werden je Rundgang einmal gecacht.
     rund = hausmeister.rundgang(loeschen=True)
     assert rund.gelaufen is True
     gefragte_tickets = [nr for nr, _ in gh_abfragen]
@@ -189,9 +189,7 @@ def test_punkt1_auf_platte_warten_fragt_fremde_tickets_doppelt_und_prozesse_je_o
     assert gefragte_tickets.count(1498) == 1 and gefragte_tickets.count(1499) == 1, (
         "Kern-Fix #781: jeder Ordner wird je Rundgang höchstens einmal per gh abgefragt (_TICKET_DATEN_CACHE)"
     )
-    assert prozess_aufrufe == 2, (
-        "Windows-Verstärker (offen): hausmeister_windows._prozesse() läuft ohne Cache einmal je geschlossenem Ordner"
-    )
+    assert prozess_aufrufe == 1, "Windows-Fix #781: hausmeister_windows._prozesse() wird je Rundgang einmal gecacht"
 
 
 def test_punkt1_sessions_stand_meldet_wartet_solange_bau_py_vor_claude_steht(
