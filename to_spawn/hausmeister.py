@@ -675,7 +675,10 @@ def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> Rundgang:
             _zweige_im_takt(loeschen, jetzt)
             return Rundgang(False, f"Ordnersuche gescheitert ({type(fehler).__name__}: {fehler})")
         ergebnisse: list[Ergebnis] = []
-        with prozessbaum.arbeitsordner_lauf_cache() if _ist_windows() else nullcontext():
+        with (
+            prozessbaum.arbeitsordner_lauf_cache() if _ist_windows() else nullcontext(),
+            hausmeister_windows.prozess_lauf_cache() if _ist_windows() else nullcontext(),
+        ):
             for ordner in kandidaten:
                 erg = _aufraeumen(ordner, loeschen=loeschen, jetzt=jetzt, platznot=_ist_platznot(anteil))
                 ergebnisse.append(erg)
@@ -3466,7 +3469,10 @@ def _kein_prozess(ordner: Path, *, probe: bool = False) -> None:
     zusätzlich die Umbenennungs-Probe (siehe :mod:`to_spawn.hausmeister_windows`)."""
     if _ist_windows():
         try:
-            with prozessbaum.arbeitsordner_lauf_cache(aktiv=False) if probe else nullcontext():
+            with (
+                prozessbaum.arbeitsordner_lauf_cache(aktiv=False) if probe else nullcontext(),
+                hausmeister_windows.prozess_lauf_cache(aktiv=False) if probe else nullcontext(),
+            ):
                 hausmeister_windows.kein_prozess(ordner)
             if probe:
                 hausmeister_windows.umbenennen_probe(ordner)

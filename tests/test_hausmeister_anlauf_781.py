@@ -1,7 +1,8 @@
-"""#781 (Linux-/Kern-Teil): ``bau.py`` / ``speicher.auf_platte_warten`` blockiert bei Platznot
+"""#781 (Kern- + Windows-Teil): ``bau.py`` / ``speicher.auf_platte_warten`` blockiert bei Platznot
 über der Startsperre nicht durch einen synchronen Hausmeister-Rundgang über fremde Tickets,
-und ``hausmeister._alle_ordner()`` cacht Ticket-Daten zwischen ``_schliesszeit()`` und
-``_ticket_lange_zu()``.
+``hausmeister._alle_ordner()`` cacht Ticket-Daten zwischen ``_schliesszeit()`` und
+``_ticket_lange_zu()``, und unter Windows cacht :func:`hausmeister_windows.prozess_lauf_cache`
+die CIM-Prozessliste einmal je Hausmeister-Rundgang (mit Pause bei der Gegenprobe vor dem Löschen).
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ SKILL = Path(__file__).resolve().parents[1]
 if str(SKILL) not in sys.path:
     sys.path.insert(0, str(SKILL))
 
-from to_spawn import hausmeister, prozessbaum, speicher, starter
+from to_spawn import hausmeister, hausmeister_windows, prozessbaum, speicher, starter
 
 
 def _git(ordner: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -213,3 +214,156 @@ def test_alle_ordner_cacht_auch_fehler_antwort_none_innerhalb_eines_rundgangs(
     assert rund.fehler == 3
     gefragte = [nr for nr, _ in aufrufe]
     assert sorted(gefragte) == [1477, 1498, 1499]
+
+
+# --- Windows-Teil (#781): Lauf-Cache für hausmeister_windows._prozesse() -----
+
+
+def _windows_rundgang_welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, mit_offen: bool = True) -> Path:
+    """Richtet geschlossene (und optional einen offenen) Ordner für den Windows-Zweig ein."""
+    wurzeln = tmp_path / "wt"
+    origin_url = "https://github.com/probe-org/app-repo.git"
+    if mit_offen:
+        _mini_klon(wurzeln / "wt-1477", origin_url, "ticket/1477-eigen")
+    _mini_klon(wurzeln / "wt-1498", origin_url, "ticket/1498-fremd-a")
+    _mini_klon(wurzeln / "wt-1499", origin_url, "ticket/1499-fremd-b")
+
+    maschine = tmp_path / "maschine.json"
+    maschine.write_text(
+        json.dumps(
+            {
+                "repos": [
+                    {
+                        "pfad": str(wurzeln / "hauptrepo"),
+                        "slug": "probe-org/app-repo",
+                        "ticket_repo": "probe-org/app-repo",
+                    }
+                ],
+                "hausmeister": {
+                    "wurzeln": [str(wurzeln / "wt-*")],
+                    "ordner_praefixe": ["wt-"],
+                    "geschuetzte_ordner": ["hauptrepo"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    altbestand = tmp_path / "altbestand.json"
+    altbestand.write_text(json.dumps({"ordner": []}), encoding="utf-8")
+
+    monkeypatch.setenv("TO_SPAWN_MASCHINE", str(maschine))
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_WURZELN", str(wurzeln / "wt-*"))
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_LOG", str(tmp_path / "hausmeister.jsonl"))
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_PLATTE", "0.095")
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_ZWEIGE_LOESCHEN", "0")
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_ALTBESTAND", str(altbestand))
+    monkeypatch.setattr(hausmeister, "_PLATTFORM", "win32")
+    monkeypatch.setattr(
+        hausmeister,
+        "_gh_ticket",
+        lambda ticket, _repo: (
+            {"state": "OPEN", "closedAt": None}
+            if ticket == 1477
+            else {"state": "CLOSED", "closedAt": "2026-11-01T10:00:00Z"}
+        ),
+    )
+    monkeypatch.setattr(hausmeister, "_keine_spec_sitzung", lambda _ticket: None)
+    monkeypatch.setattr(hausmeister_windows, "_kein_arbeitsordner_drin", lambda _ordner: None)
+    monkeypatch.setattr(hausmeister.temp_ordner, "aufraeumen", lambda **_kw: [])
+    monkeypatch.setattr(hausmeister.uebergabe_sichern, "sichern", lambda **_kw: None)
+    return wurzeln
+
+
+def test_windows_rundgang_cacht_prozesse_einmal_je_rundgang(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unter Windows ruft :func:`hausmeister.rundgang` die CIM-Prozessliste je Rundgang höchstens
+    einmal ab — ein zweiter Rundgang liest frisch."""
+    wurzeln = _windows_rundgang_welt(tmp_path, monkeypatch, mit_offen=True)
+    aufrufe = 0
+
+    def _fake_prozesse() -> list[tuple[int | None, str | None, str | None]]:
+        nonlocal aufrufe
+        aufrufe += 1
+        return [
+            (99991, str(wurzeln / "wt-1498"), None),
+            (99992, str(wurzeln / "wt-1499"), None),
+        ]
+
+    monkeypatch.setattr(hausmeister_windows, "_prozesse", _fake_prozesse)
+
+    rund1 = hausmeister.rundgang(loeschen=True)
+    assert rund1.gelaufen is True
+    assert aufrufe == 1, f"_prozesse() muss im ersten Rundgang genau einmal laufen, nicht {aufrufe}×"
+
+    # Zweiter Rundgang startet mit frischem Cache — keine veralteten Prozessdaten über Rundgänge hinweg.
+    rund2 = hausmeister.rundgang(loeschen=True)
+    assert rund2.gelaufen is True
+    assert aufrufe == 2, f"Zweiter Rundgang muss frisch lesen (erwartet 2, bekommen {aufrufe})"
+
+
+def test_windows_prozess_lauf_cache_pausiert_bei_gegenprobe_und_ausserhalb(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``prozess_lauf_cache`` cacht innerhalb des Blocks, pausiert bei ``aktiv=False`` (Gegenprobe
+    in :func:`hausmeister._kein_prozess` mit ``probe=True``) und wirkt außerhalb gar nicht."""
+    ordner_a = tmp_path / "wt-1498"
+    ordner_b = tmp_path / "wt-1499"
+    ordner_a.mkdir()
+    ordner_b.mkdir()
+    monkeypatch.setattr(hausmeister, "_PLATTFORM", "win32")
+    monkeypatch.setattr(hausmeister_windows, "_kein_arbeitsordner_drin", lambda _ordner: None)
+    monkeypatch.setattr(hausmeister_windows, "umbenennen_probe", lambda _ordner: None)
+
+    aufrufe = 0
+    antworten: list[list[tuple[int | None, str | None, str | None]]] = [
+        [],  # erster Aufruf im Lauf-Cache: frei
+        [(88888, str(ordner_b), None)],  # Gegenprobe (probe=True): neuer Prozess!
+        [],  # Aufruf außerhalb des Lauf-Caches: frisch
+    ]
+
+    def _fake_prozesse() -> list[tuple[int | None, str | None, str | None]]:
+        nonlocal aufrufe
+        idx = min(aufrufe, len(antworten) - 1)
+        aufrufe += 1
+        return antworten[idx]
+
+    monkeypatch.setattr(hausmeister_windows, "_prozesse", _fake_prozesse)
+
+    with hausmeister_windows.prozess_lauf_cache():
+        hausmeister._kein_prozess(ordner_a, probe=False)
+        hausmeister._kein_prozess(ordner_b, probe=False)
+        assert aufrufe == 1, "Zwei Ordner im selben Lauf-Cache dürfen _prozesse() nur einmal rufen"
+
+        # Gegenprobe direkt vor dem Löschen muss den Cache pausieren und den neuen Prozess sehen.
+        with pytest.raises(hausmeister._Bleibt, match="88888"):
+            hausmeister._kein_prozess(ordner_b, probe=True)
+        assert aufrufe == 2
+
+        # Danach gilt der äußere Lauf-Cache wieder.
+        hausmeister._kein_prozess(ordner_a, probe=False)
+        assert aufrufe == 2
+
+    # Außerhalb des Blocks kein Cache: jeder Aufruf liest frisch.
+    hausmeister._kein_prozess(ordner_a, probe=False)
+    assert aufrufe == 3
+
+
+def test_windows_rundgang_cacht_powershell_fehler_innerhalb_eines_rundgangs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Scheitert PowerShell (:class:`hausmeister_windows.Bleibt` mit ``fehler=True``), fragt
+    derselbe Rundgang nicht für jeden weiteren Ordner erneut ab — alle betroffenen Ordner bleiben
+    mit Fehler."""
+    _windows_rundgang_welt(tmp_path, monkeypatch, mit_offen=False)
+    aufrufe = 0
+
+    def _kaputtes_prozesse() -> list[tuple[int | None, str | None, str | None]]:
+        nonlocal aufrufe
+        aufrufe += 1
+        raise hausmeister_windows.Bleibt("Prozessliste nicht lesbar (PowerShell-Timeout)", fehler=True)
+
+    monkeypatch.setattr(hausmeister_windows, "_prozesse", _kaputtes_prozesse)
+
+    rund = hausmeister.rundgang(loeschen=True)
+    assert rund.gelaufen is True
+    assert rund.fehler == 2
+    assert aufrufe == 1, f"PowerShell-Fehler darf im selben Rundgang nicht erneut starten, nicht {aufrufe}×"

@@ -19,8 +19,9 @@ import re
 import stat
 import subprocess
 import sys
-from collections.abc import Callable
-from contextlib import ExitStack
+from collections.abc import Callable, Iterator
+from contextlib import ExitStack, contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -91,6 +92,46 @@ def _liegt_in(pfad: str, ordner: str) -> bool:
     return pfad.split("/")[: len(teile)] == teile
 
 
+#: Lauf-Zwischenspeicher für die CIM-Prozessliste (gesetzt über :func:`prozess_lauf_cache`).
+#: ``None`` = kein Cache aktiv (jeder Aufruf liest frisch); nie über Läufe hinweg (#781).
+_PROZESSE_CACHE: ContextVar[dict[str, list[tuple[int | None, str | None, str | None]] | Bleibt] | None] = ContextVar(
+    "hausmeister_windows_prozesse_cache",
+    default=None,
+)
+
+
+@contextmanager
+def prozess_lauf_cache(*, aktiv: bool = True) -> Iterator[None]:
+    """Aktiviert (``aktiv=True``) oder pausiert (``aktiv=False``, z. B. für Gegenproben vor dem
+    Löschen) den Lauf-Zwischenspeicher für :func:`_prozesse` (#781).
+
+    Die CIM-Prozessliste wird beim ersten Aufruf im Lauf einmal ermittelt und für weitere
+    Zielordner desselben Laufs wiederverwendet. Gilt nur innerhalb des Blocks.
+    """
+    token = _PROZESSE_CACHE.set({} if aktiv else None)
+    try:
+        yield
+    finally:
+        _PROZESSE_CACHE.reset(token)
+
+
+def _prozesse_gecacht() -> list[tuple[int | None, str | None, str | None]]:
+    """CIM-Prozessliste aus :func:`prozess_lauf_cache` oder frisch über :func:`_prozesse`."""
+    cache = _PROZESSE_CACHE.get()
+    if cache is None:
+        return _prozesse()
+    if "wert" not in cache:
+        try:
+            cache["wert"] = _prozesse()
+        except Bleibt as fehler:
+            cache["wert"] = fehler
+            raise
+    wert = cache["wert"]
+    if isinstance(wert, Bleibt):
+        raise wert
+    return wert
+
+
 def kein_prozess(ordner: Path) -> None:
     """Prozessliste per CIM: :class:`Bleibt`, wenn ``ExecutablePath`` im Ordner liegt oder
     ``CommandLine`` den Ordnerpfad enthält (Groß/Klein egal, ``/`` = Backslash; ``wt-13``
@@ -100,7 +141,7 @@ def kein_prozess(ordner: Path) -> None:
     (nur im echten Lauf, sie fasst den Ordner an)."""
     o = pfad_norm(ordner)
     im_text = re.compile(re.escape(o) + r"(?![^/\s\"'])")
-    for pid, befehl, exe in _prozesse():
+    for pid, befehl, exe in _prozesse_gecacht():
         if pid == os.getpid():
             continue  # dieser Lauf selbst (z. B. Ordner als CLI-Argument)
         exe_n = pfad_norm(exe) if exe else ""
