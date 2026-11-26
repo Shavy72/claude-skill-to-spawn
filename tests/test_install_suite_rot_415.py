@@ -360,13 +360,15 @@ def test_wiederholtes_rot_kommentiert_bestehendes_ticket_statt_zweites_anzulegen
 
 
 def test_suite_befehl_erhaelt_parallelitaet_wie_suite_sh() -> None:
-    """#415 Harte Grenze: Parallelität (-n 4 --dist worksteal) wird nicht gesenkt."""
+    """#415/#353 Harte Grenze: Parallelität (mind. -n 4 bis 8, --dist worksteal) wird nicht gesenkt."""
     from to_spawn import install_pruefung
 
     befehl = install_pruefung.suite_befehl(sys.executable)
     assert befehl[:5] == [sys.executable, "-m", "pytest", "-q", "-p"]
     assert "no:cacheprovider" in befehl
-    assert "-n" in befehl and befehl[befehl.index("-n") + 1] == "4"
+    erwartet = install_pruefung.standard_worker()
+    assert int(erwartet) >= 4
+    assert "-n" in befehl and befehl[befehl.index("-n") + 1] == erwartet
     assert "--dist" in befehl and befehl[befehl.index("--dist") + 1] == "worksteal"
 
 

@@ -16,8 +16,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import test_spec_rand_e2 as e2
@@ -67,6 +65,13 @@ def _stub_main(args: list[str]) -> int:
     pfad.write_text(json.dumps(welt), encoding="utf-8")
     print(f"https://github.com/{e2.SLUG}/issues/{nummer}")
     return 0
+
+
+# #353: Als gh-Stub gestartet sofort beenden, ohne pytest (und Plugins) zu importieren.
+if __name__ == "__main__":
+    sys.exit(_stub_main(sys.argv[1:]))
+
+import pytest  # noqa: E402
 
 
 def _aufbau(
@@ -499,6 +504,8 @@ def _spawn_srv_weg(tmp_path: Path, *args: str) -> tuple[subprocess.CompletedProc
             # git fetch auf die Attrappen-URL bleibt lokal: nur file-Protokoll erlaubt.
             "GIT_ALLOW_PROTOCOL": "file",
             "GIT_TERMINAL_PROMPT": "0",
+            # #353: Fake-tmux startet kein echtes bau.py (schreibt kein fenster_<N>.log) → 2-s-Prüfwartezeit sparen.
+            "TO_SPAWN_ANLAUF_PRUEF_S": "0",
         }
     )
     vorher = e2._manifest(repo).read_bytes()
@@ -778,7 +785,3 @@ def test_spawn_srv_weg_ohne_feste_wartezeiten_und_mit_anlauf_fenster_nachweis(tm
     ausgabe = lauf.stdout + lauf.stderr
     assert lauf.returncode == 0, ausgabe
     assert "Staffel: 0 s" in ausgabe, ausgabe
-
-
-if __name__ == "__main__":
-    sys.exit(_stub_main(sys.argv[1:]))

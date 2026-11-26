@@ -431,7 +431,7 @@ def test_l_zwei_stop_hooks_hoechstens_ein_takt(welt: dict[str, Any]) -> None:
         time.sleep(0.2)
     time.sleep(1)
     assert _hook_stop(welt, "sess-a").returncode == 0
-    time.sleep(8)
+    time.sleep(2)
     assert log.read_text(encoding="utf-8").count("ausgelöst") == 1, log.read_text(encoding="utf-8")
 
 

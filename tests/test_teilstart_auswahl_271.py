@@ -592,6 +592,8 @@ def test_spawn_srv_speichert_auswahl_und_beachtet_dry_run_und_nachstart(
         "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
         "TO_SPAWN_REPO": str(repo),
         "TO_SPAWN_RECHNER": "bau-srv-1",
+        # #353: Fake-tmux schreibt kein fenster_<N>.log → 2-s-Prüfwartezeit je Lauf sparen.
+        "TO_SPAWN_ANLAUF_PRUEF_S": "0",
     }
 
     def lauf(*args: str, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:

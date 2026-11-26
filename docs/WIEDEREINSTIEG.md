@@ -7,10 +7,12 @@ Maschinen-Ausfall oder einer langen Pause. Es braucht keinen Chat und keine Übe
 Pflege: Die führende Leit-Session hält den Abschnitt „Stand“ aktuell (nach jedem gemergten
 Paket einer Etappe und bei jeder Ablösung). Regel dazu: Lastenheft L5. Alle Uhrzeiten in diesem
 Dokument gelten in **Europe/Berlin (MEZ/MESZ)** (ältere Verlaufs-Einträge tragen teils noch
-„Server-Uhr“/„PC-Uhr“). Der Test `tests/test_uebergabe_sichern_145.py` prüft über
-`to_spawn.uebergabe_sichern.juengster_main_stand` gegen `origin/main` (einschließlich
-Squash-Merges) und wird rot, wenn der jüngste Stand-Eintrag mehr als 24 Stunden älter ist als der
-jüngste Merge auf `main`.
+„Server-Uhr“/„PC-Uhr“). Der Test `tests/test_uebergabe_sichern_145.py` prüft deterministisch
+Format, Reihenfolge und Konsistenz des obersten Stand-Eintrags mit seinem zitierten `main`-Commit
+(und mit `TO_SPAWN_PRUEFE_STAND_FRISCHE=1` zusätzlich gegen `origin/main`); die laufende
+24-Stunden-Frische gegen `origin/main` (einschließlich Squash-Merges) meldet
+`to_spawn.py sichern --pruefen` über `to_spawn.uebergabe_sichern.wiedereinstieg_stand_hinweis` als
+Hinweis, damit fremde Merges die Code-Suite nicht blockieren.
 
 **Ablösungs-Regel (Leit-Session, Aufseher, Ober-Aufsicht):** vor dem Start der Nachfolgerin
 1. hier im Abschnitt „Stand“ einen Eintrag schreiben (Stand, als Nächstes),

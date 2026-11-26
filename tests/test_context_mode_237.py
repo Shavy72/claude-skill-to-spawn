@@ -231,6 +231,7 @@ def _start_mjs_nachkommen(pid: int) -> list[int]:
     return [p for p in treffer if p in nachkommen]
 
 
+@pytest.mark.braucht_claude_login
 @pytest.mark.skipif(shutil.which("claude") is None, reason="claude nicht auf dem PATH")
 @pytest.mark.skipif(
     os.environ.get("TO_SPAWN_OHNE_ECHTEN_WEG") == "1",

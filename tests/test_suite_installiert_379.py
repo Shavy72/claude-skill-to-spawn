@@ -96,14 +96,20 @@ def test_suite_sh_ruft_mit_wurzel_conftest_pytest_auf(tmp_path: Path) -> None:
 
 
 def test_suite_sh_nutzt_vier_worker_und_worksteal(tmp_path: Path) -> None:
-    """#353: Standard-Aufruf nutzt vier Worker mit ``--dist worksteal`` gegen langsame End-Worker."""
+    """#353: Standard-Aufruf nutzt 4–8 Worker nach CPU-Kernen (wie ``install_pruefung.standard_worker``)
+    mit ``--dist worksteal`` und erlaubt Überschreiben per ``TO_SPAWN_SUITE_WORKER``."""
+    from to_spawn import install_pruefung
+
     klon, spur, env = _klon_vorbereiten(tmp_path)
+    basis_env = {k: v for k, v in env.items() if k != install_pruefung.SUITE_WORKER_ENV}
+    erwartet = install_pruefung.standard_worker(umgebung={})
+    assert int(erwartet) >= 4
 
     lauf = subprocess.run(
         ["bash", str(klon / "skripte" / "suite.sh")],
         capture_output=True,
         text=True,
-        env=env,
+        env=basis_env,
         check=False,
     )
 
@@ -116,10 +122,21 @@ def test_suite_sh_nutzt_vier_worker_und_worksteal(tmp_path: Path) -> None:
         "-p",
         "no:cacheprovider",
         "-n",
-        "4",
+        erwartet,
         "--dist",
         "worksteal",
     ], daten["argv"]
+
+    lauf_override = subprocess.run(
+        ["bash", str(klon / "skripte" / "suite.sh")],
+        capture_output=True,
+        text=True,
+        env={**basis_env, install_pruefung.SUITE_WORKER_ENV: "6"},
+        check=False,
+    )
+    assert lauf_override.returncode == 0, lauf_override.stderr
+    daten_override = json.loads(spur.read_text(encoding="utf-8"))
+    assert daten_override["argv"][-4:] == ["-n", "6", "--dist", "worksteal"], daten_override["argv"]
 
 
 def test_suite_sh_reicht_argumente_cwd_und_exit_code_durch(tmp_path: Path) -> None:

@@ -26,27 +26,20 @@ from to_spawn import (
     briefkasten_cli,
     config,
     deploy_status,
-    einrichten,
-    einrichtungs_ticket,
     gh,
     hausmeister,
     hausmeister_aufgabe,
     helfer_temp,
     hooks,
     inventur,
-    komplett_lauf,
     konsole,
     leiter,
     leitstand,
-    live_tuer,
     manifest,
     nest,
     ort_wahl,
-    probesitz,
-    pruef,
     regel_pruefung,
     respawn,
-    setup,
     spec_rand,
     speicher,
     ssh_beobachten,
@@ -116,6 +109,8 @@ def _pruefen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int | Non
         return None
     if args.tickets or args.dry_run or args.ohne_github or args.ohne_einrichtung:
         ap.error("--tickets/--dry-run/--ohne-einrichtung/--ohne-github gelten nur für „regularien <S>“")
+    from to_spawn import pruef
+
     repo = config.repo_wurzel(args.repo.expanduser() if args.repo else _repo_aus_umgebung())
     urteil = pruef.pruefen(repo, args.basis, args.ziel)
     print(pruef.protokoll.text(urteil.zeile))
@@ -124,6 +119,8 @@ def _pruefen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int | Non
 
 def _setup(repo: Path, args: argparse.Namespace) -> int:
     """Unterbefehl ``setup``: zeigen, Flags setzen oder Dialog über stdin."""
+    from to_spawn import setup
+
     datei = repo / config.KONFIG_PFAD
     werte = {
         "terminal": args.terminal,
@@ -679,6 +676,8 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     if args.befehl == "ticket-lage":
         return _ticket_lage(args)
     if args.befehl == "komplett":
+        from to_spawn import komplett_lauf
+
         repo = config.repo_wurzel(_repo_aus_umgebung())
         tuer = komplett_lauf.takt_kind if args.aus_takt else komplett_lauf.komplett_einmal
         erg = tuer(repo, args.spec, KOMPLETT_MOMENTE[args.moment], config.lade(repo))
@@ -686,6 +685,8 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         print(erg.grund)
         return 0 if erg.frei else 1
     if args.befehl == "live":
+        from to_spawn import live_tuer
+
         repo = config.repo_wurzel(_repo_aus_umgebung())
         code, zeilen = live_tuer.starte(repo, args.spec, config.lade(repo))
         print("\n".join(zeilen))
@@ -726,8 +727,12 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     if args.befehl == "setup":
         return _setup(repo, args)
     if args.befehl == "einrichten":
+        from to_spawn import einrichten
+
         return einrichten.einrichten(repo, pruefen=args.pruefen, ausgabe=sys.stdout)
     if args.befehl == "probesitz":
+        from to_spawn import probesitz
+
         return probesitz.befehl(
             repo,
             punkte=args.punkt,
@@ -736,9 +741,13 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
             runner=args.runner,
         )
     if args.befehl == "spawn" and args.dry_run:
+        from to_spawn import einrichten
+
         # Probelauf (L1): Einrichter nur prüfend, schreibt nichts, Abweichung hält nicht auf.
         einrichten.einrichten(repo, pruefen=True, ausgabe=sys.stdout)
     if args.befehl == "spawn" and not args.dry_run:
+        from to_spawn import einrichten, setup
+
         # Einrichter vor dem Setup (L1): große Lücken nur gemeldet, nur ein Anleger-Fehler hält auf.
         code = einrichten.einrichten(repo, ausgabe=sys.stdout)
         if code != 0:
@@ -788,6 +797,8 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     if args.befehl == "stand":
         return stand_modul.sichere_stand(repo, konfig)
     if args.befehl == "regularien":
+        from to_spawn import einrichtungs_ticket
+
         # Einrichtungs-Ticket (#410) vor der Prüfung: es soll in ihr schon mitzählen.
         # Probelauf (--dry-run), --tickets, --nur-wache (--ohne-einrichtung) und
         # „Spec läuft schon“: nur Hinweis. Anlegen scheitert oder Stand unklar: Exit 3 (unten).

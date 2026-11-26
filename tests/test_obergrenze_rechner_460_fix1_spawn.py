@@ -104,6 +104,8 @@ def _spawn(
             "TO_SPAWN_HAUSMEISTER_PLATTE": "0.5",
             "GIT_ALLOW_PROTOCOL": "file",
             "GIT_TERMINAL_PROMPT": "0",
+            # #353: Fake-tmux startet kein echtes bau.py (kein fenster_<N>.log) → 2-s-Prüfwartezeit sparen.
+            "TO_SPAWN_ANLAUF_PRUEF_S": "0",
         }
     )
     umgebung.pop("TMUX", None)

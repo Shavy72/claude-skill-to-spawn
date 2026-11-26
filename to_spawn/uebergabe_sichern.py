@@ -62,6 +62,11 @@ STAND_ZEITZONE = "Europe/Berlin"
 #: Frist zwischen jüngstem ``main``-Stand und jüngstem Stand-Eintrag in ``docs/WIEDEREINSTIEG.md``.
 STAND_FRIST = timedelta(hours=24)
 STAND_ZEILE = re.compile(r"^- \*\*(\d{4}-\d{2}-\d{2} \d{2}:\d{2})", re.MULTILINE)
+#: Zitierter ``main``-Commit im neuesten Stand-Eintrag (z. B. ``(Europe/Berlin, main 7005f9c)``, #353).
+STAND_REFERENZ_MUSTER = re.compile(
+    r"^- \*\*\d{4}-\d{2}-\d{2} \d{2}:\d{2}\b[^\n]*?\bmain\s+([0-9a-f]{7,40})\b",
+    re.MULTILINE,
+)
 
 
 @dataclass
@@ -438,14 +443,51 @@ def _stand_zone() -> tzinfo:
         return datetime.now().astimezone().tzinfo or UTC
 
 
+def _stand_abschnitt(text: str) -> str:
+    """Text des Abschnitts ``## 3. Stand`` (leer, wenn der Abschnitt fehlt)."""
+    if "## 3. Stand" not in text:
+        return ""
+    return text.split("## 3. Stand", 1)[1].split("\n## ", 1)[0]
+
+
+def stand_zeitpunkte(text: str) -> list[datetime]:
+    """Alle geparsten Zeitstempel im Abschnitt ``## 3. Stand`` in Reihenfolge ihres Auftretens."""
+    abschnitt = _stand_abschnitt(text)
+    if not abschnitt:
+        return []
+    zone = _stand_zone()
+    return [datetime.strptime(t, "%Y-%m-%d %H:%M").replace(tzinfo=zone) for t in STAND_ZEILE.findall(abschnitt)]
+
+
 def stand_zeitpunkt(text: str) -> datetime | None:
     """Jüngster Zeitstempel im Abschnitt ``## 3. Stand`` von ``docs/WIEDEREINSTIEG.md``."""
-    if "## 3. Stand" not in text:
-        return None
-    abschnitt = text.split("## 3. Stand", 1)[1].split("\n## ", 1)[0]
-    zone = _stand_zone()
-    zeiten = [datetime.strptime(t, "%Y-%m-%d %H:%M").replace(tzinfo=zone) for t in STAND_ZEILE.findall(abschnitt)]
+    zeiten = stand_zeitpunkte(text)
     return max(zeiten) if zeiten else None
+
+
+def stand_referenz_commit(text: str) -> str | None:
+    """Zitierter ``main``-Commit-SHA aus dem obersten Stand-Eintrag (``None``, wenn nicht genannt, #353)."""
+    abschnitt = _stand_abschnitt(text)
+    if not abschnitt:
+        return None
+    for zeile in abschnitt.splitlines():
+        if not STAND_ZEILE.match(zeile):
+            continue
+        treffer = STAND_REFERENZ_MUSTER.match(zeile)
+        return treffer.group(1) if treffer else None
+    return None
+
+
+def commit_zeitpunkt(repo: Path, ref: str) -> datetime | None:
+    """Commit-Zeitpunkt von ``ref`` in ``repo`` (in :data:`STAND_ZEITZONE`); ``None`` wenn unbekannt (#353)."""
+    try:
+        aus = _git(repo, "log", "-1", "--format=%ct", ref)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    roh = aus.stdout.strip()
+    if aus.returncode != 0 or not roh.isdigit():
+        return None
+    return datetime.fromtimestamp(int(roh), tz=UTC).astimezone(_stand_zone())
 
 
 def stand_veraltet(text: str, referenz: datetime, frist: timedelta = STAND_FRIST) -> bool:
@@ -456,6 +498,35 @@ def stand_veraltet(text: str, referenz: datetime, frist: timedelta = STAND_FRIST
     if referenz.tzinfo is None:
         referenz = referenz.replace(tzinfo=juengster.tzinfo)
     return juengster + frist < referenz
+
+
+def wiedereinstieg_stand_hinweis(
+    repo: Path,
+    *,
+    referenz: datetime | None = None,
+    frist: timedelta = STAND_FRIST,
+) -> str | None:
+    """Betriebs-Hinweis, falls ``docs/WIEDEREINSTIEG.md`` älter als ``origin/main`` minus ``frist`` ist (#353).
+
+    Gibt ``None`` zurück, wenn das Dokument fehlt, aktuell ist oder der Git-Verlauf flach ist.
+    """
+    datei = repo / "docs" / "WIEDEREINSTIEG.md"
+    if not datei.is_file():
+        return None
+    merge = referenz if referenz is not None else juengster_main_stand(repo)
+    if merge is None:
+        return None
+    try:
+        text = datei.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    if not stand_veraltet(text, merge, frist):
+        return None
+    lokal = merge.astimezone(_stand_zone()) if merge.tzinfo is not None else merge
+    return (
+        f"docs/WIEDEREINSTIEG.md: jüngster Stand-Eintrag älter als jüngster main-Stand "
+        f"{lokal:%Y-%m-%d %H:%M %Z} minus {frist} — Abschnitt „Stand“ fortschreiben (L5)."
+    )
 
 
 def juengster_main_stand(repo: Path) -> datetime | None:
@@ -551,6 +622,9 @@ def pruefen() -> SicherungPruefung:
     for repo in zweig_repos:
         if not repo.is_dir():
             hinweise.append(f"Zweig-Repo fehlt auf der Platte: {repo}")
+    stand_hinweis = wiedereinstieg_stand_hinweis(_skill_wurzel())
+    if stand_hinweis:
+        hinweise.append(stand_hinweis)
 
     erg = SicherungPruefung(
         maschine_datei=datei,

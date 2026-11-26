@@ -472,6 +472,8 @@ def _pflichtfall_welt(tmp_path: Path, *, kaputt_alle: bool = False) -> tuple[Pat
             "TMPDIR": str(tmp_path),
             "GH_STUB_ZU": ",".join(geschlossen),
             "GH_STUB_KAPUTT": ",".join(tickets) if kaputt_alle else "",
+            # #353: Fake-tmux startet kein echtes bau.py-Log → 2-s-Prüfwartezeit in spawn_srv.sh sparen.
+            "TO_SPAWN_ANLAUF_PRUEF_S": "0",
         }
     )
     assert len(tickets) == 13 and len(offen) == 3

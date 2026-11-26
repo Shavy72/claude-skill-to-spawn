@@ -528,6 +528,23 @@ def _im_hintergrund(klon: Path, spec: int, moment: Moment, kopf: str) -> Ergebni
             aktuell,
             laeuft=True,
         )
+    # #353: Starthub-Rennen zwischen zwei parallelen Takt-Aufrufen: endete dieser Hintergrund-Start
+    # ohne eigenen Merker, während ein anderer Lauf ``komplett-<S>.lock`` bereits hält, läuft die
+    # Komplett-Prüfung regulär weiter — kein Fehler-Exit.
+    sperr_datei = _datei(klon, spec).with_suffix(".lock")
+    try:
+        with _sperre.halte(sperr_datei) as frei:
+            if not frei:
+                return Ergebnis(
+                    False,
+                    True,
+                    f"Komplett-Prüfung läuft schon (Sperre {sperr_datei.name}). Handlung: später erneut rufen.",
+                    None,
+                    aktuell,
+                    laeuft=True,
+                )
+    except _sperre.SperreNichtOeffenbar:
+        pass
     letzte = _letzte_zeile(ausgabe)
     return Ergebnis(
         False,

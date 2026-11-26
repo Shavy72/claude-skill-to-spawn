@@ -237,9 +237,17 @@ def _alle() -> list[tuple[str, str, str, str, str, str]]:
 
 
 def test_m12a_alte_reihe_34_nichts_uebersehen(probe: dict[str, Path]) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
     faelle = _alle()
     assert len(faelle) == 34
-    assert _uebersehen(probe, faelle) == []
+    # #353: Python- und Node-Probe-Repos sind getrennte Arbeitsordner — parallel halbiert die Laufzeit.
+    py_faelle = [f for f in faelle if f[0] == "py"]
+    node_faelle = [f for f in faelle if f[0] == "node"]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        fut_py = pool.submit(_uebersehen, probe, py_faelle)
+        fut_node = pool.submit(_uebersehen, probe, node_faelle)
+        assert fut_py.result() + fut_node.result() == []
 
 
 def test_rot_beweis_ohne_r1_wird_bekannter_fall_uebersehen(

@@ -21,8 +21,6 @@ import types
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 SKILL = Path(__file__).resolve().parent.parent
 CLI = SKILL / "to_spawn.py"
 SLUG = "wegwerf/repo"
@@ -119,6 +117,13 @@ def _stub_main(args: list[str]) -> int:
         return 0
     print(f"Stub kennt den Pfad nicht: {ziel}", file=sys.stderr)
     return 2
+
+
+# #353: Als gh-Stub gestartet sofort beenden, ohne pytest (und Plugins) zu importieren.
+if __name__ == "__main__":
+    sys.exit(_stub_main(sys.argv[1:]))
+
+import pytest  # noqa: E402
 
 
 # --- Aufbau -------------------------------------------------------------------------
@@ -526,7 +531,3 @@ def test_befund_wiederholt_haengt_folge_ticket_nachtraeglich_an(tmp_path: Path) 
     assert zweit.returncode == 0, zweit.stdout + zweit.stderr
     assert neu in _welt(weltdatei)["unter"][str(SPEC)]
     assert len([n for n in _manifest(repo) if _manifest(repo)[n].get("gelb_von") == TICKET]) == 1
-
-
-if __name__ == "__main__":
-    sys.exit(_stub_main(sys.argv[1:]))
