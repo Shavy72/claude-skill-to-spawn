@@ -334,7 +334,9 @@ def neustart(
         else:
             opfer = eintrag.session_pid or eintrag.pid
             if dry_run:
-                print(f"würde beenden: PID {opfer} ({'Claude-Session' if eintrag.session_pid else 'bau.py ohne Session'})")
+                print(
+                    f"würde beenden: PID {opfer} ({'Claude-Session' if eintrag.session_pid else 'bau.py ohne Session'})"
+                )
             else:
                 try:
                     os.kill(int(opfer), 15)

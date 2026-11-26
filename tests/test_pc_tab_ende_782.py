@@ -38,7 +38,9 @@ def _ft(unix: float) -> int:
     return int((unix + _FT) * 1e7)
 
 
-def _prozesse(pwsh_cmd: str, ticket: int = 1477, *, mit_claude: bool = True, **extra: tuple[int, str, int]) -> dict[int, tuple[int, str, int]]:
+def _prozesse(
+    pwsh_cmd: str, ticket: int = 1477, *, mit_claude: bool = True, **extra: tuple[int, str, int]
+) -> dict[int, tuple[int, str, int]]:
     daten: dict[int, tuple[int, str, int]] = {
         100: (4, r"C:\Program Files\WindowsApps\WindowsTerminal.exe", _ft(T0 - 30)),
         200: (100, pwsh_cmd, _ft(T0 - 20)),
@@ -151,9 +153,7 @@ def test_abloesen_mit_echtem_lauf_aus_beendet_spawn_local_tab(tmp_path: Path) ->
 # --- 2. spawn.neustart --beenden unter Windows -------------------------------
 
 
-def test_neustart_beenden_windows_beendet_alleinigen_tab_pwsh(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_neustart_beenden_windows_beendet_alleinigen_tab_pwsh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``spawn.neustart --beenden`` unter Windows beendet den alleinigen Tab-``pwsh`` per ``baum_beenden``."""
     monkeypatch.setattr(spawn.sys, "platform", "win32")
     monkeypatch.setenv("TO_SPAWN_REPO", str(tmp_path))
@@ -170,7 +170,9 @@ def test_neustart_beenden_windows_beendet_alleinigen_tab_pwsh(
     gestartet: list[list[str]] = []
 
     monkeypatch.setattr(spawn, "ticket_eintrag", _eintrag)
-    monkeypatch.setattr(pc_fenster, "tab_pid", lambda ticket, bau_pid: 200 if (ticket, bau_pid) == (1477, 300) else None)
+    monkeypatch.setattr(
+        pc_fenster, "tab_pid", lambda ticket, bau_pid: 200 if (ticket, bau_pid) == (1477, 300) else None
+    )
     monkeypatch.setattr(pc_fenster, "baum_beenden", lambda pid: (beendet.append(pid), True)[1])
     monkeypatch.setattr(
         spawn.starter,
@@ -211,9 +213,7 @@ def test_neustart_beenden_windows_ohne_alleinigen_tab_beendet_bau_py(
     assert beendet == [300]
 
 
-def test_neustart_beenden_linux_bleibt_unveraendert(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_neustart_beenden_linux_bleibt_unveraendert(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Linux-Verhalten von ``spawn.neustart --beenden`` bleibt unverändert (``os.kill(session_pid, 15)``)."""
     monkeypatch.setattr(spawn.sys, "platform", "linux")
     monkeypatch.setenv("TO_SPAWN_REPO", str(tmp_path))
