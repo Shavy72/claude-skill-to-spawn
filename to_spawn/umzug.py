@@ -30,7 +30,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
 from typing import Any, TextIO
@@ -65,8 +65,17 @@ KILL_FRIST = 20.0
 #: Zeit, die Session weiterlaufen zu lassen. Per ``TO_SPAWN_FERTIG_RUHE_S`` kürzbar (Tests).
 FERTIG_RUHE_S = 5.0
 FERTIG_RUHE_ENV = "TO_SPAWN_FERTIG_RUHE_S"
+#: Nachprüf-Fenster (s), wenn nach einer Fertig-Meldung kein neuer Transkript-Zug erschien,
+#: ``session.json`` oder Pane aber noch kurz ``busy``/aktiv meldet (nur Linux, #288).
+FERTIG_NACHPRUEF_S = 30.0
+FERTIG_NACHPRUEF_ENV = "TO_SPAWN_FERTIG_NACHPRUEF_S"
+#: Prüf-Takt (s) für Werkzeuge ohne Claude-Stop-Hook (z. B. ``agy``, nur Linux, #288).
+FERTIG_POLL_S = 30.0
+FERTIG_POLL_ENV = "TO_SPAWN_FERTIG_POLL_S"
 #: Transkript-Einträge, die echte Weiterarbeit nach einem Stop-Hook belegen (#288).
 _AKTIVE_TRANSKRIPT_TYPEN = frozenset({"assistant", "user", "api-request"})
+#: Aktiver Subagent-Hinweis in der Statuszeile von ``agy`` (z. B. ``1 subagent(s)``, #288).
+_AGY_SUBAGENT_AKTIV = re.compile(r"\b[1-9]\d*\s+subagent\(s\)")
 
 HANDOFF_NAME = re.compile(r"^HANDOFF_\d{4}-\d{2}-\d{2}_(\d+)\.md$")
 #: Pflichtzeile im Umzug-Handoff — Fettschrift/Groß-Klein egal (wie ``STAFFEL_MARKER``),
@@ -84,7 +93,7 @@ def _ist_windows() -> bool:
 
 def _jetzt() -> datetime:
     """Ortszeit mit Zeitzone (Handoff-Datum und Zeitstempel wie auf dem PC)."""
-    return datetime.now(timezone.utc).astimezone()
+    return datetime.now(UTC).astimezone()
 
 
 class Abbruch(Exception):
@@ -1026,6 +1035,50 @@ def _fertig_ruhe_s() -> float:
     return max(0.0, wert)
 
 
+def _fertig_nachpruef_s() -> float:
+    """Nachprüf-Fenster bei kurzzeitigem ``busy`` ohne neuen Zug (:data:`FERTIG_NACHPRUEF_S`)."""
+    roh = os.environ.get(FERTIG_NACHPRUEF_ENV, "").strip()
+    if not roh:
+        return FERTIG_NACHPRUEF_S
+    try:
+        wert = float(roh)
+    except ValueError:
+        return FERTIG_NACHPRUEF_S
+    return max(0.0, wert)
+
+
+def _fertig_poll_s(standard: float) -> float:
+    """Prüf-Takt für Werkzeuge ohne Claude-Stop-Hook (``0`` = aus; :data:`FERTIG_POLL_ENV`)."""
+    if standard <= 0:
+        return 0.0
+    roh = os.environ.get(FERTIG_POLL_ENV, "").strip()
+    if not roh:
+        return standard
+    try:
+        wert = float(roh)
+    except ValueError:
+        return standard
+    return max(0.0, wert)
+
+
+def _iso_zeitstempel(roh: Any) -> float | None:
+    """ISO-8601-Zeitstempel in Unix-Sekunden wandeln; ``None`` bei fehlendem/ungültigem Wert."""
+    if not isinstance(roh, str):
+        return None
+    text = roh.strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        wert = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if wert.tzinfo is None:
+        wert = wert.replace(tzinfo=UTC)
+    return wert.timestamp()
+
+
 def _schreibe_fertig_beendet(datei: Path, daten: dict[str, Any]) -> None:
     """Vermerkt atomar ``beendet: True`` in ``datei`` (nur Linux, #288)."""
     kopie = {**daten, "beendet": True}
@@ -1037,36 +1090,96 @@ def _schreibe_fertig_beendet(datei: Path, daten: dict[str, Any]) -> None:
         log.warning("Fertig-Datei %s nicht aktualisierbar: %s", datei, fehler)
 
 
-def _session_aktiv_nach_stop(prozess_pid: int, daten: dict[str, Any]) -> bool:
-    """Rein lokale Gegenprobe (nur Linux, #288): arbeitet die Session nach dem Stop-Hook weiter?
+def _transkript_aktiv_nach_stop(daten: dict[str, Any]) -> str | None:
+    """Prüft das Transkript ab ``transcript_size`` auf echte Weiterarbeit nach dem Stop-Hook (#288).
 
-    Erkennt drei Fälle:
-    1. Neuer Zug im Transkript ab ``transcript_size`` (``assistant``/``user``/``api-request``,
-       z. B. wenn ``review/stop.py`` blockierte oder ein Hintergrund-Agent meldete).
-    2. Session-JSON unter ``~/.claude/sessions/<pid>.json`` meldet ``status == "busy"``.
-    3. Im eigenen tmux-Pane (``TMUX_PANE``) steht ein laufender Arbeits- oder Hintergrund-Agent-Marker.
+    Claude Code flusht Transkript-Zeilen teils asynchron: der letzte ``assistant``-Zug vor dem
+    Stop-Hook kann erst nach ``stat().st_size`` auf der Platte landen. Enthält der Ausschnitt
+    ein ``system/stop_hook_summary``, zählen daher nur Einträge NACH dem letzten
+    ``stop_hook_summary`` (oder ``preventedContinuation: True``) als echte Weiterarbeit.
+    Ohne ``stop_hook_summary`` werden verspätete Einträge mit Zeitstempel deutlich vor
+    ``fertig.json["zeit"]`` ignoriert.
     """
     transkript_roh = str(daten.get("transcript_path") or "").strip()
     groesse = daten.get("transcript_size")
-    if transkript_roh and isinstance(groesse, int) and not isinstance(groesse, bool) and groesse >= 0:
-        pfad = Path(transkript_roh)
+    if not (transkript_roh and isinstance(groesse, int) and not isinstance(groesse, bool) and groesse >= 0):
+        return None
+    pfad = Path(transkript_roh)
+    try:
+        if not pfad.is_file():
+            return None
+        roh = pfad.read_bytes()
+    except OSError:
+        return None
+    ausschnitt = roh[groesse:] if groesse <= len(roh) else roh
+    eintraege: list[dict[str, Any]] = []
+    for zeile in ausschnitt.decode("utf-8", errors="replace").splitlines():
+        zeile = zeile.strip()
+        if not zeile:
+            continue
         try:
-            if pfad.is_file():
-                roh = pfad.read_bytes()
-                ausschnitt = roh[groesse:] if groesse <= len(roh) else roh
-                for zeile in ausschnitt.decode("utf-8", errors="replace").splitlines():
-                    zeile = zeile.strip()
-                    if not zeile:
-                        continue
-                    try:
-                        eintrag = json.loads(zeile)
-                    except ValueError:
-                        continue
-                    if isinstance(eintrag, dict) and eintrag.get("type") in _AKTIVE_TRANSKRIPT_TYPEN:
-                        return True
-        except OSError:
-            pass
+            eintrag = json.loads(zeile)
+        except ValueError:
+            continue
+        if isinstance(eintrag, dict):
+            eintraege.append(eintrag)
 
+    letzter_stop_idx = -1
+    for idx, eintrag in enumerate(eintraege):
+        if eintrag.get("type") == "system" and eintrag.get("subtype") == "stop_hook_summary":
+            if eintrag.get("preventedContinuation") is True:
+                return "transkript:stop_hook_blockiert"
+            letzter_stop_idx = idx
+
+    if letzter_stop_idx >= 0:
+        for eintrag in eintraege[letzter_stop_idx + 1 :]:
+            typ = eintrag.get("type")
+            if typ in _AKTIVE_TRANSKRIPT_TYPEN:
+                return f"transkript:{typ}"
+        return None
+
+    fertig_zeit = daten.get("zeit")
+    zeit_grenze = (
+        float(fertig_zeit) - 0.5
+        if isinstance(fertig_zeit, (int, float)) and not isinstance(fertig_zeit, bool)
+        else None
+    )
+    for eintrag in eintraege:
+        typ = eintrag.get("type")
+        if typ not in _AKTIVE_TRANSKRIPT_TYPEN:
+            continue
+        ts = _iso_zeitstempel(eintrag.get("timestamp"))
+        if ts is not None and zeit_grenze is not None and ts < zeit_grenze:
+            continue
+        return f"transkript:{typ}"
+    return None
+
+
+def _pane_text_eigen() -> str | None:
+    """Liest den Text des eigenen tmux-Panes (``TMUX_PANE``); ``None`` ohne Pane oder bei Fehler."""
+    pane = os.environ.get("TMUX_PANE", "").strip()
+    if not pane:
+        return None
+    try:
+        erg = subprocess.run(
+            ["tmux", "capture-pane", "-p", "-t", pane],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+            check=False,
+            **prozessbaum.fensterlos(),
+        )
+        if erg.returncode == 0:
+            return erg.stdout
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return None
+
+
+def _lauf_aktiv_nach_stop(prozess_pid: int, *, pane_text: str | None = None) -> str | None:
+    """Prüft Live-Signale (Session-JSON ``busy`` oder laufende Pane-Marker ohne Alt-Limit-Text)."""
     from . import speicher
 
     sessions_ordner = config.heim_ordner() / ".claude" / "sessions"
@@ -1077,27 +1190,56 @@ def _session_aktiv_nach_stop(prozess_pid: int, daten: dict[str, Any]) -> bool:
     for pid in baum:
         info = speicher.session_json_lesen(pid, sessions_ordner, Path("/proc"))
         if info is not None and info.get("status") == "busy":
-            return True
+            return "session_json:busy"
 
-    pane = os.environ.get("TMUX_PANE", "").strip()
-    if pane:
+    text = pane_text if pane_text is not None else _pane_text_eigen()
+    if text:
         from . import aufpasser
 
+        status_text = aufpasser.statuszeile(text)
+        if any(m in status_text for m in aufpasser.LAUFEND_MARKER):
+            return "pane:esc_to_interrupt"
+        if any(m in status_text for m in aufpasser.STATUSZEILEN_ARBEITS_MARKER):
+            return "pane:background_agent"
+        if _AGY_SUBAGENT_AKTIV.search(text):
+            return "pane:agy_subagent"
+    return None
+
+
+def _session_aktiv_nach_stop(prozess_pid: int, daten: dict[str, Any]) -> bool:
+    """Rein lokale Gegenprobe (nur Linux, #288): arbeitet die Session nach dem Stop-Hook weiter?
+
+    Erkennt drei Fälle:
+    1. Neuer Zug im Transkript NACH ``stop_hook_summary`` (oder ``preventedContinuation: True``,
+       z. B. wenn ``review/stop.py`` blockierte oder ein Hintergrund-Agent meldete).
+    2. Session-JSON unter ``~/.claude/sessions/<pid>.json`` meldet ``status == "busy"``.
+    3. Im eigenen tmux-Pane (``TMUX_PANE``) steht ein laufender Arbeits- oder Subagent-Marker
+       (ohne alte Limit-Hinweise im Scrollback).
+    """
+    return (_transkript_aktiv_nach_stop(daten) or _lauf_aktiv_nach_stop(prozess_pid)) is not None
+
+
+def _agy_transkript_aktiv(ruhe_s: float) -> bool:
+    """Wurde das jüngste ``agy``-Transkript des aktuellen Worktrees/Repos gerade beschrieben?"""
+    from . import werkzeug
+
+    kandidaten: list[Path] = []
+    for var in ("TO_SPAWN_LOG_REPO", "TO_SPAWN_LOG_RUECKFALL"):
+        roh = os.environ.get(var, "").strip()
+        if roh:
+            pfad = Path(roh)
+            if pfad.is_dir() and pfad not in kandidaten:
+                kandidaten.append(pfad)
+    for ordner in kandidaten:
+        cid = werkzeug.agy_gespraech_fuer_ordner(ordner)
+        if not cid:
+            continue
+        transkript = werkzeug.agy_transkript_pfad(cid)
         try:
-            erg = subprocess.run(
-                ["tmux", "capture-pane", "-p", "-t", pane],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=5,
-                check=False,
-                **prozessbaum.fensterlos(),
-            )
-            if erg.returncode == 0 and aufpasser.arbeits_marker_aktiv(erg.stdout):
+            if transkript.is_file() and (time.time() - transkript.stat().st_mtime) < ruhe_s:
                 return True
-        except (OSError, subprocess.SubprocessError):
-            pass
+        except OSError:
+            continue
     return False
 
 
@@ -1115,6 +1257,26 @@ def _baum_mit_kindern_beenden(prozess: subprocess.Popen[Any], frist: float) -> b
     return ok
 
 
+def _warte_mit_abbruch(
+    stopp: threading.Event,
+    dauer: float,
+    takt: float,
+    datei: Path,
+    prozess: subprocess.Popen[Any],
+) -> bool:
+    """Wartet bis ``dauer`` s; bricht bei ``stopp``, ``datei`` oder Prozessende sofort ab.
+
+    Rückgabe ``True`` = sauber durchgelaufen, ``False`` = vorzeitig abgebrochen.
+    """
+    ende = time.monotonic() + max(0.0, dauer)
+    while time.monotonic() < ende:
+        if stopp.wait(min(takt, max(0.02, ende - time.monotonic()))):
+            return False
+        if datei.exists() or prozess.poll() is not None:
+            return False
+    return not stopp.is_set() and prozess.poll() is None and not datei.exists()
+
+
 def _umzug_waechter(
     datei: Path,
     prozess: subprocess.Popen[Any],
@@ -1123,28 +1285,48 @@ def _umzug_waechter(
     takt: float,
     frist: float,
     fertig_datei: Path | None = None,
+    fertig_poll_s: float = 0.0,
 ) -> None:
+    poll_intervall = _fertig_poll_s(fertig_poll_s) if (fertig_datei is not None and not _ist_windows()) else 0.0
+    naechster_poll = time.monotonic() + poll_intervall if poll_intervall > 0 else 0.0
+    letzter_pane_text: str | None = None
+
     while not stopp.wait(takt):
         if datei.exists():
             if prozess.poll() is None:
                 log.info("Umzug-Datei %s gesehen — lokale Session wird beendet.", datei.name)
                 stand["lokal_beendet"] = _baum_beenden(prozess, frist)
             return
-        if fertig_datei is None or _ist_windows() or not fertig_datei.is_file():
+        if fertig_datei is None or _ist_windows():
             continue
         staffel_roh = os.environ.get("BAU_STAFFEL_DATEI", "").strip()
         if staffel_roh and Path(staffel_roh).is_file():
             continue
+        if not fertig_datei.is_file():
+            if poll_intervall > 0 and time.monotonic() >= naechster_poll and prozess.poll() is None:
+                naechster_poll = time.monotonic() + poll_intervall
+                pane_text = _pane_text_eigen()
+                if _lauf_aktiv_nach_stop(prozess.pid, pane_text=pane_text) is not None:
+                    letzter_pane_text = pane_text
+                    continue
+                if pane_text is not None and pane_text != letzter_pane_text:
+                    letzter_pane_text = pane_text
+                    continue
+                if _agy_transkript_aktiv(_fertig_ruhe_s()):
+                    continue
+                from . import hooks
+
+                try:
+                    hooks.fertig_pruefen_und_melden("")
+                except Exception as fehler:  # noqa: BLE001 — Prüf-Fehler darf Session nie kippen
+                    log.warning("Fertig-Prüfung ohne Stop-Hook fehlgeschlagen: %s", fehler)
+            if not fertig_datei.is_file():
+                continue
         fertig_daten = lies_fertig(fertig_datei)
         if fertig_daten is None or fertig_daten.get("beendet") is True:
             continue
         ruhe = _fertig_ruhe_s()
-        ende = time.monotonic() + ruhe
-        while time.monotonic() < ende:
-            if stopp.wait(min(takt, max(0.02, ende - time.monotonic()))):
-                return
-            if datei.exists() or prozess.poll() is not None:
-                break
+        _warte_mit_abbruch(stopp, ruhe, takt, datei, prozess)
         if stopp.is_set() or prozess.poll() is not None:
             return
         if datei.exists():
@@ -1156,10 +1338,60 @@ def _umzug_waechter(
         aktuell = lies_fertig(fertig_datei)
         if aktuell is None or aktuell.get("zeit") != fertig_daten.get("zeit"):
             continue
-        if _session_aktiv_nach_stop(prozess.pid, aktuell):
-            log.info("Fertig-Meldung verworfen — Session arbeitet nach Stop-Hook weiter.")
+        transkript_grund = _transkript_aktiv_nach_stop(aktuell)
+        if transkript_grund is not None:
+            log.info("Fertig-Meldung verworfen (%s) — Session arbeitet nach Stop-Hook weiter.", transkript_grund)
             fertig_datei.unlink(missing_ok=True)
             continue
+        lauf_grund = _lauf_aktiv_nach_stop(prozess.pid)
+        if lauf_grund is not None:
+            # Kein neuer Zug im Transkript, aber kurzzeitig noch busy/aktiv (z. B. ai-title):
+            # nicht sofort für immer verwerfen, sondern innerhalb des Nachprüf-Fensters abwarten (#288).
+            nachpruef_ende = time.monotonic() + _fertig_nachpruef_s()
+            verworfen = False
+            while time.monotonic() < nachpruef_ende:
+                schritt = min(takt, 0.5, max(0.02, nachpruef_ende - time.monotonic()))
+                if stopp.wait(schritt) or prozess.poll() is not None:
+                    return
+                if datei.exists():
+                    log.info("Umzug-Datei %s gesehen — lokale Session wird beendet.", datei.name)
+                    stand["lokal_beendet"] = _baum_beenden(prozess, frist)
+                    return
+                if staffel_roh and Path(staffel_roh).is_file():
+                    verworfen = True
+                    break
+                transkript_grund = _transkript_aktiv_nach_stop(aktuell)
+                if transkript_grund is not None:
+                    log.info(
+                        "Fertig-Meldung verworfen (%s) — Session arbeitet nach Stop-Hook weiter.",
+                        transkript_grund,
+                    )
+                    fertig_datei.unlink(missing_ok=True)
+                    verworfen = True
+                    break
+                lauf_grund = _lauf_aktiv_nach_stop(prozess.pid)
+                if lauf_grund is None:
+                    if not _warte_mit_abbruch(stopp, min(ruhe, 1.0), takt, datei, prozess):
+                        if datei.exists():
+                            log.info("Umzug-Datei %s gesehen — lokale Session wird beendet.", datei.name)
+                            stand["lokal_beendet"] = _baum_beenden(prozess, frist)
+                        return
+                    transkript_grund = _transkript_aktiv_nach_stop(aktuell)
+                    lauf_grund = _lauf_aktiv_nach_stop(prozess.pid)
+                    if transkript_grund is not None:
+                        log.info(
+                            "Fertig-Meldung verworfen (%s) — Session arbeitet nach Stop-Hook weiter.",
+                            transkript_grund,
+                        )
+                        fertig_datei.unlink(missing_ok=True)
+                        verworfen = True
+                    break
+            if verworfen:
+                continue
+            if lauf_grund is not None:
+                log.info("Fertig-Meldung verworfen (%s) — Session arbeitet nach Stop-Hook weiter.", lauf_grund)
+                fertig_datei.unlink(missing_ok=True)
+                continue
         log.info(
             "Fertig-Datei %s gesehen (%s) — stille Session wird beendet.",
             fertig_datei.name,
@@ -1201,6 +1433,7 @@ def starte_mit_umzug_wache(
     takt: float = 1.0,
     frist: float = KILL_FRIST,
     fertig_datei: Path | None = None,
+    fertig_poll_s: float = 0.0,
 ) -> tuple[int, dict[str, Any] | None]:
     """Startet ``cmd`` interaktiv; taucht ``datei`` (oder auf Linux ``fertig_datei``) auf, wird das Kind beendet.
 
@@ -1208,7 +1441,7 @@ def starte_mit_umzug_wache(
     sonst mit ``lokal_beendet`` (``False`` = die lokale Session ist nicht nachweislich
     weg, Doppel-Lauf möglich). Auf Windows bleibt der ``shell=True``-Notnagel für
     ``.cmd``-Shims — nur, wenn das Programm ohne Shell nicht gefunden wird; ``fertig_datei``
-    wirkt nur unter Linux (#288).
+    und ``fertig_poll_s`` wirken nur unter Linux (#288).
     """
     datei.unlink(missing_ok=True)
     if fertig_datei is not None and not _ist_windows():
@@ -1222,7 +1455,7 @@ def starte_mit_umzug_wache(
     stand: dict[str, bool] = {}
     faden = threading.Thread(
         target=_umzug_waechter,
-        args=(datei, prozess, stopp, stand, takt, frist, fertig_datei),
+        args=(datei, prozess, stopp, stand, takt, frist, fertig_datei, fertig_poll_s),
         daemon=True,
     )
     faden.start()

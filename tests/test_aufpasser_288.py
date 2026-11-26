@@ -19,15 +19,19 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import time
 import types
+import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 from test_aufpasser_236 import (  # noqa: F401 — ``welt`` ist ein Fixture
     SITZUNG,
+    SOCKET,
     SPEC,
     Welt,
     fenster_namen,
@@ -684,3 +688,374 @@ time.sleep(60)
     kommentare = welt.kommentare()
     assert not any("startet nicht" in k for k in kommentare), kommentare
     assert not any("braucht den Menschen" in k for k in kommentare), kommentare
+
+
+# --- 6. Probe 6 (#288): Async-Transkript-Flush, transient busy, agy & Aufpasser ---
+
+
+def _agy_datenbank_anlegen(
+    heim: Path,
+    ordner: Path,
+    cid: str,
+    *,
+    alter_s: float = 0.0,
+) -> Path:
+    """Legt eine minimale ``agy``-Datenbank + ``transcript.jsonl`` unter ``heim`` an."""
+    basis = heim / ".gemini" / "antigravity-cli"
+    basis.mkdir(parents=True, exist_ok=True)
+    transkript = basis / "brain" / cid / ".system_generated" / "logs" / "transcript.jsonl"
+    transkript.parent.mkdir(parents=True, exist_ok=True)
+    zeit = datetime.now(UTC) - timedelta(seconds=alter_s)
+    iso = zeit.isoformat().replace("+00:00", "Z")
+    transkript.write_text(
+        json.dumps(
+            {
+                "type": "PLANNER_RESPONSE",
+                "conversation_id": cid,
+                "created_at": iso,
+                "model": "gemini-4-neon-high",
+                "usage": {"input_tokens": 1000, "output_tokens": 200},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    if alter_s > 0:
+        ziel_ts = time.time() - alter_s
+        os.utime(transkript, (ziel_ts, ziel_ts))
+    db = basis / "conversation_summaries.db"
+    con = sqlite3.connect(str(db))
+    try:
+        con.execute(
+            "CREATE TABLE IF NOT EXISTS conversation_summaries ("
+            "conversation_id TEXT, workspace_uris TEXT, last_modified_time TEXT, parent_conversation_id TEXT)"
+        )
+        con.execute(
+            "INSERT INTO conversation_summaries VALUES (?, ?, ?, ?)",
+            (cid, json.dumps([ordner.resolve().as_uri()]), iso, ""),
+        )
+        con.commit()
+    finally:
+        con.close()
+    return transkript
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Nur Linux-Teil (Bau-Server, #288)")
+def test_288_probe6_async_transcript_flush_verwirft_fertig_nicht(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Probe-6-Beleg (bau 3/5/12, ``probe6_288_diagnose.log``):
+    Spielt das echte Timing nach — Claude flusht den letzten ``assistant``-Zug asynchron
+    NACHDEM ``hook-stop`` ``transcript_size`` gemessen hat, gefolgt von ``attachment``,
+    ``system/stop_hook_summary`` (``preventedContinuation: False``), ``turn_duration``,
+    ``last-prompt``, ``ai-title`` und ``cost-state``. Das ist KEINE Weiterarbeit; erst ein
+    Zug NACH ``stop_hook_summary`` oder ``preventedContinuation: True`` zählt als aktiv."""
+    monkeypatch.delenv("TMUX_PANE", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "heim"))
+    transkript = tmp_path / "session.jsonl"
+    vorher = json.dumps({"type": "api-request", "timestamp": "2026-11-26T20:02:21.046Z"}) + "\n"
+    transkript.write_text(vorher, encoding="utf-8")
+    groesse_bei_hook = transkript.stat().st_size
+
+    # Nach hook-stop flushen genau die Zeilen aus bau 3/5/12 (assistant liegt VOR stop_hook_summary).
+    nach_flush = [
+        {"type": "assistant", "timestamp": "2026-11-26T20:02:25.939Z", "message": {"content": []}},
+        {"type": "attachment", "timestamp": "2026-11-26T20:02:26.021Z"},
+        {
+            "type": "system",
+            "subtype": "stop_hook_summary",
+            "timestamp": "2026-11-26T20:02:26.613Z",
+            "preventedContinuation": False,
+        },
+        {"type": "system", "subtype": "turn_duration", "timestamp": "2026-11-26T20:02:26.623Z"},
+        {"type": "last-prompt"},
+        {"type": "ai-title"},
+        {"type": "cost-state"},
+    ]
+    with transkript.open("a", encoding="utf-8") as fh:
+        for zeile in nach_flush:
+            fh.write(json.dumps(zeile) + "\n")
+
+    fertig_daten = {
+        "ticket": "3",
+        "grund": "Ticket zu",
+        "zeit": datetime(2026, 11, 26, 20, 2, 26, 577000, tzinfo=UTC).timestamp(),
+        "transcript_path": str(transkript),
+        "transcript_size": groesse_bei_hook,
+    }
+    assert umzug._session_aktiv_nach_stop(os.getpid(), fertig_daten) is False
+
+    # Gegenprobe 1: stop_hook_summary mit preventedContinuation=True -> wirklich aktiv!
+    transkript_block = tmp_path / "block.jsonl"
+    transkript_block.write_text(
+        vorher
+        + json.dumps(
+            {
+                "type": "system",
+                "subtype": "stop_hook_summary",
+                "timestamp": "2026-11-26T20:02:26.613Z",
+                "preventedContinuation": True,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    assert (
+        umzug._session_aktiv_nach_stop(
+            os.getpid(),
+            {**fertig_daten, "transcript_path": str(transkript_block), "transcript_size": len(vorher.encode("utf-8"))},
+        )
+        is True
+    )
+
+    # Gegenprobe 2: neuer Zug NACH stop_hook_summary -> wirklich aktiv!
+    with transkript.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"type": "user", "timestamp": "2026-11-26T20:02:28.000Z"}) + "\n")
+    assert umzug._session_aktiv_nach_stop(os.getpid(), fertig_daten) is True
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Nur Linux-Teil (Bau-Server, #288)")
+def test_288_probe6_kurz_busy_und_altes_limit_verwerfen_fertig_nicht(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Probe-6-Beleg (transient busy + altes Limit-Scrollback):
+    - Steht ``session.json`` nach ``fertig.json`` noch kurz auf ``busy`` (z. B. ``ai-title``)
+      ohne neuen Transkript-Zug und kippt danach auf ``idle``, darf ``fertig.json`` nicht
+      sofort für immer gelöscht werden — die Wache wartet nach und beendet die stille Session.
+    - Ein alter Limit-Text im Scrollback über ``❯`` zählt nicht als aktive Weiterarbeit."""
+    heim = tmp_path / "heim"
+    sessions_dir = heim / ".claude" / "sessions"
+    sessions_dir.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(heim))
+    monkeypatch.setenv("TO_SPAWN_FERTIG_RUHE_S", "0.25")
+    monkeypatch.setenv("TO_SPAWN_FERTIG_NACHPRUEF_S", "3.0")
+    monkeypatch.delenv("TMUX_PANE", raising=False)
+
+    umzug_datei = tmp_path / "umzug.json"
+    fertig_datei = tmp_path / "fertig.json"
+    transkript = tmp_path / "session.jsonl"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    monkeypatch.setenv("TO_SPAWN_TEST_BIN", str(bin_dir))
+
+    skript = bin_dir / "fake_claude_transient_busy.py"
+    skript.write_text(
+        f"""#!{sys.executable}
+import json, os, time
+from pathlib import Path
+
+sessions = Path({str(sessions_dir)!r})
+transkript = Path({str(transkript)!r})
+fertig = Path({str(fertig_datei)!r})
+pid = os.getpid()
+sjson = sessions / f"{{pid}}.json"
+
+# Erst busy, dann fertig.json schreiben; erst nach 0.7s (hinter der ersten Ruhefrist 0.25s!)
+# kippt status auf idle — ohne neuen Transkript-Zug.
+sjson.write_text(json.dumps({{"pid": pid, "sessionId": "sid-busy", "status": "busy"}}), encoding="utf-8")
+transkript.write_text(json.dumps({{"type": "assistant"}}) + "\\n", encoding="utf-8")
+size = transkript.stat().st_size
+fertig.write_text(
+    json.dumps({{"ticket": "5", "grund": "Ticket zu", "zeit": time.time(), "transcript_path": str(transkript), "transcript_size": size}}),
+    encoding="utf-8",
+)
+with transkript.open("a", encoding="utf-8") as fh:
+    fh.write(json.dumps({{"type": "system", "subtype": "stop_hook_summary", "preventedContinuation": False}}) + "\\n")
+time.sleep(0.7)
+sjson.write_text(json.dumps({{"pid": pid, "sessionId": "sid-busy", "status": "idle"}}), encoding="utf-8")
+time.sleep(8)
+""",
+        encoding="utf-8",
+    )
+    skript.chmod(0o755)
+
+    start = time.monotonic()
+    _code, umzug_daten = umzug.starte_mit_umzug_wache(
+        [str(skript)],
+        umzug_datei,
+        takt=0.05,
+        frist=3.0,
+        fertig_datei=fertig_datei,
+    )
+    dauer = time.monotonic() - start
+    assert umzug_daten is None
+    assert dauer < 6.0, f"Transient-busy Session blieb hängen ({dauer:.1f}s)"
+    erg = umzug.lies_fertig(fertig_datei)
+    assert erg is not None and erg.get("beendet") is True
+
+    # Altes Limit-Scrollback über ❯ (Statuszeile ruhig) darf nicht als aktiv zählen.
+    pane_altes_limit = (
+        "You have reached your usage limit — limit reset at 18:00\n"
+        "────────────────────────────────────────────────────────\n"
+        "❯ \n"
+        "────────────────────────────────────────────────────────\n"
+        "  Opus 5.5 · 80k · 1m\n"
+    )
+    monkeypatch.setenv("TMUX_PANE", "%999")
+    monkeypatch.setattr(
+        umzug.subprocess,
+        "run",
+        lambda *_a, **_k: subprocess.CompletedProcess([], 0, pane_altes_limit, ""),
+    )
+    assert umzug._session_aktiv_nach_stop(os.getpid(), {"transcript_path": "", "transcript_size": None}) is False
+
+
+def test_288_probe6_agy_session_schliesst_selbst_nach_ticket_schluss(
+    welt: Welt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Probe-6-Beleg (bau 4, ``agy`` ohne Claude-Stop-Hook):
+    ``bau.py 9005 --runner agy --sofort`` startet im tmux-Fenster; ``agy`` schließt #9005
+    und bleibt dann wie im echten Lauf am Prompt stehen. Ohne Claude-Stop-Hook muss ``bau.py``
+    trotzdem das geschlossene Ticket + Stille erkennen, ``agy`` samt Kind beenden, das
+    ``agy``-Bau-Log nachtragen und mit Exit 0 das tmux-Fenster schließen."""
+    zu_flag = welt.tmp / "ticket_9005_zu.flag"
+    kind_pid_datei = welt.tmp / "bau_9005_kind.pid"
+    bin_9005 = welt.tmp / "bin_9005"
+    bin_9005.mkdir()
+
+    gh_stub = SKILL / "tests" / "hilfen" / "gh_stub.py"
+    gh_wrap = bin_9005 / "gh"
+    gh_wrap.write_text(
+        f"""#!{sys.executable}
+import os, sys
+from pathlib import Path
+if Path({str(zu_flag)!r}).is_file():
+    alt = os.environ.get("GH_STUB_ZU", "")
+    os.environ["GH_STUB_ZU"] = (alt + ",9005").lstrip(",")
+os.execv({sys.executable!r}, [{sys.executable!r}, {str(gh_stub)!r}, *sys.argv[1:]])
+""",
+        encoding="utf-8",
+    )
+    gh_wrap.chmod(0o755)
+
+    agy_fake = bin_9005 / "agy"
+    agy_fake.write_text(
+        f"""#!{sys.executable}
+import subprocess, sys, time
+from pathlib import Path
+
+kind = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+Path({str(kind_pid_datei)!r}).write_text(str(kind.pid), encoding="utf-8")
+# Schließt Ticket #9005 (kein Claude-Stop-Hook!), bleibt dann still am Prompt stehen.
+Path({str(zu_flag)!r}).write_text("closed\\n", encoding="utf-8")
+print("Do you trust the contents of this project?\\nauto · Gemini 4 Neon · high", flush=True)
+time.sleep(60)
+""",
+        encoding="utf-8",
+    )
+    agy_fake.chmod(0o755)
+
+    manifest_dir = welt.repo / "docs" / "agents" / "manifests"
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    (manifest_dir / f"spec-{SPEC}.json").write_text(
+        json.dumps(
+            {"spec": int(SPEC), "feature": "probe-288-agy", "tickets": {"9005": {"title": "Ticket 9005"}}},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    wt_9005 = welt.worktree(9005, schmutzig=False)
+    _agy_datenbank_anlegen(welt.heim, wt_9005, "cid-agy-9005", alter_s=10.0)
+
+    monkeypatch.setenv("GH_STUB_UNTER", f"{SPEC}:9005")
+    monkeypatch.setenv("GH_STUB_ZU", "")
+    monkeypatch.delenv(startstelle.TEST_OFFEN_ENV, raising=False)
+    sperren = welt.tmp / "sperren_9005"
+    log_datei = capo.fenster_log(welt.repo, 9005)
+    bau_zeile = capo.bau_startzeile(welt.repo, 9005, "", "--runner", "agy")
+    start_cmd = (
+        f"unset {startstelle.TEST_OFFEN_ENV}; "
+        f"export HOME={welt.heim} "
+        f"PATH={bin_9005}:{welt.bin}:$PATH "
+        f"TO_SPAWN_TEST_BIN={bin_9005} "
+        f"TO_SPAWN_GH_STUB={gh_wrap} "
+        f"TO_SPAWN_GH_REPO=probe/repo "
+        f"TO_SPAWN_START_SPERREN={sperren} "
+        f"TO_SPAWN_TEST_FERN_SPERRE_AUS=1 "
+        f"TO_SPAWN_FERTIG_RUHE_S=0.3 "
+        f"TO_SPAWN_FERTIG_POLL_S=0.3 "
+        f"TMPDIR={welt.tmp}; "
+        f"{bau_zeile}"
+    )
+    tmux("new-window", "-d", "-t", f"={SITZUNG}", "-n", "bau 9005", "-c", str(welt.repo), f"bash -lc {start_cmd!r}")
+
+    frist = time.monotonic() + 10.0
+    while "bau 9005" in fenster_namen() and time.monotonic() < frist:
+        time.sleep(0.2)
+    assert "bau 9005" not in fenster_namen(), (
+        f"agy-Fenster bau 9005 schloss sich nach Ticket-Schluss nicht selbst: "
+        f"{log_datei.read_text(encoding='utf-8', errors='replace') if log_datei.is_file() else ''}"
+    )
+    assert zu_flag.is_file()
+    kind_pid = int(kind_pid_datei.read_text(encoding="utf-8").strip())
+    assert not prozessbaum.lebt(kind_pid), f"agy-Kindprozess {kind_pid} lief weiter"
+    if log_datei.is_file():
+        assert "bau.py #9005 Exit " not in log_datei.read_text(encoding="utf-8", errors="replace")
+
+
+def test_288_probe6_aufpasser_schliesst_fertige_fenster_claude_und_agy(
+    welt: Welt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Probe-6-Beleg (Defekt 2, ``probe6_aufpasser_288.log``):
+    Im regulären Aufpasser-Takt müssen fertige stille Fenster unabhängig vom Werkzeug
+    (``claude`` UND ``agy``) geschlossen werden, wenn ihre echte Idle-Zeit >= ``KARENZ_MIN`` ist:
+    - ``bau 9003`` (``claude``, neu für ``stand.json``, Session-JSON ``mtime`` 20 min alt)
+    - ``bau 9004`` (``agy``, ohne Claude-Session-JSON, ``agy``-Transkript 20 min alt)
+    - ``bau 9005`` (``claude``, bereits mit frischem ``seit`` in ``stand.json`` ohne Textwechsel,
+      Session-JSON ``mtime`` 20 min alt)
+    Gegenprobe: ein arbeitendes ``agy``-Fenster (``1 subagent(s)`` im Pane) bleibt offen."""
+    monkeypatch.setenv("GH_STUB_UNTER", f"{SPEC}:9003|9004|9005|9006")
+    monkeypatch.setenv("GH_STUB_ZU", "9003,9004,9005,9006")
+    monkeypatch.setattr(aufpasser, "EXIT_WARTEN_S", 1)
+
+    # 1. bau 9003 & bau 9005: Fake-Claude (status=idle, Session-JSON 20 min alt)
+    sid3 = str(uuid.uuid4())
+    sid5 = str(uuid.uuid4())
+    welt.fenster_fake_claude(9003, sid3)
+    welt.fenster_fake_claude(9005, sid5)
+
+    # 2. bau 9004 (idle agy) & bau 9006 (aktives agy mit 1 subagent(s))
+    agy_bin = welt.bin / "agy"
+    agy_bin.write_text(
+        f"""#!{sys.executable}
+import os, sys, time
+print(os.environ.get("FAKE_AGY_PANE", "auto · Gemini 4 Neon · high"), flush=True)
+time.sleep(3600)
+""",
+        encoding="utf-8",
+    )
+    agy_bin.chmod(0o755)
+    wt4 = welt.worktree(9004, schmutzig=False)
+    wt6 = welt.worktree(9006, schmutzig=False)
+    _agy_datenbank_anlegen(welt.heim, wt4, "cid-agy-9004", alter_s=25 * 60)
+    _agy_datenbank_anlegen(welt.heim, wt6, "cid-agy-9006", alter_s=25 * 60)
+    welt.fenster_still(9004, f'FAKE_AGY_PANE="auto · Gemini 4 Neon · high" {agy_bin} -i x')
+    welt.fenster_still(9006, f'FAKE_AGY_PANE="auto · Gemini 4 Neon · high · 1 subagent(s)" {agy_bin} -i x')
+
+    time.sleep(0.6)
+    # Session-JSONs der Fake-Claude-Fenster auf 20 min alt stellen.
+    sess_dir = welt.heim / ".claude" / "sessions"
+    alt = time.time() - 20 * 60
+    for datei in sess_dir.glob("*.json"):
+        os.utime(datei, (alt, alt))
+    # bau 9005 simuliert einen bestehenden stand.json-Eintrag (z. B. nach Deploy-Pause) ohne Textwechsel.
+    welt.stand_setzen("bau 9005", seit=time.time() - 5 * 60, hash=welt.hash_von("bau 9005"))
+
+    # Takt 1 + Takt 2: bau 9003, 9004, 9005 schließen; bau 9006 (1 subagent(s)) bleibt; 0 Neustarts.
+    einstellungen = aufpasser.Einstellungen(
+        zustand=welt.zustand,
+        tmux_socket=SOCKET,
+        hang_min=90,
+        bau_vorlage=welt.vorlage,
+        deploy_muster=f"aufpasser-probe-niemals-{os.getpid()}",
+        exit_warten_s=1,
+    )
+    assert aufpasser.lauf_mit_einstellungen(einstellungen) == 0
+    time.sleep(0.5)
+    assert sorted(fenster_namen()) == ["bau 9006", f"wache {SPEC}"], (fenster_namen(), welt.log())
+    assert aufpasser.lauf_mit_einstellungen(einstellungen) == 0
+    assert sorted(fenster_namen()) == ["bau 9006", f"wache {SPEC}"], (fenster_namen(), welt.log())
+    kommentare = welt.kommentare()
+    for nr in (9003, 9004, 9005):
+        assert any(f"„bau {nr}“ geschlossen (Ticket zu)" in k for k in kommentare), (nr, kommentare)
+    assert not any("bau 9006" in k and "geschlossen" in k for k in kommentare), kommentare
