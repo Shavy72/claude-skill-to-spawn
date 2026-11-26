@@ -640,7 +640,12 @@ def _braucht_ueberspringen(items: list[pytest.Item]) -> None:
             if "claude-login" not in gruende:
                 gruende["claude-login"] = braucht_fehlt("claude-login")
             if gruende["claude-login"]:
-                item.add_marker(pytest.mark.skip(reason=f"braucht_claude_login: {gruende['claude-login']}"))
+                # ``skipif`` mit ``append=False`` greift vor bestehenden ``@pytest.mark.skipif``-Dekoratoren
+                # (pytest wertet ``skipif`` immer vor ``skip`` aus).
+                item.add_marker(
+                    pytest.mark.skipif(True, reason=f"braucht_claude_login: {gruende['claude-login']}"),
+                    append=False,
+                )
 
 
 def _zeitgrenze_setzen(config: pytest.Config, items: list[pytest.Item]) -> None:

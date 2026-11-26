@@ -93,6 +93,44 @@ def test_echte_claude_login_tests_im_standardlauf_uebersprungen_nicht_geloescht(
     assert "braucht_claude_login" in ausgabe, ausgabe
 
 
+def test_echte_claude_login_tests_ohne_claude_im_path_zeigen_marker_grund() -> None:
+    """#353: Auch ohne ``claude`` im PATH (z. B. GitHub-Runner) greift ``braucht_claude_login`` vor ``skipif``."""
+    pfade = [
+        p
+        for p in os.environ.get("PATH", "").split(os.pathsep)
+        if p and not any((Path(p) / name).exists() for name in ("claude", "claude.exe", "claude.cmd"))
+    ]
+    env = {k: v for k, v in os.environ.items() if k not in ("TO_SPAWN_MIT_ECHTEM_CLAUDE", "TO_SPAWN_OHNE_ECHTEN_WEG")}
+    env["PATH"] = os.pathsep.join(pfade)
+    env["GITHUB_ACTIONS"] = "true"
+    lauf = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "-rs",
+            "tests/test_frage_sperre_321_weg.py",
+            "tests/test_context_mode_237.py::test_weg_echte_session_hat_start_mjs_und_ruft_ctx_werkzeug",
+        ],
+        cwd=SKILL,
+        env=env,
+        capture_output=True,
+        text=True,
+        **konsole.UNTERPROZESS_TEXT,
+        timeout=60,
+        check=False,
+    )
+    ausgabe = lauf.stdout + lauf.stderr
+    assert lauf.returncode == 0, ausgabe
+    assert "3 skipped" in ausgabe, ausgabe
+    assert "braucht_claude_login:" in ausgabe, ausgabe
+    assert "claude nicht installiert" not in ausgabe, ausgabe
+    assert "claude nicht auf dem PATH" not in ausgabe, ausgabe
+
+
 def test_wiedereinstieg_stand_referenz_und_live_hinweis(tmp_path: Path) -> None:
     """#353: ``stand_referenz_commit`` liest den zitierten main-Stand; veralteter Live-Stand ergibt Hinweis."""
     text = (
