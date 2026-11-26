@@ -149,14 +149,15 @@ if [ "$mit_nachtrunde" -eq 1 ]; then
     fi
   done
   [ -n "$py" ] || fehler "--mit-nachtrunde braucht Python (TO_SPAWN_PY, python3 oder python)"
-  nr_args=(-m to_spawn.pruef.nachtrunde vorlage --uebungsrepo --ausgabe "$ziel/.github/workflows/nachtrunde.yml")
+  ziel_abs=$(cd "$ziel" && pwd)
+  nr_args=(-m to_spawn.pruef.nachtrunde vorlage --uebungsrepo --ausgabe "$ziel_abs/.github/workflows/nachtrunde.yml")
   if [ "$variante" = mit-staging ]; then
     nr_args+=(--mit-staging-app)
   fi
   if [ -n "$nachtrunde_ref" ]; then
     nr_args+=(--workflow-ref "$nachtrunde_ref")
   fi
-  PYTHONPATH="$skill_wurzel${PYTHONPATH:+:$PYTHONPATH}" "$py" "${nr_args[@]}" >/dev/null
+  (cd "$skill_wurzel" && "$py" "${nr_args[@]}") >/dev/null
 fi
 
 cd "$ziel"

@@ -36,6 +36,10 @@ ERLAUBT = {
         "to_spawn/fehlermeldung.py",
         "_ticket_melden",
     ): "Werkzeug-Fehler-Log (#578): hängt Wiederholung ans offene werkzeug:fehler-Ticket im Skill-Repo, kein Aufseher",
+    (
+        "to_spawn/pruef/nachtrunde.py",
+        "ticket_abgleich",
+    ): "Nachtrunden-Vorlage (#582): pflegt und schließt das eine offene „Nachtrunde rot“-Ticket, kein Aufseher",
 }
 #: Ordner, die der Prüf-Test nicht liest (Tests stellen gh nach, der Rest ist kein Quelltext).
 AUSGENOMMEN = {"tests", ".git", ".venv", "venv", "__pycache__", ".pytest_cache"}

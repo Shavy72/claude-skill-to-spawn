@@ -42,10 +42,14 @@ STANDARD_CRON = "17 2 * * *"
 TICKET_TITEL = "Nachtrunde rot"
 #: Empfohlene monatliche GitHub-Actions-Budgetgrenze in US-Dollar.
 BUDGET_EMPFEHLUNG_USD = 30
+#: Standard-Skill-Repo für den automatischen Checkout bei Fremd- und Übungs-Repos (Quelle: ``config.OEFFENTLICHE_SLUGS``).
+STANDARD_SKILL_REPO = config.OEFFENTLICHE_SLUGS[0] if config.OEFFENTLICHE_SLUGS else ""
 #: Standard-Referenz der wiederverwendbaren Vorlage für angeschlossene Fremd- und Übungs-Repos.
-STANDARD_VORLAGE_REF = "Shavy72/claude-skill-to-spawn/.github/workflows/pipeline-nachtrunde.yml@main"
-#: Standard-Skill-Repo für den automatischen Checkout bei Fremd- und Übungs-Repos.
-STANDARD_SKILL_REPO = "Shavy72/claude-skill-to-spawn"
+STANDARD_VORLAGE_REF = (
+    f"{STANDARD_SKILL_REPO}/.github/workflows/pipeline-nachtrunde.yml@main"
+    if STANDARD_SKILL_REPO
+    else "./.github/workflows/pipeline-nachtrunde.yml"
+)
 
 #: Verbotene Schlüsselwörter für Mail- oder Benachrichtigungs-Schritte (grep-sicher für Vorlagen).
 _VERBOTENE_BENACHRICHTIGUNG = re.compile(
