@@ -296,6 +296,9 @@ def wurzel_sammlung(
 
 #: Eigener Temp-Ordner dieses Laufs (#349), nur gesetzt, wenn ``pytest_configure`` ihn anlegte.
 _EIGENER_BASETEMP = pytest.StashKey[Path]()
+#: Linux-Suite (``suite.sh``/``suite.py``): räumt eigenen ``pt-*``-Basetemp auch bei Exit != 0 (#355).
+_BASETEMP_AUCH_BEI_ROT_RAEUMEN = pytest.StashKey[bool]()
+_SUITE_BASETEMP_ENV = "TO_SPAWN_SUITE_BASETEMP_RAEUMEN"
 
 #: Marker-Datei im eigenen Temp-Ordner (#177, #355): PID des Leit-Prozesses. Nur Ordner mit
 #: diesem Marker räumt :func:`_reste_raeumen` — nie nach Namen raten (#136). Konstanten aus
@@ -386,6 +389,8 @@ def _eigener_basetemp(config: pytest.Config) -> None:
     ordner = Path(tempfile.mkdtemp(prefix="pt-"))
     config.option.basetemp = str(ordner)
     config.stash[_EIGENER_BASETEMP] = ordner
+    if not _WINDOWS and os.environ.get(_SUITE_BASETEMP_ENV, "").strip() == "1":
+        config.stash[_BASETEMP_AUCH_BEI_ROT_RAEUMEN] = True
 
 
 def _marker_retten(ordner: Path, pid: int, mtime: float | None = None) -> None:
@@ -590,13 +595,14 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
                 waechter.freigeben()
                 del session.config.stash[_SCHTASKS_WAECHTER]
     ordner = session.config.stash.get(_EIGENER_BASETEMP, None)
-    if ordner is not None and exitstatus == 0:
+    raeume_auch_rot = not _WINDOWS and session.config.stash.get(_BASETEMP_AUCH_BEI_ROT_RAEUMEN, False)
+    if ordner is not None and (exitstatus == 0 or raeume_auch_rot):
         try:
             _pt_ordner_loeschen(ordner)
         except FileNotFoundError:
             pass
         except OSError as fehler:
-            _LOG.warning("pt-Ordner %s nach grünem Lauf nicht löschbar: %s", ordner, fehler)
+            _LOG.warning("pt-Ordner %s nach Lauf nicht löschbar: %s", ordner, fehler)
         finally:
             _marker_retten(ordner, os.getpid())
 
@@ -1063,10 +1069,35 @@ def _eigenes_tmux(
 
 
 @pytest.fixture(autouse=True)
+def _test_temp_im_test(
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> None:
+    """Leitet ``TMPDIR``/``TEMP``/``TMP`` und ``tempfile.tempdir`` unter Linux je Test in den
+    eigenen ``pt-*``-Baum um (#355).
+
+    So landen Test-Reste von ``tempfile.NamedTemporaryFile`` (``probesitz-1-*.log``), ``srt``
+    (``claude-empty-*``, ``srt-mux-*.sock``, ``claude-http-*.sock``), ``claude`` (``claude-1000``)
+    und verschachtelten ``pytest``-Kindläufen nie in der äußeren Temp-Wurzel (``~/tmp-bau``),
+    sondern im kurzen Test-Ordner unter ``basetemp`` und verschwinden nach grünem Test sofort.
+    Windows bleibt unberührt.
+    """
+    if _WINDOWS:
+        return
+    ordner = tmp_path_factory.mktemp("t")
+    _autouse_temp_merken(request, ordner)
+    for name in ("TMPDIR", "TEMP", "TMP"):
+        monkeypatch.setenv(name, str(ordner))
+    monkeypatch.setattr(tempfile, "tempdir", None)
+
+
+@pytest.fixture(autouse=True)
 def _maschine_liste_im_test(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     _keine_to_spawn_umgebung: None,
+    request: pytest.FixtureRequest,
 ) -> None:
     """Maschinen-Liste (L1 #46) liegt in Tests immer unter ``tmp_path``.
 
@@ -1074,6 +1105,7 @@ def _maschine_liste_im_test(
     ``~/.config/to-spawn/maschine.json`` der Testmaschine. Die Datei wird nicht angelegt;
     Tests mit eigenem ``setenv("TO_SPAWN_MASCHINE", …)`` überschreiben den Wert.
     """
+    _autouse_temp_merken(request, tmp_path)
     monkeypatch.setenv("TO_SPAWN_MASCHINE", str(tmp_path / "to-spawn-maschine" / "maschine.json"))
 
 

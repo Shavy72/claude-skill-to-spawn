@@ -654,6 +654,28 @@ FRAGE_MAX = 600
 #: Eingabezeile des Menschen im Verlauf (``> …``/``❯ …``) — nur ganz links, mit Text, nie eine
 #: Auswahlzeile (``❯ 1. Yes``).
 EINGABE_ZEILE = re.compile(r"^[>❯]\s+(?!\d+\.)\S")
+#: Führende blinkende Status- und Spinner-Zeichen aus Claude-Code- bzw. Terminal-Ausgaben, die
+#: bei derselben unberührten Frage zwischen zwei Aufnahmen wechseln können (#372).
+_STATUS_PRAEFIX = re.compile(r"^(?:[●⏺○◯◐◓◑◒◔◕◌✻✶✳✢✽✦✧∗·⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⣾⣽⣻⢿⡿⣟⣯⣷](?:\s+|$))+")
+
+
+def _zeile_normalisieren(zeile: str) -> str:
+    """Einzelne Fenster-Zeile ohne Steuerfolgen und führende Status-/Spinner-Zeichen (#372)."""
+    sauber = aufpasser.ohne_farben(zeile).strip()
+    return _STATUS_PRAEFIX.sub("", sauber).strip()
+
+
+def frage_normalisieren(text: str) -> str:
+    """Frage-Text kanonisch ohne Farben, blinkende Status-Zeichen und Leerraum-Unterschiede (#372).
+
+    Einzige Stelle für Fenster-Erkennung (:func:`frage_im_text`), Kürzung (:func:`frage_kurz`),
+    Merk-Schlüssel (:func:`leiter.frage_schluessel`) und Doppel-Schutz
+    (:func:`leiter.frage_einwerfen`): blinkende Status-Symbole am Zeilenanfang
+    (``●``, ``◐``, Spinner) fallen weg, damit dieselbe unberührte Rückfrage über zwei
+    Aufnahmen denselben Text und denselben Schlüssel ergibt.
+    """
+    zeilen = [_zeile_normalisieren(z) for z in text.splitlines()]
+    return " ".join(" ".join(z for z in zeilen if z).split())
 
 
 def unbeaufsichtigt(text: str) -> list[str]:
@@ -705,22 +727,24 @@ def frage_im_text(text: str) -> str:
     Betrachtet wird nur, was seit der letzten Eingabezeile kam (:func:`unbeaufsichtigt`).
     Rückfrage-Dialog (:func:`aufpasser.rueckfrage`): die letzten Zeilen samt Befehl
     darüber. Sonst der letzte Absatz, nur wenn er mit ``?`` endet — eine stille Session ohne
-    solche Frage hängt (Stupser/Handoff wie bisher). Nur der Text der Frage; die Klasse
+    solche Frage hängt (Stupser/Handoff wie bisher). Blinkende Status-Zeichen am Zeilenanfang
+    werden zentral über :func:`frage_normalisieren` entfernt. Nur der Text der Frage; die Klasse
     bestimmt :func:`fenster_blick`.
     """
     zeilen = unbeaufsichtigt(text)
     if aufpasser.rueckfrage(text):
-        teile = [z.strip() for z in zeilen if z.strip()][-FRAGE_ZEILEN:]
+        teile = [sauber for z in zeilen if (sauber := _zeile_normalisieren(z))][-FRAGE_ZEILEN:]
     else:
         absatz: list[str] = []
         for z in reversed(zeilen):
-            if not z.strip():
+            sauber = _zeile_normalisieren(z)
+            if not sauber:
                 if absatz:
                     break
                 continue
-            absatz.insert(0, z.strip())
+            absatz.insert(0, sauber)
         teile = absatz if absatz and absatz[-1].endswith("?") else []
-    return " ".join(" ".join(teile).split())
+    return frage_normalisieren("\n".join(teile))
 
 
 def mit_grund(frage: str, grund: str | None) -> str:
@@ -728,11 +752,12 @@ def mit_grund(frage: str, grund: str | None) -> str:
 
     Sonst schnitte :func:`frage_kurz` den Grund weg und der Briefkasten sähe Klasse 3.
     """
-    if not frage or not grund or befugnis.ist_klasse_2(frage):
+    grund_sauber = frage_normalisieren(grund) if grund else ""
+    if not frage or not grund_sauber or befugnis.ist_klasse_2(frage):
         return frage
-    grund = _grund_kurz(grund, FRAGE_MAX // 2)
-    rest = frage_kurz(frage, max(FRAGE_MAX - len(grund) - 3, FRAGE_MAX // 2))
-    return " ".join(f"{grund} … {rest.lstrip('…')}".split())
+    grund_kurz = _grund_kurz(grund_sauber, FRAGE_MAX // 2)
+    rest = frage_kurz(frage, max(FRAGE_MAX - len(grund_kurz) - 3, FRAGE_MAX // 2))
+    return " ".join(f"{grund_kurz} … {rest.lstrip('…')}".split())
 
 
 def frage_kurz(frage: str, grenze: int = FRAGE_MAX) -> str:
@@ -740,7 +765,7 @@ def frage_kurz(frage: str, grenze: int = FRAGE_MAX) -> str:
 
     Nur zum Anzeigen/Ablegen — die Klasse nie am gekürzten Text bestimmen (Review PR 374).
     """
-    frage = " ".join(frage.split())
+    frage = frage_normalisieren(frage)
     return frage if len(frage) <= grenze else "…" + frage[len(frage) - grenze + 1 :]
 
 

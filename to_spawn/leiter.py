@@ -333,8 +333,8 @@ def fuer_rechner(schritt: Schritt, kann_tippen: bool, still_min: int | None = No
 
 
 def frage_schluessel(frage: str) -> str:
-    """Merk-Schlüssel einer Fenster-Frage (Text ohne Leerraum-Unterschiede, #372)."""
-    return hashlib.sha256(" ".join(frage.split()).encode("utf-8")).hexdigest()[:16]
+    """Merk-Schlüssel einer Fenster-Frage (kanonisch über :func:`aufseher_stand.frage_normalisieren`, #372)."""
+    return hashlib.sha256(aufseher_stand.frage_normalisieren(frage).encode("utf-8")).hexdigest()[:16]
 
 
 def _frage_schritt(frage: str, gemerkt: Gemerkt) -> Schritt:
@@ -438,7 +438,11 @@ def frage_einwerfen(hauptbaum: Path, spec: int, ticket: int, frage: str) -> str:
     k2 = befugnis.ist_klasse_2(frage)  # ungekürzt: das Live-Wort kann im abgeschnittenen Anfang stehen
     for offen in briefkasten.offene([ticket], hauptbaum=hauptbaum):
         # Gleicher Kurztext reicht nicht: eine Klasse-3-Frage verdeckt nie eine neue Klasse-2-Frage.
-        if offen["id"] and offen["frage"] == text and (offen["klasse"] == "2" or not k2):
+        if (
+            offen["id"]
+            and aufseher_stand.frage_normalisieren(offen["frage"]) == text
+            and (offen["klasse"] == "2" or not k2)
+        ):
             return offen["id"]
     return briefkasten.einwerfen(
         ticket,

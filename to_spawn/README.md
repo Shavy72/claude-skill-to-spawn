@@ -281,9 +281,10 @@ gehen an pytest). Tests mit echtem angemeldetem `claude`-Login tragen den Marker
 `@pytest.mark.braucht_claude_login` (im Standard-Lauf sauber übersprungen, gezielt zuschaltbar
 über `TO_SPAWN_MIT_ECHTEM_CLAUDE=1`, #353). Auf Linux setzt das Skript ohne vorgegebenes `TMPDIR`
 die Variablen `TMPDIR`/`TEMP`/`TMP` aus der einen Konfig-Stelle (`to_spawn.temp_ordner`, Vorgabe
-`~/tmp-bau` auf der Platte statt RAM-`tmpfs`), `tests/conftest.py` räumt grüne Autouse-Hilfsordner
-sofort sowie den eigenen `pt-*`-Ordner nach Exit 0 ab, und der Hausmeister räumt im Takt auch tote
-markierte `pt-*`-Reste (#355/#353). Nur im Klon: sie sammelt `tests/`, `review/` und
+`~/tmp-bau` auf der Platte statt RAM-`tmpfs`), `tests/conftest.py` isoliert `TMPDIR`/`tempfile.tempdir`
+je Test im eigenen `pt-*`-Baum, räumt grüne `tmp_path`- und Autouse-Hilfsordner sofort sowie in der
+Suite (`TO_SPAWN_SUITE_BASETEMP_RAEUMEN=1`) den eigenen `pt-*`-Ordner auch nach Exit != 0 ab, und
+der Hausmeister räumt im Takt auch tote markierte `pt-*`-Reste (#355/#353). Nur im Klon: sie sammelt `tests/`, `review/` und
 `skripte/test_*.py`; im installierten Skill fehlt die Wurzel-`conftest.py`, dort bricht sie mit
 Exit 64 ab. Weg-Test gegen ein Wegwerf-Repo mit Bare-Remote. Gestellt sind nur zwei Programme:
 
