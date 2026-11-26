@@ -61,10 +61,15 @@ def _kind_env(echtes_heim: Path, **extra: str) -> dict[str, str]:
     return env
 
 
-def _kind_pytest(echtes_heim: Path, *args: str, **extra_env: str) -> subprocess.CompletedProcess[str]:
+def _kind_pytest(
+    echtes_heim: Path,
+    *args: str,
+    cwd: Path = SKILL,
+    **extra_env: str,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:xdist", *args],
-        cwd=str(SKILL),
+        cwd=str(cwd),
         env=_kind_env(echtes_heim, **extra_env),
         capture_output=True,
         text=True,
@@ -72,6 +77,70 @@ def _kind_pytest(echtes_heim: Path, *args: str, **extra_env: str) -> subprocess.
         errors="replace",
         timeout=120,
         check=False,
+    )
+
+
+def _waechter_suite_anlegen(
+    claude_json: Path,
+    ordner: Path,
+    *,
+    scandir_log: Path | None = None,
+) -> None:
+    """Legt eine Mini-Suite an, die ``tests/conftest.py``-Hooks lädt und ``claude_json`` ändert."""
+    ordner.mkdir(parents=True, exist_ok=True)
+    # Eigene pytest.ini begrenzt Konfig-Suche auf die Mini-Suite (#191).
+    (ordner / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    scandir_haken = ""
+    if scandir_log is not None:
+        scandir_haken = (
+            "import os\n"
+            "_orig_scandir = os.scandir\n"
+            f"_SCANDIR_LOG = {str(scandir_log)!r}\n"
+            "def _protokoll_scandir(pfad='.'):\n"
+            "    if isinstance(pfad, (str, os.PathLike)):\n"
+            "        with open(_SCANDIR_LOG, 'a', encoding='utf-8') as _f:\n"
+            "            _f.write(f'{os.fspath(pfad)}\\n')\n"
+            "    return _orig_scandir(pfad)\n"
+            "os.scandir = _protokoll_scandir\n"
+        )
+    (ordner / "conftest.py").write_text(
+        "import importlib.util\n"
+        f"{scandir_haken}"
+        f"_s = importlib.util.spec_from_file_location('_ct232', {str(TESTS / 'conftest.py')!r})\n"
+        "_m = importlib.util.module_from_spec(_s)\n"
+        "_s.loader.exec_module(_m)\n"
+        "for _n in ('pytest_configure', 'pytest_sessionstart', 'pytest_sessionfinish'):\n"
+        "    if hasattr(_m, _n):\n"
+        "        globals()[_n] = getattr(_m, _n)\n",
+        encoding="utf-8",
+    )
+    (ordner / "test_leck.py").write_text(
+        "from pathlib import Path\n"
+        f"ZIEL = Path({str(claude_json)!r})\n"
+        "def test_schreibt_fremde_konfig():\n"
+        "    ZIEL.write_text('{\"geaendert\": true}\\n', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+
+
+def _waechter_suite_starten(
+    echtes_heim: Path,
+    ordner: Path,
+    *,
+    cwd: Path = SKILL,
+    **extra_env: str,
+) -> subprocess.CompletedProcess[str]:
+    """Startet die Wächter-Mini-Suite isoliert auf ``ordner`` (kein Eltern-/Temp-Scan unter Windows, #191)."""
+    kind_tmp = ordner.parent / f"{ordner.name}-tmp"
+    kind_tmp.mkdir(parents=True, exist_ok=True)
+    env = {"TMP": str(kind_tmp), "TEMP": str(kind_tmp), "TMPDIR": str(kind_tmp), **extra_env}
+    return _kind_pytest(
+        echtes_heim,
+        f"--rootdir={ordner}",
+        f"--confcutdir={ordner}",
+        str(ordner),
+        cwd=cwd,
+        **env,
     )
 
 
@@ -276,24 +345,49 @@ def test_heim_waechter_bricht_lauf_bei_geaenderter_claude_json(tmp_path: Path) -
 
     # Mini-Suite, die tests/conftest.py-Hooks lädt und die echte .claude.json absichtlich ändert.
     ordner = tmp_path / "waechter-suite"
-    ordner.mkdir()
-    (ordner / "conftest.py").write_text(
-        "import importlib.util\n"
-        f"_s = importlib.util.spec_from_file_location('_ct232', {str(TESTS / 'conftest.py')!r})\n"
-        "_m = importlib.util.module_from_spec(_s)\n"
-        "_s.loader.exec_module(_m)\n"
-        "for _n in ('pytest_configure', 'pytest_sessionstart', 'pytest_sessionfinish'):\n"
-        "    if hasattr(_m, _n):\n"
-        "        globals()[_n] = getattr(_m, _n)\n",
-        encoding="utf-8",
-    )
-    (ordner / "test_leck.py").write_text(
-        "from pathlib import Path\n"
-        f"ZIEL = Path({str(claude_json)!r})\n"
-        "def test_schreibt_fremde_konfig():\n"
-        "    ZIEL.write_text('{\"geaendert\": true}\\n', encoding='utf-8')\n",
-        encoding="utf-8",
-    )
-    ergebnis = _kind_pytest(echtes_heim, str(ordner))
+    _waechter_suite_anlegen(claude_json, ordner)
+    ergebnis = _waechter_suite_starten(echtes_heim, ordner)
     assert ergebnis.returncode != 0, ergebnis.stdout + ergebnis.stderr
     assert ".claude.json" in (ergebnis.stdout + ergebnis.stderr)
+
+
+def test_heim_waechter_suite_scannt_keine_elternordner(tmp_path: Path) -> None:
+    """Kind-pytest für die Wächter-Suite scannt nie Eltern- oder Temp-Ordner (Windows-Laufwerke C:/D:, #191).
+
+    Unter Windows (``cwd`` auf ``D:``, ``tmp_path`` auf ``C:\\Users\\...\\Temp``) blieb ``rootdir``
+    ohne ``--rootdir``/``--confcutdir`` auf ``D:``; pytest lief dann ``C:\\...\\Temp`` ab und brach
+    beim Einsammeln ab, sobald ein paralleler xdist-Worker ``to_spawn_pytest_cache_*`` löschte.
+    """
+    echtes_heim = tmp_path / "waechter-heim"
+    echtes_heim.mkdir()
+    claude_json = echtes_heim / ".claude.json"
+    claude_json.write_text('{"vorher": true}\n', encoding="utf-8")
+
+    eltern = tmp_path / "gemeinsam"
+    arbeitsordner = eltern / "repo"
+    arbeitsordner.mkdir(parents=True)
+    # Falle im Elternordner: wäre ohne --rootdir/--confcutdir als Wurzel geladen und gescannt worden.
+    (eltern / "conftest.py").write_text(
+        "raise RuntimeError('Elternordner-conftest darf nicht geladen werden')\n",
+        encoding="utf-8",
+    )
+    temp_eltern = eltern / "temp"
+    (temp_eltern / "to_spawn_pytest_cache_probe").mkdir(parents=True)
+
+    ordner = temp_eltern / "waechter-suite"
+    scandir_log = tmp_path / "scandir.log"
+    _waechter_suite_anlegen(claude_json, ordner, scandir_log=scandir_log)
+
+    altes_pypath = os.environ.get("PYTHONPATH", "")
+    pypath = f"{SKILL}{os.pathsep}{altes_pypath}" if altes_pypath else str(SKILL)
+    ergebnis = _waechter_suite_starten(echtes_heim, ordner, cwd=arbeitsordner, PYTHONPATH=pypath)
+
+    ausgabe = ergebnis.stdout + ergebnis.stderr
+    assert ergebnis.returncode != 0, ausgabe
+    assert ".claude.json" in ausgabe, ausgabe
+    assert "Elternordner-conftest" not in ausgabe, ausgabe
+
+    gescannt = {Path(z).resolve() for z in scandir_log.read_text(encoding="utf-8").splitlines() if z.strip()}
+    eltern_menge = {p.resolve() for p in ordner.resolve().parents}
+    assert ordner.resolve() in gescannt, gescannt
+    assert not (gescannt & eltern_menge), f"Elternordner gescannt: {gescannt & eltern_menge}"
