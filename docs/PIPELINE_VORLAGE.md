@@ -26,7 +26,7 @@ Auf GitHub-Runnern (`GITHUB_ACTIONS=true`), bei `TO_SPAWN_BAU_SERVER=0`, in gene
 | --- | --- | --- |
 | **Stufe 0+1** | Schnelle Ticket-Prüfung: `ruff`, Typ-Prüfung, AST-Diff-Test-Schutz und statische AST-Import-Graph-Testauswahl | `to_spawn/pruef/pipeline_vorlage.py` · `docs/PIPELINE_STUFE_0_1.md` |
 | **Stufe 2** | **Komplett-Prüfung genau einmal je Spec vor Live**: alle Tests verteilt auf `>= 2` GitHub-Actions-Runner (`pytest-split` + `pytest-xdist`) + bedingter Staging-Probe-Schritt | `to_spawn/pruef/pipeline_stufe2.py` · diese Datei |
-| **Stufe 3** | Wöchentliches Aufräumen ohne Feature-Bau (Wackler-Quarantäne, langsamste Tests, Diff-Mutationstest, Doppelte-Vorschläge, Schutzliste, Zweitprüfer) | Folge-Tickets #798, #799, #800 |
+| **Stufe 3** | Wöchentliches Aufräumen ohne Feature-Bau (Doppelte-Vorschläge mit unverbrüchlicher Schutzliste und Zweitprüfer-Sperre, Wackler-Quarantäne, langsamste Tests, Diff-Mutationstest) | `to_spawn/pruef/aufraeumen.py`, `to_spawn/pruef/quarantaene.py`, `to_spawn/pruef/mutation.py` · diese Datei |
 
 Wann Stufe 2 dran ist, entscheidet weiterhin ausschließlich `to_spawn.pruefplan.welche(konfig, spec_stand)` in Verbindung mit `to_spawn.config.hat_staging(konfig)` (über `pipeline_stufe2.ist_stufe2_dran`):
 
@@ -75,3 +75,28 @@ python -m to_spawn.pruef.pipeline_vorlage vorlage --stufe 2 --ausgabe .github/wo
 ```
 
 Danach die erzeugten Workflow-Dateien committen und pushen, damit der Eigenanschluss mit Aufteilung auf `>= 2` Runner bei GitHub Actions läuft und der grüne Lauf samt Laufzeit im Ticket verlinkt werden kann.
+
+## Stufe 3 (`pipeline-stufe-3.yml`) — Wöchentliches Aufräumen (nur Vorschläge)
+
+Stufe 3 bündelt drei Aufräum-Bausteine ohne Feature-Bau mit strikt minimalen Leserechten (`permissions: contents: read`) — es werden ausschließlich Vorschläge und Berichte erzeugt, niemals Tests gelöscht:
+
+1. **Doppelte-/Überdeckt-Vorschläge, Schutzliste & Zweitprüfer** (`to_spawn/pruef/aufraeumen.py`, #800):
+   - Findet strukturell doppelte und überdeckte Tests per AST und gibt ausschließlich Vorschläge aus.
+   - **Unumgehbare Schutzliste**: Nutzer-Ablauf-Tests (`nutzer_ablauf`, `e2e`, `user_flow`, `smoke`, …) und Tests mit echtem Fund (`echter_fund`, `regression`, `bugfix`, `vorfall`, …) bleiben immer geschützt. Zusätzliche Muster/Marker/Tests können über `.to-spawn/config.json` unter `aufraeumen.schutzliste` ergänzt, Pflichtregeln aber niemals abgeschaltet werden.
+   - **Zweitprüfer-Sperre (fail-closed)**: `pruefe_loeschfreigabe` / `python -m to_spawn.pruef.aufraeumen freigabe-pruefen` erteilt eine technische Freigabe erst nach bestätigtem Prüf-Nachweis eines zweiten unabhängigen Agenten (Selbst-Freigabe desselben Agenten oder derselben Session sowie Schutzlisten-Treffer werden zwingend abgelehnt).
+2. **Wackler-Quarantäne & langsamste Tests** (`to_spawn/pruef/quarantaene.py`, #798): schreibt das Quarantäne-Ledger fort und meldet Top-N langsamste Tests aus JUnit-XML.
+3. **Diff-Mutationstest** (`to_spawn/pruef/mutation.py`, #799, nur Linux): prüft `mutmut` strikt auf geändertem Produktivcode.
+
+### Aktivierung von Stufe 3 im Skill-Repo (Rechner mit `workflow`-Scope)
+
+```bash
+python -m to_spawn.pruef.aufraeumen vorlage --ausgabe .github/workflows/pipeline-stufe-3.yml
+python -m to_spawn.pruef.aufraeumen vorlage --eigenanschluss --ausgabe .github/workflows/pipeline-stufe-3-eigen.yml
+python -m to_spawn.pruef.aufraeumen vorlage --pruefen .github/workflows/pipeline-stufe-3.yml
+```
+
+Alternativ über den gemeinsamen Rahmen:
+
+```bash
+python -m to_spawn.pruef.pipeline_vorlage vorlage --stufe 3 --ausgabe .github/workflows/pipeline-stufe-3.yml
+```
