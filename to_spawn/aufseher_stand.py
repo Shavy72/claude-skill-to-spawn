@@ -657,19 +657,23 @@ EINGABE_ZEILE = re.compile(r"^[>❯]\s+(?!\d+\.)\S")
 
 
 def unbeaufsichtigt(text: str) -> list[str]:
-    """Zeilen des Pane-Texts seit der letzten Eingabezeile, ohne Eingabefeld (#372).
+    """Zeilen des Pane-Texts seit der letzten Eingabezeile, ohne Eingabefeld und UI-Rauschen (#372).
 
     Nur für die Frage, die angezeigt wird (:func:`frage_im_text`) — die Klasse kommt aus dem
     Transkript (:mod:`verlauf_pruefung`), wer getippt hat, spielt dafür keine Rolle. Ohne
     erkennbare Eingabezeile alles. Als Eingabezeile zählt nur eine Zeile, die ganz links mit
     ``>``/``❯`` beginnt — Claude Code rückt Antwort-Text samt Markdown-Zitat ein.
+    Claude-Code-Fußzeilen und Feedback-Umfragen (:func:`aufpasser.ist_pane_rauschen`) werden zu
+    Leerzeilen, damit Absatzgrenzen erhalten bleiben und nachgelagertes Rauschen eine Frage nicht
+    verdeckt.
     """
     zeilen = aufpasser.ohne_statuszeile(text).splitlines()
     linien = [i for i, z in enumerate(zeilen) if aufpasser.EINGABEFELD_LINIE.fullmatch(z)]
     if linien:
         zeilen = zeilen[: linien[-1]]  # Eingabefeld (``❯ …``) gehört nicht zur Ausgabe
     eingaben = [i for i, z in enumerate(zeilen) if EINGABE_ZEILE.match(z)]
-    return zeilen[eingaben[-1] + 1 :] if eingaben else zeilen
+    bereich = zeilen[eingaben[-1] + 1 :] if eingaben else zeilen
+    return ["" if aufpasser.ist_pane_rauschen(z) else z for z in bereich]
 
 
 def _grund_kurz(zeile: str, grenze: int) -> str:

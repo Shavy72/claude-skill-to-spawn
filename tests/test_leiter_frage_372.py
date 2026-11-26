@@ -606,3 +606,155 @@ def test_entscheider_antwort_bleibt_grenze_seine_frage_war_schon_klasse_2() -> N
         "❯ Ja, erst aufräumen, dann weiter.\n\n● Aufgeräumt. Passt das so?" + FUSS
     )
     assert aufseher_stand.frage_im_text(nachher) == "● Aufgeräumt. Passt das so?"
+
+
+# --- Nachfix #372 (Probe 5, 26.11.): Claude-Fußzeile & Feedback-Umfrage sind Rauschen ---------
+
+#: Echte tmux-Pane-Aufnahme aus ``probe5_nachweis_372.log`` (Zeilen 51–72): nach der Frage steht
+#: die abgesetzte Claude-Code-Fußzeile ``✻ Crunched for 6s · done 7:25 PM``.
+ECHTE_AUFNAHME_372 = (
+    "  Ran 1 shell command\n"
+    "\n"
+    "● 🎯 Ergebnis: 42\n"
+    "\n"
+    "  Der Befehl hat die Rechnung korrekt ausgeführt (40 + 2 = 42).\n"
+    "\n"
+    "✻ Worked for 5s · done 7:24 PM\n"
+    "\n"
+    "❯ Gib bitte exakt diesen einen Fragesatz aus (ohne Werkzeuge): Soll fuer die\n"
+    "  Statistik-Seite Variante A (Tabelle) oder Variante B (Karten) genutzt werden?\n"
+    "\n"
+    "● Soll für die Statistik-Seite Variante A (Tabelle) oder Variante B (Karten)\n"
+    "  genutzt werden?\n"
+    "\n"
+    "✻ Crunched for 6s · done 7:25 PM\n"
+    "\n"
+    "────────────────────────────────────────────────────────────────────────────────\n"
+    "❯\u00a0\n"
+    "────────────────────────────────────────────────────────────────────────────────\n"
+    "  Haiku 4.5 · 80.8k (40.0%) · 0m\n"
+    "  📁 wt-113 · ⎇ HEAD · 7d: 89%\n"
+    "  ⏸ manual mode on\n"
+)
+
+ECHTE_FRAGE_372 = "● Soll für die Statistik-Seite Variante A (Tabelle) oder Variante B (Karten) genutzt werden?"
+
+
+def test_frage_im_text_echte_aufnahme_mit_claude_fusszeile() -> None:
+    """Echte Fenster-Aufnahme aus Probe 5: ``✻ Crunched … · done …`` verdeckt die Frage nicht."""
+    assert aufseher_stand.frage_im_text(ECHTE_AUFNAHME_372) == ECHTE_FRAGE_372
+
+
+@pytest.mark.parametrize(
+    "fusszeile",
+    [
+        "✻ Crunched for 6s · done 7:25 PM",
+        "✻ Worked for 5s · done 7:24 PM",
+        "✻ Cogitated for 1m 5s · done 5:20 PM",
+        "✻ Baked for 40s",
+        "✻ Sautéed for <1s · done 19:25",
+    ],
+)
+@pytest.mark.parametrize("trenner", ["\n\n", "\n"], ids=["absatz", "direkt"])
+def test_frage_im_text_ueberspringt_claude_fusszeilen_varianten(fusszeile: str, trenner: str) -> None:
+    text = f"● Tests grün.\n\n● {FRAGE}{trenner}{fusszeile}" + FUSS
+    assert aufseher_stand.frage_im_text(text) == f"● {FRAGE}"
+
+
+@pytest.mark.parametrize(
+    "umfrage",
+    [
+        "● How is Claude doing this session? (optional)\n  1: Bad    2: Fine   3: Good   0: Dismiss",
+        "How is Claude doing this session?\n1: Bad  2: Fine  3: Good  0: Dismiss",
+        f"{EINGABE}\n● How is Claude doing this session? (optional)\n  1: Bad    2: Fine   3: Good   0: Dismiss",
+    ],
+    ids=["optional", "kurz", "mit_linie"],
+)
+def test_frage_im_text_ueberspringt_feedback_umfrage_nach_frage(umfrage: str) -> None:
+    text = f"● {FRAGE}\n\n✻ Crunched for 6s · done 7:25 PM\n\n{umfrage}" + FUSS
+    assert aufseher_stand.frage_im_text(text) == f"● {FRAGE}"
+
+
+@pytest.mark.parametrize(
+    "umfrage",
+    [
+        "How is Claude doing this session?",
+        "● How is Claude doing this session? (optional)\n  1: Bad    2: Fine   3: Good   0: Dismiss",
+    ],
+    ids=["nur_frage", "mit_skala"],
+)
+def test_frage_im_text_feedback_umfrage_ohne_frage_ist_keine_frage(umfrage: str) -> None:
+    text = f"● Tests grün, committe jetzt.\n\n✻ Worked for 8s · done 7:25 PM\n\n{umfrage}" + FUSS
+    assert aufseher_stand.frage_im_text(text) == ""
+
+
+def test_aufpasser_frage_am_prompt_ueberspringt_rauschen() -> None:
+    """Einzige Rausch-Regel greift auch bei ``aufpasser.frage_am_prompt``."""
+    from to_spawn import aufpasser
+
+    assert aufpasser.frage_am_prompt(ECHTE_AUFNAHME_372)
+    ohne_frage = (
+        "● Tests grün, committe jetzt.\n\n✻ Worked for 8s · done 7:25 PM\n\nHow is Claude doing this session?" + FUSS
+    )
+    assert not aufpasser.frage_am_prompt(ohne_frage)
+
+
+def test_leiter_echte_aufnahme_still_2_min_loest_entscheider_aus(baum: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Probe-5-Fall Teil B komplett über ``leiter._EchteUmwelt``: still 2 min + Fußzeile → Auftrag."""
+    import json
+
+    from to_spawn import aufpasser, waechter_lauf
+
+    monkeypatch.setenv("TO_SPAWN_AUFSEHER_STAND", str(baum / "stand"))
+    sid = "be12e882-8448-4d2a-a8e5-d65c6201ea6d"
+    transkript = waechter_lauf.transkript_ordner(baum) / f"{sid}.jsonl"
+    transkript.parent.mkdir(parents=True, exist_ok=True)
+    eintrag = {
+        "type": "assistant",
+        "uuid": "a-372",
+        "sessionId": sid,
+        "message": {"role": "assistant", "content": [{"type": "text", "text": ECHTE_FRAGE_372}]},
+    }
+    transkript.write_text(json.dumps(eintrag, ensure_ascii=False) + "\n", encoding="utf-8")
+    monkeypatch.setattr(
+        aufpasser,
+        "session_finden",
+        lambda *_a, **_kw: aufpasser.SessionInfo(sid, baum, "idle", 1234),
+    )
+
+    jetzt = 1_764_181_634.0
+    aktiv = jetzt - 150.0  # 2 min 30 s still >= MIN_RUHE_MIN (2)
+    sitzung = f"spec-{SPEC}"
+
+    def fake_tmux(args: list[str]) -> str | None:
+        if args[:1] == ["list-windows"]:
+            return f"@4\tbau {TICKET}\t{aktiv}\t{baum}\n"
+        if args[:1] == ["display-message"]:
+            return "1234 @4 %1\n"
+        if args[:1] == ["capture-pane"]:
+            return ECHTE_AUFNAHME_372
+        return None
+
+    quellen = aufseher_stand.Quellen(
+        repo=baum,
+        kinder=lambda _s: [{"number": TICKET, "state": "open", "comments": 0, "labels": []}],
+        tmux=fake_tmux,
+        jetzt=lambda: jetzt,
+    )
+    umwelt = leiter._EchteUmwelt(baum, quellen)
+
+    erst = leiter.eingreifen(baum, SPEC, TICKET, umwelt=umwelt)
+    assert erst.exit == leiter.EXIT_OK, erst.zeile
+    assert "Entscheider-Auftrag" in erst.zeile, erst.zeile
+    assert "Briefkasten-id" in erst.zeile, erst.zeile
+    offen = briefkasten.offene([TICKET], hauptbaum=baum)
+    assert len(offen) == 1
+    assert offen[0]["frage"] == ECHTE_FRAGE_372
+    assert offen[0]["klasse"] == "3"
+    assert offen[0]["id"] in erst.zeile
+
+    zweit = leiter.eingreifen(baum, SPEC, TICKET, umwelt=umwelt)
+    assert zweit.exit == leiter.EXIT_OK, zweit.zeile
+    assert "Frage schon weitergegeben" in zweit.zeile, zweit.zeile
+    assert len(briefkasten.offene([TICKET], hauptbaum=baum)) == 1
+    assert sitzung in (umwelt.lage(SPEC, TICKET, None).ziel or "")
