@@ -330,14 +330,14 @@ def vorlage_stufe2_yaml() -> str:
         "        if: runner.os == 'Linux'\n"
         "        run: sudo apt-get update -q && sudo apt-get install -y -q tmux\n"
         "\n"
-        "      - name: Test-Abhängigkeiten installieren (inkl. pytest-split + pytest-xdist)\n"
+        "      - name: Test-Abhängigkeiten installieren (inkl. pytest-split, pytest-xdist + ruff)\n"
         "        env:\n"
         "          ANFORDERUNGEN: ${{ inputs.anforderungen }}\n"
         "        run: |\n"
         '          if [ -n "$ANFORDERUNGEN" ] && [ -f "$ANFORDERUNGEN" ]; then\n'
-        '            python -m pip install -q -r "$ANFORDERUNGEN" pytest-split pytest-xdist\n'
+        '            python -m pip install -q -r "$ANFORDERUNGEN" pytest-split pytest-xdist ruff\n'
         "          else\n"
-        "            python -m pip install -q pytest pytest-split pytest-xdist\n"
+        "            python -m pip install -q pytest pytest-split pytest-xdist ruff\n"
         "          fi\n"
         "\n"
         "      - name: git-Identität für Tests\n"

@@ -59,9 +59,9 @@ Der Job `staging-probe` hängt hinter `stufe-2` und ist strikt an `if: ${{ input
 - **`mit-staging-app: false` (`--ohne-staging-app`)**: der Staging-Probe-Befehl wird nicht ausgeführt (Exit `0`, sauber übersprungen).
 - **`mit-staging-app: true` (`--mit-staging-app`)**: der Staging-Probe-Befehl läuft; fehlt der Befehl, bricht der Schritt fail-closed mit Gate-Fehler (Exit `2`) ab.
 
-## Aktivierung im Skill-Repo (Eigenanschluss mit `>= 2` Runnern)
+## Einbindung im Skill-Repo (Eigenanschluss mit `>= 2` Runnern)
 
-Das Anlegen und Aktualisieren von Dateien unter `.github/workflows/` verlangt beim GitHub-Push den OAuth-Scope `workflow` (auf dem Bau-Server bewusst nicht vergeben). Auf einem Rechner mit `workflow`-Scope reichen drei Befehle:
+Die erzeugten Workflow-Dateien `.github/workflows/pipeline-stufe-2.yml` (Vorlage) und `.github/workflows/pipeline-stufe-2-eigen.yml` (Eigenanschluss mit `teile: 2`) sind im Skill-Repo eingehängt. Zum Aktualisieren oder Prüfen aus der einen Quelle (`to_spawn/pruef/pipeline_stufe2.py`) reichen drei Befehle:
 
 ```bash
 python -m to_spawn.pruef.pipeline_stufe2 vorlage --ausgabe .github/workflows/pipeline-stufe-2.yml
@@ -75,8 +75,6 @@ Alternativ steht derselbe Generator über den gemeinsamen Rahmen bereit:
 python -m to_spawn.pruef.pipeline_vorlage vorlage --stufe 2 --ausgabe .github/workflows/pipeline-stufe-2.yml
 ```
 
-Danach die erzeugten Workflow-Dateien committen und pushen, damit der Eigenanschluss mit Aufteilung auf `>= 2` Runner bei GitHub Actions läuft und der grüne Lauf samt Laufzeit im Ticket verlinkt werden kann.
-
 ## Stufe 3 (`pipeline-stufe-3.yml`) — Wöchentliches Aufräumen (nur Vorschläge)
 
 Stufe 3 bündelt drei Aufräum-Bausteine ohne Feature-Bau mit strikt minimalen Leserechten (`permissions: contents: read`) — es werden ausschließlich Vorschläge und Berichte erzeugt, niemals Tests gelöscht:
@@ -88,7 +86,9 @@ Stufe 3 bündelt drei Aufräum-Bausteine ohne Feature-Bau mit strikt minimalen L
 2. **Wackler-Quarantäne & langsamste Tests** (`to_spawn/pruef/quarantaene.py`, #798): schreibt das Quarantäne-Ledger fort und meldet Top-N langsamste Tests aus JUnit-XML.
 3. **Diff-Mutationstest** (`to_spawn/pruef/mutation.py`, #799, nur Linux): prüft `mutmut` strikt auf geändertem Produktivcode.
 
-### Aktivierung von Stufe 3 im Skill-Repo (Rechner mit `workflow`-Scope)
+### Einbindung von Stufe 3 im Skill-Repo
+
+Die erzeugten Workflow-Dateien `.github/workflows/pipeline-stufe-3.yml` (Vorlage) und `.github/workflows/pipeline-stufe-3-eigen.yml` (wöchentlicher Eigenanschluss) sind im Skill-Repo eingehängt. Zum Aktualisieren oder Prüfen aus `to_spawn/pruef/aufraeumen.py`:
 
 ```bash
 python -m to_spawn.pruef.aufraeumen vorlage --ausgabe .github/workflows/pipeline-stufe-3.yml

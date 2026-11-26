@@ -528,3 +528,25 @@ def test_doku_rolle_bau_server_und_zielbild_vorhanden() -> None:
         assert eingabe.name in inhalt
     # Auch die gemeinsame Kopf-Doku aus pipeline_vorlage enthält das Zielbild
     assert any("Claude-Sessions" in z for z in pipeline_vorlage.KOPF_DOKU_ZEILEN)
+
+
+def test_stufe2_workflows_im_repo_eingehaengt_und_aktuell() -> None:
+    """#581: Vorlage und Eigenanschluss Stufe 2 liegen unter .github/workflows/ und entsprechen dem Generator."""
+    vorlage = SKILL / ".github" / "workflows" / "pipeline-stufe-2.yml"
+    eigen = SKILL / ".github" / "workflows" / "pipeline-stufe-2-eigen.yml"
+    assert vorlage.is_file(), f"Stufe-2-Vorlage fehlt: {vorlage}"
+    assert eigen.is_file(), f"Stufe-2-Eigenanschluss fehlt: {eigen}"
+
+    vorlage_text = vorlage.read_text(encoding="utf-8")
+    eigen_text = eigen.read_text(encoding="utf-8")
+
+    assert vorlage_text == pipeline_stufe2.vorlage_stufe2_yaml()
+    assert eigen_text == pipeline_stufe2.eigenanschluss_stufe2_yaml(teile=2)
+    assert pipeline_stufe2.pruefe_stufe2_vorlage_text(vorlage_text) == []
+    # In GitHub Actions (CI=true) verlangen u. a. test_pruef_sofort_3b und test_ruff_format_190 ruff.
+    assert "pytest-split pytest-xdist ruff" in vorlage_text
+    assert "uses: ./.github/workflows/pipeline-stufe-2.yml" in eigen_text
+    assert "teile: 2" in eigen_text
+    assert 'auslassungen: ".github/workflows/auslassungen.txt"' in eigen_text
+    assert "mit-staging-app: false" in eigen_text
+    assert "server-marker-ausschliessen: true" in eigen_text

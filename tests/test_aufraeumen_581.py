@@ -675,3 +675,22 @@ def test_frei_duplikat():
         daten = json.loads(lauf.stdout)
         assert daten["nur_vorschlaege"] is True
         assert daten["geloeschte_dateien"] == []
+
+    def test_stufe3_workflows_im_repo_eingehaengt_und_aktuell(self) -> None:
+        """#581: Vorlage und wöchentlicher Eigenanschluss Stufe 3 liegen unter .github/workflows/."""
+        wurzel = Path(__file__).resolve().parents[1]
+        vorlage = wurzel / ".github" / "workflows" / "pipeline-stufe-3.yml"
+        eigen = wurzel / ".github" / "workflows" / "pipeline-stufe-3-eigen.yml"
+        assert vorlage.is_file(), f"Stufe-3-Vorlage fehlt: {vorlage}"
+        assert eigen.is_file(), f"Stufe-3-Eigenanschluss fehlt: {eigen}"
+
+        vorlage_text = vorlage.read_text(encoding="utf-8")
+        eigen_text = eigen.read_text(encoding="utf-8")
+
+        assert vorlage_text == aufraeumen.vorlage_stufe3_yaml()
+        assert eigen_text == aufraeumen.eigenanschluss_stufe3_yaml()
+        assert aufraeumen.pruefe_stufe3_vorlage_text(vorlage_text) == []
+        assert aufraeumen.pruefe_eigenanschluss_stufe3_text(eigen_text) == []
+        assert "contents: read" in vorlage_text
+        assert "contents: write" not in vorlage_text
+        assert "contents: write" not in eigen_text
