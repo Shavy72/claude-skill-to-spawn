@@ -591,15 +591,15 @@ def test_exit_2_ueber_echte_aufsicht_kein_nachfolger(welt: dict[str, Path], monk
         {
             "FAKE_TMUX_SCHREIBT": "0",
             "FAKE_SCHLAF": "30",
-            # #353: alter Aufseher endet regulär 2 Haupt-Takte (TAKT_S = 5 s) nach der
-            # Bau-Log-Zeile „blockiert“, statt fest 30 s zu schlafen; wird er bis dahin
-            # von außen beendet, steht die Marke „.beendet“ (PR 379: Lücke 4–10 s zu;
-            # FAKE_NACHLAUF_S = 20 s hält die Attrappe mit Puffer über die 2 Takte hinaus).
+            # #353: kurzer Aufsicht-Takt (0,5 s statt 5 s); alter Aufseher läuft nach der
+            # Bau-Log-Zeile „blockiert“ noch 3 s (= 6 volle Takte) nach und endet regulär —
+            # wird er bis dahin von außen beendet, steht die Marke „.beendet“.
+            "TO_SPAWN_AUFSICHT_TAKT": "0.5",
             "FAKE_ENDE_NACH_GETIPPT": "4",
             "FAKE_ENDE_NACH_LOG": os.pathsep.join(
                 str(pfad(welt["repo"], SPEC)) for pfad in (bau_log.log_pfad, bau_log.lauf_pfad)
             ),
-            "FAKE_NACHLAUF_S": "20",
+            "FAKE_NACHLAUF_S": "3",
             "TO_SPAWN_ABLOESE_WARTE_S": "1",
             "TO_SPAWN_ABLOESE_ABSTAND_S": "1",
             "TO_SPAWN_ABLOESE_VERSUCHE": "2",
@@ -777,7 +777,8 @@ def test_rueckkehr_auf_opus_wartet_auf_ruhige_session(welt: dict[str, Path]) -> 
         {
             "FAKE_LIMIT": _limit_mit_reset(1),
             "FAKE_AUSWEICH": AUSWEICH,
-            "FAKE_SCHLAF": "8",
+            "TO_SPAWN_AUFSICHT_TAKT": "0.5",
+            "FAKE_SCHLAF": "3",
             "TO_SPAWN_RESET_PUFFER_S": "1",
         }
     )

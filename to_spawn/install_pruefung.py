@@ -46,7 +46,7 @@ import shutil
 import stat
 import sys
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -62,8 +62,28 @@ FEHLER_LOG_ENV = "TO_SPAWN_INSTALL_LOG"
 FEHLER_LOG_NAME = "install_fehler.jsonl"
 #: Label des einen offenen Tickets für rote Skill-Installationen.
 TICKET_LABEL = "install:rot"
-#: Worker-Zahl wie in ``skripte/suite.sh`` — Parallelität wird nie gesenkt.
+#: Mindest- und Höchstzahl der xdist-Worker wie in ``skripte/suite.sh`` — Parallelität wird nie unter 4 gesenkt (#415, #353).
+SUITE_WORKER_MIN = 4
+SUITE_WORKER_MAX = 8
+SUITE_WORKER_ENV = "TO_SPAWN_SUITE_WORKER"
 SUITE_WORKER = "4"
+
+
+def standard_worker(
+    kerne: int | None = None,
+    umgebung: Mapping[str, str] | None = None,
+) -> str:
+    """Standard-Worker-Zahl für Linux-Suite-Läufe (4..8 nach CPU-Kernen, Env überschreibt, #353)."""
+    umg = os.environ if umgebung is None else umgebung
+    roh = (umg.get(SUITE_WORKER_ENV) or "").strip()
+    if roh.isdigit() and int(roh) >= 1:
+        return roh
+    anzahl = os.cpu_count() if kerne is None else kerne
+    if not anzahl or anzahl < SUITE_WORKER_MIN:
+        return str(SUITE_WORKER_MIN)
+    return str(min(anzahl, SUITE_WORKER_MAX))
+
+
 #: Caches, die beim atomaren Kopieren nie im Ziel landen.
 CACHE_ORDNER = frozenset({"__pycache__", ".pytest_cache", ".ruff_cache"})
 #: GitHub-Actions-Job-Namen aus ``.github/workflows/tests.yml`` (#537, #577).
@@ -136,7 +156,7 @@ def suite_befehl(python_exe: str = sys.executable) -> list[str]:
         "-p",
         "no:cacheprovider",
         "-n",
-        SUITE_WORKER,
+        standard_worker(),
         "--dist",
         "worksteal",
         "-r",

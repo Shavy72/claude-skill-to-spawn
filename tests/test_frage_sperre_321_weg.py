@@ -3,7 +3,8 @@
 Fall 1 (``TO_SPAWN_TICKET`` gesetzt): die Session endet mit einer Frage, der Stop-Hook
 antwortet „Nimm deinen Vorschlag …“ → sie baut weiter und legt die Datei an.
 Fall 2 (ohne ``TO_SPAWN_TICKET``): nichts ändert sich — die Session endet mit der Frage.
-Übersprungen nur, wenn ``claude`` fehlt.
+Markiert mit ``braucht_claude_login`` (#353): im Standard-Lauf übersprungen, gezielt
+ausführbar mit ``TO_SPAWN_MIT_ECHTEM_CLAUDE=1``.
 """
 
 from __future__ import annotations
@@ -18,6 +19,8 @@ import types
 from pathlib import Path
 
 import pytest
+
+pytestmark = pytest.mark.braucht_claude_login
 
 SKILL = Path(__file__).resolve().parent.parent
 SKRIPTE = SKILL / "skripte"

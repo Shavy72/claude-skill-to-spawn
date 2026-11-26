@@ -104,9 +104,9 @@ def test_abloesung_startet_neben_alter_aber_nur_einmal(umgebung: dict[str, str],
 
 
 def test_staffel_runde_endet_bei_geschlossenem_ticket(tmp_path: Path) -> None:
-    assert startstelle.weiter_erlaubt("1", pruefer=lambda _t, _c: False) is False
-    assert startstelle.weiter_erlaubt("1", pruefer=lambda _t, _c: None) is False
-    assert startstelle.weiter_erlaubt("1", pruefer=lambda _t, _c: True) is True
+    assert startstelle.weiter_erlaubt("1", pruefer=lambda _t, _c: False, abstand=0) is False
+    assert startstelle.weiter_erlaubt("1", pruefer=lambda _t, _c: None, abstand=0) is False
+    assert startstelle.weiter_erlaubt("1", pruefer=lambda _t, _c: True, abstand=0) is True
 
 
 # --- Prüf-Test: eine Start-Stelle -------------------------------------------------------

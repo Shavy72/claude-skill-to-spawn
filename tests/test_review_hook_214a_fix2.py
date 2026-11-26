@@ -39,14 +39,9 @@ def test_ausnahme_trifft_genau_review_hook() -> None:
 
 
 def test_sammlung_ohne_pfad_ohne_fehler(tmp_path: Path) -> None:
-    lauf = subprocess.run(
-        [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"],
-        cwd=SKILL,
-        capture_output=True,
-        text=True,
-        timeout=300,
-        env={**os.environ, "TMPDIR": str(tmp_path)},
-    )
+    from conftest import wurzel_sammlung
+
+    lauf = wurzel_sammlung(tmp_path)
     schluss = lauf.stdout.strip().splitlines()[-1] if lauf.stdout.strip() else lauf.stderr
     assert lauf.returncode == 0, schluss
     assert not re.search(r"\d+ errors?", schluss), schluss

@@ -25,7 +25,7 @@ _SKILL = Path(__file__).resolve().parent.parent
 if str(_SKILL) not in sys.path:
     sys.path.insert(0, str(_SKILL))
 
-from to_spawn import prozessbaum, sitzungsjob, temp_ordner  # noqa: E402
+from to_spawn import install_pruefung, prozessbaum, sitzungsjob, temp_ordner  # noqa: E402
 
 # Windows-Konsole/Pipe nutzt ohne PYTHONUTF8 oft cp1252 — Meldungen mit Umlauten/Gedankenstrich brauchen UTF-8.
 for _strom in (sys.stdout, sys.stderr):
@@ -188,7 +188,9 @@ def main(argv: Sequence[str] | None = None, *, wurzel: Path = _SKILL) -> int:
         return 64
     basis = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"]
     if not je_datei:
-        parallel = [] if _hat_parallel_schalter(extra) else ["-n", "4", "--dist", "worksteal"]
+        parallel = (
+            [] if _hat_parallel_schalter(extra) else ["-n", install_pruefung.standard_worker(), "--dist", "worksteal"]
+        )
         umg: dict[str, str] | None = None
         if not os.environ.get("TMPDIR"):
             temp_umg = temp_ordner.umgebung()

@@ -303,10 +303,14 @@ def test_suite_py_linux_setzt_worksteal_und_tmpdir_aus_temp_ordner(
         aufruf["env"] = env
         return 0
 
+    from to_spawn import install_pruefung
+
     monkeypatch.setattr(modul, "_datei_lauf", fake_lauf)
     assert modul.main(["--wurzel", str(tmp_path)]) == 0
     befehl = aufruf["befehl"]
     assert isinstance(befehl, list)
-    assert befehl[-4:] == ["-n", "4", "--dist", "worksteal"], befehl
+    erwartet = install_pruefung.standard_worker()
+    assert int(erwartet) >= 4
+    assert befehl[-4:] == ["-n", erwartet, "--dist", "worksteal"], befehl
     env = aufruf["env"]
     assert isinstance(env, dict) and env["TMPDIR"] == str(platte), env

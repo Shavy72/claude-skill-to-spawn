@@ -35,7 +35,6 @@ from pathlib import Path
 from typing import Any
 
 from . import manifest
-from .pruef import regeln
 
 log = logging.getLogger("to_spawn.abgleich")
 
@@ -209,6 +208,8 @@ class AngleichErgebnis:
 
 def normalisiere_pfad(pfad: str) -> str:
     """Relative Datei unter ``~/.claude`` auf POSIX-Form bringen; Ausbrüche ablehnen."""
+    from .pruef import regeln
+
     sauber = regeln.normal(pfad.strip())
     if not sauber or sauber.startswith(("/", "~")):
         raise AbgleichFehler(f"Unzulässiger relativer Pfad: {pfad!r}")
@@ -228,6 +229,8 @@ def ist_geheim_schluessel(schluessel: str) -> bool:
 
 
 def _muster_text(eintrag: str | Ausnahme) -> str:
+    from .pruef import regeln
+
     roh = eintrag.muster if isinstance(eintrag, Ausnahme) else eintrag
     roh = roh.strip()
     if ":" in roh:

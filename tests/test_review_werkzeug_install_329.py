@@ -194,16 +194,9 @@ def test_installer_spielt_review_werkzeug_vollstaendig_ein(art: str, tmp_path: P
 
 def test_review_tests_laufen_in_wurzel_suite_mit(tmp_path: Path) -> None:
     """#329: Alle Tests unter ``review/tests/`` werden im Suite-Lauf ab Repo-Wurzel gesammelt."""
-    lauf = subprocess.run(
-        [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"],
-        cwd=SKILL,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=False,
-        timeout=300,
-        env={**os.environ, "TMPDIR": str(tmp_path)},
-    )
+    from conftest import wurzel_sammlung
+
+    lauf = wurzel_sammlung(tmp_path)
     schluss = lauf.stdout.strip().splitlines()[-1] if lauf.stdout.strip() else lauf.stderr
     assert lauf.returncode == 0, schluss
     assert not re.search(r"\d+ errors?", schluss), schluss

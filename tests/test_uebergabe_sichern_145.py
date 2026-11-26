@@ -292,11 +292,31 @@ def test_wiedereinstieg_enthaelt_kaltstart_bausteine() -> None:
 
 
 def test_wiedereinstieg_stand_nicht_aelter_als_juengster_merge() -> None:
-    merge = us.juengster_main_stand(WURZEL)
-    if merge is None:
-        pytest.skip("kein vollständiger git-Verlauf (flacher Klon)")
+    """Deterministischer Stand-Check (#145, #353): prüft Format, absteigende Reihenfolge und
+    Konsistenz mit dem im obersten Eintrag zitierten ``main``-Commit, damit fremde PR-Merges
+    auf ``origin/main`` die Code-Suite nicht mehr 24 h später rot schalten. Die Live-Frische
+    gegen ``origin/main`` meldet ``to_spawn.py sichern --pruefen`` als Hinweis (und lässt sich
+    per ``TO_SPAWN_PRUEFE_STAND_FRISCHE=1`` hier ausdrücklich scharfschalten)."""
     text = (WURZEL / "docs" / "WIEDEREINSTIEG.md").read_text(encoding="utf-8")
-    assert not _stand_veraltet(text, merge), (
-        f"docs/WIEDEREINSTIEG.md: jüngster Stand-Eintrag älter als jüngster main-Stand "
-        f"{merge:%Y-%m-%d %H:%M %Z} minus {STAND_FRIST} — Abschnitt „Stand“ fortschreiben (L5)."
+    zeiten = us.stand_zeitpunkte(text)
+    assert zeiten, "docs/WIEDEREINSTIEG.md: kein lesbarer Zeitstempel im Abschnitt „## 3. Stand“."
+    assert zeiten[0] == max(zeiten), (
+        f"docs/WIEDEREINSTIEG.md: oberster Stand-Eintrag ({zeiten[0]:%Y-%m-%d %H:%M}) "
+        f"ist nicht der jüngste ({max(zeiten):%Y-%m-%d %H:%M})."
     )
+    ref = us.stand_referenz_commit(text)
+    if ref is not None:
+        ref_zeit = us.commit_zeitpunkt(WURZEL, ref)
+        if ref_zeit is not None:
+            assert not _stand_veraltet(text, ref_zeit), (
+                f"docs/WIEDEREINSTIEG.md: Stand-Eintrag älter als zitierter main-Commit {ref} "
+                f"({ref_zeit:%Y-%m-%d %H:%M %Z}) minus {STAND_FRIST}."
+            )
+    if os.environ.get("TO_SPAWN_PRUEFE_STAND_FRISCHE") == "1":
+        merge = us.juengster_main_stand(WURZEL)
+        if merge is None:
+            pytest.skip("kein vollständiger git-Verlauf (flacher Klon)")
+        assert not _stand_veraltet(text, merge), (
+            f"docs/WIEDEREINSTIEG.md: jüngster Stand-Eintrag älter als jüngster main-Stand "
+            f"{merge:%Y-%m-%d %H:%M %Z} minus {STAND_FRIST} — Abschnitt „Stand“ fortschreiben (L5)."
+        )

@@ -74,6 +74,10 @@ _NUR_POSIX = frozenset({"posix"})
 #: Bau-Server-Bedarf (``@pytest.mark.braucht("server")`` / ``braucht("bau-server")``, #797):
 #: läuft nur auf dem Linux-Bau-Server und wird auf GitHub-Runnern sowie Nicht-Linux übersprungen.
 _NUR_SERVER = frozenset({"server", "bau-server"})
+#: Echter ``claude``-Login-Bedarf (``@pytest.mark.braucht_claude_login`` / ``braucht("claude-login")``, #353):
+#: API-Lauf mit echtem angemeldetem ``claude``-Zugang; im Standard-Lauf und in CI ausgeschlossen,
+#: gezielt zuschaltbar per ``TO_SPAWN_MIT_ECHTEM_CLAUDE=1``.
+_NUR_CLAUDE_LOGIN = frozenset({"claude-login", "claude_login"})
 
 
 def braucht_fehlt(
@@ -82,13 +86,15 @@ def braucht_fehlt(
     finde=None,
     umgebung: Mapping[str, str] | None = None,
 ) -> str | None:
-    """Grund, warum der Test-Bedarf ``name`` hier fehlt (``None`` = vorhanden), #68 P7b, #797.
+    """Grund, warum der Test-Bedarf ``name`` hier fehlt (``None`` = vorhanden), #68 P7b, #797, #353.
 
     Einzige Stelle dieses Wissens: ``posix`` fehlt unter Windows; ``server``/``bau-server``
     läuft nur auf dem Linux-Bau-Server (auf GitHub-Runnern, bei ``TO_SPAWN_BAU_SERVER=0``,
-    in generischer CI ohne Freigabe und unter Nicht-Linux ausgeschlossen); ``bash`` zählt
-    unter Windows nur als echte Shell (Git-Bash), nicht als WSL-Stub aus ``System32``/
-    ``WindowsApps`` (startet ohne Distribution nicht); sonst Programm im PATH.
+    in generischer CI ohne Freigabe und unter Nicht-Linux ausgeschlossen); ``claude-login``
+    braucht ausdrückliche Freigabe (``TO_SPAWN_MIT_ECHTEM_CLAUDE=1``) und ein echtes ``claude``
+    (im Standard-Lauf und auf GitHub-Runnern ausgeschlossen); ``bash`` zählt unter Windows nur
+    als echte Shell (Git-Bash), nicht als WSL-Stub aus ``System32``/``WindowsApps`` (startet
+    ohne Distribution nicht); sonst Programm im PATH.
     """
     if name in _NUR_POSIX:
         return "nur POSIX (Linux/macOS)" if plattform == "win32" else None
@@ -102,6 +108,17 @@ def braucht_fehlt(
             return f"nur auf dem Linux-Bau-Server (hier: {plattform})"
         if umg.get("CI", "").lower() in ("1", "true", "yes") and umg.get("TO_SPAWN_BAU_SERVER") != "1":
             return "nur auf dem Bau-Server (CI-Umgebung ausgeschlossen)"
+        return None
+    if name in _NUR_CLAUDE_LOGIN:
+        umg = os.environ if umgebung is None else umgebung
+        if umg.get("GITHUB_ACTIONS", "").lower() == "true":
+            return "echter claude-Login nur auf eingerichteter Maschine (auf GitHub-Runnern ausgeschlossen)"
+        if umg.get("TO_SPAWN_OHNE_ECHTEN_WEG") == "1":
+            return "echter claude-Lauf per TO_SPAWN_OHNE_ECHTEN_WEG=1 abgewählt"
+        if umg.get("TO_SPAWN_MIT_ECHTEM_CLAUDE") != "1":
+            return "echter claude-Login im Standard-Lauf ausgeschlossen (Freigabe: TO_SPAWN_MIT_ECHTEM_CLAUDE=1)"
+        if (finde or shutil.which)("claude") is None:
+            return "claude fehlt im PATH"
         return None
     if name == "proc":  # Prozess-Dateisystem (Linux), fehlt unter Windows und macOS
         return None if Path("/proc/self/stat").exists() else "/proc fehlt"
@@ -192,6 +209,91 @@ def repo_dateien(ordner: Path) -> list[Path]:
     return sorted(p for p in kandidaten if p.is_file() and not (WERKZEUG_ORDNER & set(p.relative_to(ordner).parts)))
 
 
+def _basetemp_wurzel(tmp_path: Path) -> Path:
+    """Gemeinsame Temp-Wurzel dieses pytest-Laufs (auch über xdist-Worker hinweg, #353)."""
+    for kandidat in (tmp_path, *tmp_path.parents):
+        if kandidat.name.startswith("pt-") or (kandidat / _MARKER).is_file():
+            return kandidat
+    return tmp_path.parent
+
+
+def wurzel_sammlung(
+    tmp_path: Path,
+    *,
+    cache_pfad: Path | None = None,
+    ausfuehren: Callable[[Path], tuple[int, str, str]] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Führt ``pytest --collect-only -q -p no:cacheprovider`` an der Repo-Wurzel aus (#353).
+
+    Teilt das Ergebnis innerhalb desselben pytest-Laufs (über ``basetemp``-Wurzel und Sperre)
+    zwischen den drei Sammel-Tests (``review/``, ``review-hook/``, ``probe/``), damit die
+    komplette Sammlung je Suite-Lauf einmal statt dreimal läuft. Einzeln gestartet läuft der
+    Unterprozess frisch.
+    """
+    from to_spawn import sperre
+
+    wurzel = Path(__file__).resolve().parent.parent
+    ziel = cache_pfad or (_basetemp_wurzel(tmp_path) / "_wurzel_sammlung.json")
+    sperr_datei = ziel.with_suffix(".lock")
+
+    def _lesen() -> subprocess.CompletedProcess[str] | None:
+        if not ziel.is_file():
+            return None
+        try:
+            daten = json.loads(ziel.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(daten, dict) or not isinstance(daten.get("returncode"), int):
+            return None
+        return subprocess.CompletedProcess(
+            args=[sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"],
+            returncode=daten["returncode"],
+            stdout=str(daten.get("stdout", "")),
+            stderr=str(daten.get("stderr", "")),
+        )
+
+    gefunden = _lesen()
+    if gefunden is not None:
+        return gefunden
+
+    with sperre.halte(sperr_datei, warten=300.0):
+        gefunden = _lesen()
+        if gefunden is not None:
+            return gefunden
+        if ausfuehren is not None:
+            code, out, err = ausfuehren(tmp_path)
+        else:
+            sammel_tmp = tmp_path / "collect_tmp"
+            sammel_tmp.mkdir(parents=True, exist_ok=True)
+            lauf = subprocess.run(
+                [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"],
+                cwd=wurzel,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+                timeout=300,
+                env={**os.environ, "TMPDIR": str(sammel_tmp)},
+            )
+            code, out, err = lauf.returncode, lauf.stdout, lauf.stderr
+        tmp_datei = ziel.with_name(f".{ziel.name}.{os.getpid()}.tmp")
+        try:
+            tmp_datei.write_text(
+                json.dumps({"returncode": code, "stdout": out, "stderr": err}),
+                encoding="utf-8",
+            )
+            os.replace(tmp_datei, ziel)
+        except OSError:
+            tmp_datei.unlink(missing_ok=True)
+        return subprocess.CompletedProcess(
+            args=[sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"],
+            returncode=code,
+            stdout=out,
+            stderr=err,
+        )
+
+
 #: Eigener Temp-Ordner dieses Laufs (#349), nur gesetzt, wenn ``pytest_configure`` ihn anlegte.
 _EIGENER_BASETEMP = pytest.StashKey[Path]()
 #: Linux-Suite (``suite.sh``/``suite.py``): räumt eigenen ``pt-*``-Basetemp auch bei Exit != 0 (#355).
@@ -262,6 +364,11 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers",
         "braucht_server: Test läuft nur auf dem Linux-Bau-Server und wird auf GitHub-Runnern ausgeschlossen (#797)",
+    )
+    config.addinivalue_line(
+        "markers",
+        "braucht_claude_login: Test braucht echten angemeldeten claude-Zugang (API-Lauf); "
+        "im Standard-Lauf ausgeschlossen, Freigabe per TO_SPAWN_MIT_ECHTEM_CLAUDE=1 (#353)",
     )
     _eigener_basetemp(config)
 
@@ -529,6 +636,16 @@ def _braucht_ueberspringen(items: list[pytest.Item]) -> None:
                 gruende["server"] = braucht_fehlt("server")
             if gruende["server"]:
                 item.add_marker(pytest.mark.skip(reason=f"braucht_server: {gruende['server']}"))
+        if item.get_closest_marker("braucht_claude_login") is not None:
+            if "claude-login" not in gruende:
+                gruende["claude-login"] = braucht_fehlt("claude-login")
+            if gruende["claude-login"]:
+                # ``skipif`` mit ``append=False`` greift vor bestehenden ``@pytest.mark.skipif``-Dekoratoren
+                # (pytest wertet ``skipif`` immer vor ``skip`` aus).
+                item.add_marker(
+                    pytest.mark.skipif(True, reason=f"braucht_claude_login: {gruende['claude-login']}"),
+                    append=False,
+                )
 
 
 def _zeitgrenze_setzen(config: pytest.Config, items: list[pytest.Item]) -> None:
