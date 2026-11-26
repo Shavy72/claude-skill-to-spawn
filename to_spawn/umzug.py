@@ -60,6 +60,13 @@ SSH_START_TIMEOUT = 300
 SSH_KURZ_TIMEOUT = 30
 #: Frist zwischen ``terminate()`` und ``kill()`` für das Claude-Kind.
 KILL_FRIST = 20.0
+#: Ruhefrist (s) nach einer Fertig-Meldung des Stop-Hooks, bevor ``bau.py`` die stille
+#: Session beendet (nur Linux, #288) — gibt parallelen Stop-Hooks (z. B. ``review/stop.py``)
+#: Zeit, die Session weiterlaufen zu lassen. Per ``TO_SPAWN_FERTIG_RUHE_S`` kürzbar (Tests).
+FERTIG_RUHE_S = 5.0
+FERTIG_RUHE_ENV = "TO_SPAWN_FERTIG_RUHE_S"
+#: Transkript-Einträge, die echte Weiterarbeit nach einem Stop-Hook belegen (#288).
+_AKTIVE_TRANSKRIPT_TYPEN = frozenset({"assistant", "user", "api-request"})
 
 HANDOFF_NAME = re.compile(r"^HANDOFF_\d{4}-\d{2}-\d{2}_(\d+)\.md$")
 #: Pflichtzeile im Umzug-Handoff — Fettschrift/Groß-Klein egal (wie ``STAFFEL_MARKER``),
@@ -1007,6 +1014,106 @@ def _baum_beenden(prozess: subprocess.Popen[Any], frist: float) -> bool:
         return False
 
 
+def _fertig_ruhe_s() -> float:
+    """Ruhefrist nach Fertig-Meldung: ``TO_SPAWN_FERTIG_RUHE_S`` oder :data:`FERTIG_RUHE_S`."""
+    roh = os.environ.get(FERTIG_RUHE_ENV, "").strip()
+    if not roh:
+        return FERTIG_RUHE_S
+    try:
+        wert = float(roh)
+    except ValueError:
+        return FERTIG_RUHE_S
+    return max(0.0, wert)
+
+
+def _schreibe_fertig_beendet(datei: Path, daten: dict[str, Any]) -> None:
+    """Vermerkt atomar ``beendet: True`` in ``datei`` (nur Linux, #288)."""
+    kopie = {**daten, "beendet": True}
+    tmp = datei.with_name(f".{datei.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(json.dumps(kopie, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, datei)
+    except OSError as fehler:
+        log.warning("Fertig-Datei %s nicht aktualisierbar: %s", datei, fehler)
+
+
+def _session_aktiv_nach_stop(prozess_pid: int, daten: dict[str, Any]) -> bool:
+    """Rein lokale Gegenprobe (nur Linux, #288): arbeitet die Session nach dem Stop-Hook weiter?
+
+    Erkennt drei Fälle:
+    1. Neuer Zug im Transkript ab ``transcript_size`` (``assistant``/``user``/``api-request``,
+       z. B. wenn ``review/stop.py`` blockierte oder ein Hintergrund-Agent meldete).
+    2. Session-JSON unter ``~/.claude/sessions/<pid>.json`` meldet ``status == "busy"``.
+    3. Im eigenen tmux-Pane (``TMUX_PANE``) steht ein laufender Arbeits- oder Hintergrund-Agent-Marker.
+    """
+    transkript_roh = str(daten.get("transcript_path") or "").strip()
+    groesse = daten.get("transcript_size")
+    if transkript_roh and isinstance(groesse, int) and not isinstance(groesse, bool) and groesse >= 0:
+        pfad = Path(transkript_roh)
+        try:
+            if pfad.is_file():
+                roh = pfad.read_bytes()
+                ausschnitt = roh[groesse:] if groesse <= len(roh) else roh
+                for zeile in ausschnitt.decode("utf-8", errors="replace").splitlines():
+                    zeile = zeile.strip()
+                    if not zeile:
+                        continue
+                    try:
+                        eintrag = json.loads(zeile)
+                    except ValueError:
+                        continue
+                    if isinstance(eintrag, dict) and eintrag.get("type") in _AKTIVE_TRANSKRIPT_TYPEN:
+                        return True
+        except OSError:
+            pass
+
+    from . import speicher
+
+    sessions_ordner = config.heim_ordner() / ".claude" / "sessions"
+    try:
+        baum = prozessbaum.baum(prozess_pid)
+    except OSError:
+        baum = [prozess_pid]
+    for pid in baum:
+        info = speicher.session_json_lesen(pid, sessions_ordner, Path("/proc"))
+        if info is not None and info.get("status") == "busy":
+            return True
+
+    pane = os.environ.get("TMUX_PANE", "").strip()
+    if pane:
+        from . import aufpasser
+
+        try:
+            erg = subprocess.run(
+                ["tmux", "capture-pane", "-p", "-t", pane],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=5,
+                check=False,
+            )
+            if erg.returncode == 0 and aufpasser.arbeits_marker_aktiv(erg.stdout):
+                return True
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return False
+
+
+def _baum_mit_kindern_beenden(prozess: subprocess.Popen[Any], frist: float) -> bool:
+    """Beendet ``prozess`` und räumt überlebende Nachkommen (z. B. MCP-Server) auf Linux ab (#288)."""
+    try:
+        teilbaum = prozessbaum.baum(prozess.pid)
+    except OSError:
+        teilbaum = []
+    ok = _baum_beenden(prozess, frist)
+    reste = [pid for pid in teilbaum if pid != prozess.pid and prozessbaum.lebt(pid)]
+    if reste:
+        stufen = tuple((getattr(signal, name), 2.0) for name in ("SIGTERM", "SIGKILL") if hasattr(signal, name))
+        prozessbaum.beenden(list(reversed(reste)), stufen, takt_s=0.1)
+    return ok
+
+
 def _umzug_waechter(
     datei: Path,
     prozess: subprocess.Popen[Any],
@@ -1014,13 +1121,51 @@ def _umzug_waechter(
     stand: dict[str, bool],
     takt: float,
     frist: float,
+    fertig_datei: Path | None = None,
 ) -> None:
     while not stopp.wait(takt):
-        if not datei.exists():
+        if datei.exists():
+            if prozess.poll() is None:
+                log.info("Umzug-Datei %s gesehen — lokale Session wird beendet.", datei.name)
+                stand["lokal_beendet"] = _baum_beenden(prozess, frist)
+            return
+        if fertig_datei is None or _ist_windows() or not fertig_datei.is_file():
             continue
-        if prozess.poll() is None:
+        staffel_roh = os.environ.get("BAU_STAFFEL_DATEI", "").strip()
+        if staffel_roh and Path(staffel_roh).is_file():
+            continue
+        fertig_daten = lies_fertig(fertig_datei)
+        if fertig_daten is None or fertig_daten.get("beendet") is True:
+            continue
+        ruhe = _fertig_ruhe_s()
+        ende = time.monotonic() + ruhe
+        while time.monotonic() < ende:
+            if stopp.wait(min(takt, max(0.02, ende - time.monotonic()))):
+                return
+            if datei.exists() or prozess.poll() is not None:
+                break
+        if stopp.is_set() or prozess.poll() is not None:
+            return
+        if datei.exists():
             log.info("Umzug-Datei %s gesehen — lokale Session wird beendet.", datei.name)
             stand["lokal_beendet"] = _baum_beenden(prozess, frist)
+            return
+        if staffel_roh and Path(staffel_roh).is_file():
+            continue
+        aktuell = lies_fertig(fertig_datei)
+        if aktuell is None or aktuell.get("zeit") != fertig_daten.get("zeit"):
+            continue
+        if _session_aktiv_nach_stop(prozess.pid, aktuell):
+            log.info("Fertig-Meldung verworfen — Session arbeitet nach Stop-Hook weiter.")
+            fertig_datei.unlink(missing_ok=True)
+            continue
+        log.info(
+            "Fertig-Datei %s gesehen (%s) — stille Session wird beendet.",
+            fertig_datei.name,
+            aktuell.get("grund") or "fertig",
+        )
+        _baum_mit_kindern_beenden(prozess, frist)
+        _schreibe_fertig_beendet(fertig_datei, aktuell)
         return
 
 
@@ -1036,17 +1181,37 @@ def lies_umzug(datei: Path) -> dict[str, Any] | None:
     return daten if isinstance(daten, dict) and daten else {"ziel": "?"}
 
 
+def lies_fertig(datei: Path) -> dict[str, Any] | None:
+    """Fertig-Datei lesen (``None`` = fehlt oder unlesbar; nur Linux, #288)."""
+    if not datei.is_file():
+        return None
+    try:
+        daten = json.loads(datei.read_text(encoding="utf-8") or "{}")
+    except (OSError, ValueError) as fehler:
+        log.warning("Fertig-Datei unlesbar (%s): %s", datei, fehler)
+        return None
+    return daten if isinstance(daten, dict) and daten else None
+
+
 def starte_mit_umzug_wache(
-    cmd: Sequence[str], datei: Path, *, takt: float = 1.0, frist: float = KILL_FRIST
+    cmd: Sequence[str],
+    datei: Path,
+    *,
+    takt: float = 1.0,
+    frist: float = KILL_FRIST,
+    fertig_datei: Path | None = None,
 ) -> tuple[int, dict[str, Any] | None]:
-    """Startet ``cmd`` interaktiv; taucht ``datei`` auf, wird das Kind beendet.
+    """Startet ``cmd`` interaktiv; taucht ``datei`` (oder auf Linux ``fertig_datei``) auf, wird das Kind beendet.
 
     Rückgabe ``(exit_code, umzug_daten)`` — ``umzug_daten`` ist ``None`` ohne Umzug,
     sonst mit ``lokal_beendet`` (``False`` = die lokale Session ist nicht nachweislich
     weg, Doppel-Lauf möglich). Auf Windows bleibt der ``shell=True``-Notnagel für
-    ``.cmd``-Shims — nur, wenn das Programm ohne Shell nicht gefunden wird.
+    ``.cmd``-Shims — nur, wenn das Programm ohne Shell nicht gefunden wird; ``fertig_datei``
+    wirkt nur unter Linux (#288).
     """
     datei.unlink(missing_ok=True)
+    if fertig_datei is not None and not _ist_windows():
+        fertig_datei.unlink(missing_ok=True)
     try:
         prozess: subprocess.Popen[Any] = starter.starte(list(cmd), notnagel=FileNotFoundError)
     except OSError as fehler:
@@ -1056,7 +1221,7 @@ def starte_mit_umzug_wache(
     stand: dict[str, bool] = {}
     faden = threading.Thread(
         target=_umzug_waechter,
-        args=(datei, prozess, stopp, stand, takt, frist),
+        args=(datei, prozess, stopp, stand, takt, frist, fertig_datei),
         daemon=True,
     )
     faden.start()

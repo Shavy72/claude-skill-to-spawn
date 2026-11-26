@@ -545,7 +545,13 @@ def _hook_stop_mit_umzug() -> int:
         umzug.hook_umzug_anfrage(roh, umzug_ausgabe)
     except Exception:  # noqa: BLE001 — Hook darf die Session nie stören
         hook_log.exception("Umzug-Teil des Stop-Hooks fehlgeschlagen — Session läuft weiter.")
-    sys.stdout.write(umzug_ausgabe.getvalue() or bau_log_ausgabe.getvalue())
+    ausgabe = umzug_ausgabe.getvalue() or bau_log_ausgabe.getvalue()
+    if not ausgabe:
+        try:
+            hooks.fertig_pruefen_und_melden(roh)
+        except Exception:  # noqa: BLE001 — Hook darf die Session nie stören
+            hook_log.exception("Fertig-Prüfung des Stop-Hooks fehlgeschlagen — Session läuft weiter.")
+    sys.stdout.write(ausgabe)
     return code
 
 

@@ -23,6 +23,7 @@ import posixpath
 import re
 import shlex
 import sys
+import time
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
@@ -427,6 +428,126 @@ def _hook_stop(strom: TextIO, ausgabe: TextIO) -> None:
                 ensure_ascii=False,
             )
         )
+
+
+#: Umgebungsvariable für die Fertig-Meldung einer Bau-Session an ``bau.py`` (nur Linux, #288).
+FERTIG_DATEI_ENV = "BAU_FERTIG_DATEI"
+
+
+def _warten_laeuft(repo: Path, ticket: str) -> bool:
+    """Läuft für ``ticket`` noch ein aktiver Hintergrund-Wartelauf (``to_spawn.warten``)?"""
+    from . import warten
+
+    try:
+        zustaende = warten.zustaende_fuer_ticket(repo, ticket)
+    except OSError:
+        return False
+    for _pfad, stand in zustaende:
+        if stand.get("status") != "laeuft":
+            continue
+        pid = stand.get("laeufer_pid")
+        if pid is None or warten._prozess_aktiv(pid, stand.get("laeufer_start")):
+            return True
+    return False
+
+
+def fertig_pruefen_und_melden(stdin_json: str = "") -> bool:
+    """Stop-Hook-Abschluss (nur Linux, #288): meldet fertige Bau-Sessions an ``bau.py``.
+
+    Eine interaktive Claude-Session kann sich nach Ticket-Schluss nicht selbst per
+    ``/exit`` beenden. Ist das Ticket nachweislich erledigt und hat die Session nichts
+    mehr zu tun, schreibt dieser Hook atomar ``BAU_FERTIG_DATEI``. ``bau.py`` wartet
+    daraufhin eine kurze Ruhefrist ab (falls z. B. ``review/stop.py`` blockiert oder
+    ein Hintergrund-Agent läuft) und beendet die stille Session samt Fenster mit Exit 0.
+
+    Regel (fail-closed bei Unklarheit):
+    - Ticket ``endgueltig_zu`` (geschlossen/verworfen) und kein laufender ``warten``-Job ⇒ fertig.
+    - Ticket ``fertig_gebaut`` (``staging:fertig``, offen): nur wenn keine offene
+      Briefkasten-Frage (#416), kein Checkpoint-Label, kein laufender ``warten``-Job
+      und :func:`wiederanlauf.feststellen` ``art == "nichts"`` liefert (#282).
+    - Frischer Handoff oder bestehende ``BAU_STAFFEL_DATEI`` ⇒ Staffel hat Vorrang.
+    """
+    if sys.platform == "win32":
+        return False
+    fertig_roh = os.environ.get(FERTIG_DATEI_ENV, "").strip()
+    ticket = os.environ.get("BAU_TICKET", "").strip()
+    if not fertig_roh or not ticket:
+        return False
+    staffel_roh = os.environ.get("BAU_STAFFEL_DATEI", "").strip()
+    if staffel_roh and Path(staffel_roh).is_file():
+        return False
+
+    log_ordner = bau_log.log_repo()
+    rueckfall_roh = os.environ.get("TO_SPAWN_LOG_RUECKFALL", "").strip()
+    haupt = Path(rueckfall_roh) if rueckfall_roh and Path(rueckfall_roh).is_dir() else log_ordner
+    if haupt is None:
+        return False
+    for pruef_ordner in dict.fromkeys(p for p in (log_ordner, haupt) if p is not None):
+        if _frischer_handoff(pruef_ordner, ticket) is not None:
+            return False
+
+    from . import briefkasten, manifest, ticket_zustand, wiederanlauf
+
+    stand = ticket_zustand.lesen(ticket, haupt)
+    if stand is None:
+        return False
+    if ticket_zustand.endgueltig_zu(stand):
+        if _warten_laeuft(haupt, ticket):
+            return False
+    elif ticket_zustand.fertig_gebaut(stand):
+        try:
+            if briefkasten.offene([ticket], hauptbaum=haupt):
+                return False
+        except (OSError, ValueError, RuntimeError) as fehler:
+            log.warning("#%s: Briefkasten nicht lesbar (%s) — Session bleibt offen", ticket, fehler)
+            return False
+        try:
+            konfig = config.lade(haupt)
+        except (OSError, ValueError) as fehler:
+            log.warning("#%s: Konfig nicht lesbar (%s) — Session bleibt offen", ticket, fehler)
+            return False
+        if manifest.checkpoint_label(konfig) in ticket_zustand.label_namen(stand):
+            return False
+        if _warten_laeuft(haupt, ticket):
+            return False
+        if ticket.isdigit():
+            lage = wiederanlauf.feststellen(int(ticket), haupt, daten=stand)
+            if lage is None or lage.art != "nichts":
+                return False
+    else:
+        return False
+
+    try:
+        daten = json.loads(stdin_json or "{}")
+    except ValueError:
+        daten = {}
+    if not isinstance(daten, dict):
+        daten = {}
+    transkript_pfad = str(daten.get("transcript_path") or "").strip()
+    transkript_groesse: int | None = None
+    if transkript_pfad:
+        try:
+            pfad_obj = Path(transkript_pfad)
+            if pfad_obj.is_file():
+                transkript_groesse = pfad_obj.stat().st_size
+        except OSError:
+            transkript_groesse = None
+
+    ziel = Path(fertig_roh)
+    ziel.parent.mkdir(parents=True, exist_ok=True)
+    tmp = ziel.with_name(f".{ziel.name}.{os.getpid()}.tmp")
+    inhalt = {
+        "ticket": ticket,
+        "grund": ticket_zustand.wortlaut(stand),
+        "zeit": time.time(),
+        "session_id": str(daten.get("session_id") or ""),
+        "transcript_path": transkript_pfad,
+        "transcript_size": transkript_groesse,
+    }
+    tmp.write_text(json.dumps(inhalt, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, ziel)
+    log.info("Fertig-Meldung für Ticket #%s geschrieben (%s).", ticket, inhalt["grund"])
+    return True
 
 
 def hook_subagent_stop(strom: TextIO | None = None) -> int:
