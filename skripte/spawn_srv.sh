@@ -213,11 +213,25 @@ STAND="$(TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/skripte/sessions_stand.py" "$S
 zustand_von() { echo "$STAND" | awk -v n="#$1" '$1==n {print $2; exit} ($1=="Spec" && $2==n) {print $3; exit}'; }
 # Lebt jetzt ein Aufseher-Prozess (``wache.py <S>`` in diesem Repo)? Frisch aus der Prozessliste,
 # gleiche Erkennung wie oben — ein Fenster ``wache <S>`` ohne Prozess startet niemanden nach (#460).
+# Wurde ``wache <S>`` gerade erst in diesem Lauf gestartet (z. B. Staffel 0 oder unter Last),
+# wartet die Prüfung kurz, bis tmux den Prozess hochgefahren hat (kein falscher Exit 5).
 aufseher_laeuft() {
-  local STAND z
-  STAND="$(TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/skripte/sessions_stand.py" "$SPEC" --alle 2>/dev/null || true)"
-  z="$(zustand_von "$SPEC")"
-  [ -n "$z" ] && [ "$z" != "aus" ]
+  local STAND z versuche=1 i=0
+  if [ "${WACHE_GESTARTET:-0}" -eq 1 ]; then
+    versuche="${TO_SPAWN_WACHE_ANLAUF_SCHRITTE:-25}"
+    case "$versuche" in ''|*[!0-9]*) versuche=25 ;; esac
+    [ "$versuche" -lt 1 ] && versuche=1
+  fi
+  while [ "$i" -lt "$versuche" ]; do
+    STAND="$(TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/skripte/sessions_stand.py" "$SPEC" --alle 2>/dev/null || true)"
+    z="$(zustand_von "$SPEC")"
+    if [ -n "$z" ] && [ "$z" != "aus" ]; then
+      return 0
+    fi
+    i=$((i + 1))
+    [ "$i" -lt "$versuche" ] && { sleep 0.2 2>/dev/null || sleep 1; }
+  done
+  return 1
 }
 
 # Fenster laufen im Repo und mit dem Skill dieses Aufrufs — nicht mit den Vorgaben aus
@@ -395,6 +409,7 @@ fi
 
 # --- 4. tmux-Fenster anlegen ------------------------------------------------
 GESTARTET=0
+WACHE_GESTARTET=0
 GESTARTETE_NAMEN=()
 GESTARTETE_OFFSETS=()
 BAU_GESTARTET_NR=()
@@ -650,6 +665,10 @@ for i in "${!GEPLANT[@]}"; do
       BAU_GESTARTET_NR+=("$nr")
       BAU_GESTARTET_BEFEHL+=("$befehl")
       BAU_GESTARTET_OFFSET+=("$log_offset")
+      ;;
+    "wache "*)
+      WACHE_GESTARTET=1
+      echo "gestartet: $name ($befehl)"
       ;;
     *)
       echo "gestartet: $name ($befehl)"

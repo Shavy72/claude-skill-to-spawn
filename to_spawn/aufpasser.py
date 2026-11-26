@@ -293,6 +293,12 @@ GATE_MUSTER = r"pytest"
 #: Grenze voll + Session idle + Ticket zu: so lange vor dem Schließen warten und
 #: dann den Fenstertext vergleichen, statt die volle Karenz abzusitzen (#592).
 KARENZ_PLATZNOT_S = 30
+#: Abgeschlossene Spec (alle Tickets zu oder nur Abnahme offen): ab dieser Stille
+#: darf ``platz_schaffen`` stille ``leitstand``-/``wache``-Fenster schließen (#624/#460).
+FERTIGE_SPEC_STILL_MIN = KARENZ_MIN
+#: So lange wartet :func:`platz_schaffen` auf eine laufende Aufpasser-Sperre,
+#: statt sofort „Sperre belegt“ zu melden und 60 s leer zu schlafen (#624).
+PLATZ_SPERRE_WARTEN_S = 45.0
 #: Ticket zu: so lange darf Claude nach ``/exit`` brauchen, dann wird es beendet (#592).
 EXIT_WARTEN_S = 30
 #: Nach ``/exit``: so lange darf die Fenster-Shell brauchen, um den nächsten
@@ -462,6 +468,10 @@ class Einstellungen:
     verzoegerung_s: float = 0.0
     #: Wartezeit vor dem Schließen bei voller Session-Grenze (Tests setzen sie klein).
     karenz_platznot_s: float = KARENZ_PLATZNOT_S
+    #: Stille-Schwelle (Minuten) für ``leitstand``-/``wache``-Fenster fertiger Specs (#624/#460).
+    fertige_spec_still_min: float = FERTIGE_SPEC_STILL_MIN
+    #: Wartezeit auf ``<zustand>/lock`` in :meth:`Aufpasser.platz_schaffen` (0 = nicht warten, #624).
+    sperre_warten_s: float = 0.0
     #: Wartezeit auf das Ende von Claude nach ``/exit`` (Tests setzen sie klein).
     exit_warten_s: float = EXIT_WARTEN_S
     #: Optionaler Zustandsordner für den externen Wecker (#287); None ⇒ Standardordner.
@@ -485,9 +495,9 @@ class Freigabe:
     session_id: str | None = None
 
 
-def freigabe_ticket_zu(ticket: int, sicherung: str | None) -> Freigabe:
-    """Ticket ist CLOSED; ein schmutziger Worktree wurde vorher gesichert."""
-    return Freigabe(grund=f"Ticket #{ticket} zu", sicherung=sicherung)
+def freigabe_ticket_zu(ticket: int, sicherung: str | None, *, grund: str | None = None) -> Freigabe:
+    """Ticket ist CLOSED (oder abgeschlossene Spec); ein schmutziger Worktree wurde vorher gesichert."""
+    return Freigabe(grund=grund or f"Ticket #{ticket} zu", sicherung=sicherung)
 
 
 def freigabe_gesichert(session_id: str, sicherung: str | None) -> Freigabe:
@@ -495,6 +505,11 @@ def freigabe_gesichert(session_id: str, sicherung: str | None) -> Freigabe:
     if not session_id:
         raise ValueError("Freigabe ohne Gesprächs-ID")
     return Freigabe(grund="gesichert", sicherung=sicherung, session_id=session_id)
+
+
+def freigabe_spec_fertig(spec: str, grund: str) -> Freigabe:
+    """Spec abgeschlossen (alle Tickets zu oder nur Abnahme offen); kein Worktree zu sichern (#624)."""
+    return freigabe_ticket_zu(int(spec), None, grund=f"Spec #{spec} {grund}")
 
 
 @dataclass
@@ -531,6 +546,10 @@ class Fenster:
         return self.name == f"wache {self.spec}"
 
     @property
+    def ist_leitstand(self) -> bool:
+        return self.name == f"leitstand {self.spec}"
+
+    @property
     def sessions_name(self) -> str:
         """Name der Datei ``.to-spawn/sessions/<name>.json`` (R2)."""
         return f"wache-{self.spec}" if self.ist_wache else str(self.ticket or "")
@@ -546,6 +565,8 @@ class SessionInfo:
     pid: int
     #: True: aus der Session-JSON (dann sind ``cwd``/``status`` verlässlich).
     aus_json: bool = True
+    #: Änderungszeitpunkt der Session-JSON (Unix-Sekunden), ``None`` = unbekannt (#624).
+    mtime: float | None = None
 
 
 def arbeits_marker_aktiv(text: str) -> bool:
@@ -1145,12 +1166,17 @@ def _session_json_lesen(pid: int, window_id: str, pane_id: str, heim: Path | Non
         return None
     cwd = roh.get("cwd")
     status = roh.get("status")
+    try:
+        mtime: float | None = datei.stat().st_mtime
+    except OSError:
+        mtime = None
     return SessionInfo(
         session_id=sid,
         cwd=Path(cwd) if isinstance(cwd, str) and cwd else None,
         status=status if isinstance(status, str) else None,
         pid=pid,
         aus_json=True,
+        mtime=mtime,
     )
 
 
@@ -1420,6 +1446,8 @@ class Stand:
     meldungen: dict[str, float] = field(default_factory=dict)
     #: Start-Gedächtnis je Ticket: Zeitstempel der Fenster-Starts (Regel 1).
     starts: dict[str, list[float]] = field(default_factory=dict)
+    #: Zeitstempel des letzten abgeschlossenen :meth:`Aufpasser.platz_schaffen`-Laufs (#624).
+    platz_zuletzt: float = 0.0
 
 
 class Aufpasser:
@@ -1438,6 +1466,10 @@ class Aufpasser:
         self._starts_in_tick = 0
         #: Letzte Beobachtung, warum :meth:`_start_nachweisen` ``False`` lieferte (#288).
         self._letzter_start_befund = ""
+        #: Sammel-Liste für gemeinsame Gegenprobe in :meth:`platz_schaffen` (#624).
+        self._platz_kandidaten: list[dict[str, Any]] | None = None
+        #: Je Sitzung der Abschluss-Grund für stille ``leitstand``-/``wache``-Fenster (#624).
+        self._platz_spec_grund: dict[str, str | None] = {}
 
     # -- Werkzeuge ---------------------------------------------------------------
 
@@ -1479,10 +1511,15 @@ class Aufpasser:
             roh = json.loads(datei.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return Stand()
+        try:
+            platz_zuletzt = float(roh.get("platz_zuletzt") or 0.0)
+        except (TypeError, ValueError):
+            platz_zuletzt = 0.0
         return Stand(
             fenster=dict(roh.get("fenster") or {}),
             meldungen=dict(roh.get("meldungen") or {}),
             starts={k: [float(t) for t in v] for k, v in (roh.get("starts") or {}).items()},
+            platz_zuletzt=platz_zuletzt,
         )
 
     def _stand_schreiben(self) -> None:
@@ -1493,13 +1530,16 @@ class Aufpasser:
         starts = {k: [t for t in v if self.jetzt - t < START_FENSTER_S] for k, v in self.stand.starts.items()}
         starts = {k: v for k, v in starts.items() if v}
         self.e.zustand.mkdir(parents=True, exist_ok=True)
+        daten: dict[str, Any] = {
+            "fenster": self.stand.fenster,
+            "meldungen": meldungen,
+            "starts": starts,
+        }
+        if self.stand.platz_zuletzt:
+            daten["platz_zuletzt"] = self.stand.platz_zuletzt
         (self.e.zustand / "stand.json").write_text(
             json.dumps(
-                {
-                    "fenster": self.stand.fenster,
-                    "meldungen": meldungen,
-                    "starts": starts,
-                },
+                daten,
                 ensure_ascii=False,
                 indent=1,
             ),
@@ -2074,7 +2114,7 @@ class Aufpasser:
         nach_exit = bool(claude) and not kette_beenden
         if nach_exit:
             ende = self._claude_exit(ziel, claude)
-            if ende == "offen" or self._kette_lebt(pane_pid, ticket):
+            if ende == "offen" or (ticket is not None and self._kette_lebt(pane_pid, ticket)):
                 return ende
             log.info("%s: nach /exit keine Kette, nur Shell — Fenster geht zu", ziel)
         try:
@@ -2297,15 +2337,23 @@ class Aufpasser:
 
     # -- Regeln je Fenster -------------------------------------------------------
 
-    def eintrag(self, schluessel: str, text: str) -> dict:
+    def eintrag(self, schluessel: str, text: str, *, seit_hinweis: float | None = None) -> dict:
         """Hash/Zeit fortschreiben. Ändert sich der Text nach einem Eingriff
-        (``stufe`` > 0), hat der Eingriff gewirkt: Stufe 0 — kein Zeit-Reset."""
+        (``stufe`` > 0), hat der Eingriff gewirkt: Stufe 0 — kein Zeit-Reset.
+
+        ``seit_hinweis`` (z. B. ``mtime`` der Session-JSON bei ``status: idle``, #624)
+        gilt nur für einen brandneuen Eintrag bei realer Uhr — überschreibt nie einen
+        vorhandenen Stand oder eine Textänderung.
+        """
         h = pane_hash(text)
-        e = self.stand.fenster.get(schluessel) or {
-            "hash": h,
-            "seit": self.jetzt,
-            "stufe": 0,
-        }
+        vorhanden = self.stand.fenster.get(schluessel)
+        if vorhanden is None:
+            anfang = self.jetzt
+            if seit_hinweis is not None and 0 < seit_hinweis < self.jetzt and abs(time.time() - self.jetzt) < 60:
+                anfang = seit_hinweis
+            e = {"hash": h, "seit": anfang, "stufe": 0}
+        else:
+            e = vorhanden
         e.setdefault("stufe", 0)
         if e.get("hash") != h:
             e["hash"], e["seit"] = h, self.jetzt
@@ -2448,6 +2496,21 @@ class Aufpasser:
                     daten = {}  # gilt als offen: nichts schließen
                 if ticket_zustand.fertig_gebaut(daten):
                     if not self._frage_haelt(f, ticket, repo, daten, e):
+                        if self._platz_kandidaten is not None:
+                            self._platz_kandidaten.append(
+                                {
+                                    "art": "bau",
+                                    "fenster": f,
+                                    "ticket": ticket,
+                                    "repo": repo,
+                                    "schluessel": schluessel,
+                                    "hash_start": hash_start,
+                                    "info": info,
+                                    "gegenprobe": platznot,
+                                    "grund": ticket_zustand.wortlaut(daten),
+                                }
+                            )
+                            return True
                         self.ticket_zu_schliessen(
                             f,
                             ticket,
@@ -2465,12 +2528,92 @@ class Aufpasser:
         e.pop("frage_gehalten", None)
         return False
 
+    def _spec_abgeschlossen_grund(
+        self,
+        spec: str,
+        repo: Path,
+        offen_roh: dict[int, dict],
+        fenster: list[Fenster],
+    ) -> str | None:
+        """Ist die Spec abgeschlossen (alle Tickets zu oder nur Abnahme/fertig gebaut offen)?
+
+        Fail-closed (#624/#460): bei unlesbarer Konfig, arbeitendem Bau-Fenster derselben
+        Sitzung oder offener Briefkasten-Frage (bei offenen Tickets) liefert die Methode ``None``.
+        """
+        if not offen_roh:
+            grund = "alle Tickets zu"
+        else:
+            try:
+                konfig = config.lade(repo)
+            except (OSError, ValueError) as fehler:
+                log.warning("%s: Konfig nicht lesbar: %s", repo, fehler)
+                return None
+            abnahme = manifest.checkpoint_label(konfig)
+            if not all(
+                ticket_zustand.fertig_gebaut(t) or abnahme in ticket_zustand.label_namen(t) for t in offen_roh.values()
+            ):
+                return None
+            try:
+                if briefkasten.offene(list(offen_roh), hauptbaum=repo):
+                    return None
+            except (OSError, ValueError, RuntimeError) as fehler:
+                log.warning("spec %s: Briefkasten nicht lesbar (%s) — Fenster bleiben", spec, fehler)
+                return None
+            grund = "nur Abnahme offen"
+        for fb in fenster:
+            if echtes_ticket(fb) is None:
+                continue
+            try:
+                fb_text = self.pane_text(fb.ziel)
+            except RuntimeError:
+                return None
+            fb_info = self.session(fb)
+            if arbeitet(fb_text, fb_info.status if fb_info else None):
+                return None
+        return grund
+
+    def _spec_fenster_schliessen(
+        self,
+        f: Fenster,
+        repo: Path,
+        schluessel: str,
+        hash_start: str,
+        grund: str,
+    ) -> None:
+        """Schließt ein stilles ``leitstand``-/``wache``-Fenster einer abgeschlossenen Spec (#624)."""
+        if not self.vor_eingriff(f, hash_start, repo):
+            return
+        ende = self._fenster_schliessen(
+            f.fest,
+            freigabe_spec_fertig(f.spec, grund),
+            f.pane_pid,
+            ticket=None,
+        )
+        if ende == "offen":
+            log.error("%s: Claude lebt noch — nicht als geschlossen gemeldet", f.name)
+            return
+        if not self.e.trocken:
+            self.stand.fenster.pop(schluessel, None)
+        self.melden(
+            f.spec,
+            repo,
+            schluessel,
+            "geschlossen",
+            f"„{f.name}“ geschlossen (Spec #{f.spec} {grund}).",
+        )
+
     def _platz_fenster(self, f: Fenster, repo: Path, offen: set[int]) -> int:
+        schluessel = f"{f.sitzung}/{f.name}"
         text = self.pane_text(f.ziel)
         info = self.session(f)
         status = info.status if info else None
-        e = self.eintrag(f"{f.sitzung}/{f.name}", text)
-        self._fertiges_fenster(
+        arbeitend = arbeitet(text, status)
+        seit_hinweis = (
+            info.mtime if (info is not None and info.aus_json and info.status == "idle" and not arbeitend) else None
+        )
+        e = self.eintrag(schluessel, text, seit_hinweis=seit_hinweis)
+        still_min = (self.jetzt - e["seit"]) / 60
+        if self._fertiges_fenster(
             f,
             repo,
             offen,
@@ -2478,25 +2621,64 @@ class Aufpasser:
             text,
             info,
             e,
-            (self.jetzt - e["seit"]) / 60,
-            f"{f.sitzung}/{f.name}",
-            arbeitet(text, status),
-        )
+            still_min,
+            schluessel,
+            arbeitend,
+        ):
+            return 1
+        spec_grund = self._platz_spec_grund.get(f.sitzung)
+        if (
+            (f.ist_leitstand or f.ist_wache)
+            and spec_grund is not None
+            and not arbeitend
+            and still_min >= self.e.fertige_spec_still_min
+            and (
+                (info is not None and info.aus_json and info.status == "idle")
+                or (info is None and session_beendet(f.pane_pid))
+            )
+        ):
+            if self._platz_kandidaten is not None:
+                self._platz_kandidaten.append(
+                    {
+                        "art": "spec_fertig",
+                        "fenster": f,
+                        "repo": repo,
+                        "schluessel": schluessel,
+                        "hash_start": e["hash"],
+                        "grund": spec_grund,
+                        "gegenprobe": True,
+                    }
+                )
+            else:
+                if not self.e.trocken:
+                    time.sleep(self.e.karenz_platznot_s)
+                self._spec_fenster_schliessen(f, repo, schluessel, e["hash"], spec_grund)
         return 1
 
     def platz_schaffen(self) -> int:
-        """Nur die Schließ-Regel über alle Fenster, sofort statt im 15-min-Cron (#624).
+        """Nur die Schließ-Regel über alle Fenster, sofort statt im 15-min-Cron (#624/#460).
 
-        Wartende Starts rufen das bei voller Gesamtgrenze. Kein Hausmeister, keine Stufenkette,
-        kein Nachstarten. Lauf-Sperre belegt (Cron läuft) ⇒ 0, der Starter wartet normal.
-        Gibt die Zahl der geprüften Fenster zurück.
+        Wartende Starts rufen das bei voller Gesamtgrenze. Schließt sowohl fertige stille
+        ``bau``-Fenster als auch stille ``leitstand``-/``wache``-Fenster abgeschlossener Specs
+        mit einer gemeinsamen Gegenprobe. Wartet bei gesetztem ``sperre_warten_s`` auf eine
+        laufende Sperre und prüft danach sofort neu statt endlos „Sperre belegt“ zu melden.
+        Kein Hausmeister, keine Stufenkette, kein Nachstarten. Gibt die Zahl der geprüften
+        Fenster zurück.
         """
-        sperre = self._sperren()
+        wartebeginn = time.time()
+        sperre = self._sperren(warten=self.e.sperre_warten_s)
         if sperre is None:
             log.info("Platz schaffen: Aufpasser läuft schon (Sperre belegt)")
             return 0
         geprueft = 0
+        stand_schreiben = False
         try:
+            self.stand = self._stand_laden()
+            self.jetzt = self.e.jetzt()
+            if self.e.sperre_warten_s > 0 and self.stand.platz_zuletzt >= wartebeginn:
+                log.info("Platz schaffen: gerade von anderem Lauf erledigt — prüfe Platz neu")
+                return 0
+            stand_schreiben = True
             gesehen: list[tuple[str, str, list[Fenster], Path]] = []
             for sitzung, spec in self.sitzungen():
                 try:
@@ -2511,19 +2693,64 @@ class Aufpasser:
             if deploy:
                 log.info("Platz schaffen: Deploy/Gate läuft (%s): nichts angefasst", "; ".join(deploy[:3]))
                 return 0
+            self._platz_kandidaten = []
+            self._platz_spec_grund = {}
             for sitzung, spec, fenster, repo in gesehen:
                 try:
-                    offen = self.zu_bauen(self.offene_tickets(spec, repo))
+                    offen_roh = self.offene_tickets(spec, repo)
                 except (RuntimeError, ValueError) as fehler:
                     log.error("%s: GitHub nicht lesbar: %s", sitzung, fehler)
                     continue
+                offen = self.zu_bauen(offen_roh)
+                if any(isinstance(fb, Fenster) and (fb.ist_leitstand or fb.ist_wache) for fb in fenster):
+                    self._platz_spec_grund[sitzung] = self._spec_abgeschlossen_grund(spec, repo, offen_roh, fenster)
                 for f in fenster:
                     try:
                         geprueft += self._platz_fenster(f, repo, offen)
                     except RuntimeError as fehler:
                         log.error("%s/%s: Fenster übersprungen: %s", sitzung, f.name, fehler)
+            kandidaten = list(self._platz_kandidaten)
+            if kandidaten:
+                braucht_gegenprobe = any(k.get("gegenprobe") for k in kandidaten)
+                if braucht_gegenprobe and not self.e.trocken:
+                    namen = ", ".join(k["fenster"].name for k in kandidaten)
+                    log.info(
+                        "Platz schaffen: %d fertige stille Fenster (%s), Grenze voll — %g s Gegenprobe statt Karenz",
+                        len(kandidaten),
+                        namen,
+                        self.e.karenz_platznot_s,
+                    )
+                    time.sleep(self.e.karenz_platznot_s)
+                for k in kandidaten:
+                    f = k["fenster"]
+                    try:
+                        if k["art"] == "bau":
+                            self.ticket_zu_schliessen(
+                                f,
+                                k["ticket"],
+                                k["repo"],
+                                k["schluessel"],
+                                k["hash_start"],
+                                k["info"],
+                                False,
+                                grund=k["grund"],
+                            )
+                        else:
+                            self._spec_fenster_schliessen(
+                                f,
+                                k["repo"],
+                                k["schluessel"],
+                                k["hash_start"],
+                                k["grund"],
+                            )
+                    except RuntimeError as fehler:
+                        log.error("%s/%s: Schließen übersprungen: %s", f.sitzung, f.name, fehler)
+            self.stand.platz_zuletzt = time.time()
         finally:
-            self._stand_schreiben()
+            self._platz_kandidaten = None
+            self._platz_spec_grund = {}
+            if stand_schreiben:
+                self._stand_schreiben()
             if hasattr(sperre, "close"):
                 sperre.close()
         return geprueft
@@ -3112,16 +3339,19 @@ class Aufpasser:
             except RuntimeError as fehler:
                 log.error("%s: Fenster „%s“ übersprungen: %s", sitzung, f.name, fehler)
 
-    def _sperren(self) -> object | None:
-        """Lauf-Sperre ``<zustand>/lock`` (:func:`to_spawn.sperre.halte`, nicht
-        blockierend). Belegt ⇒ None. Sperr-Fehler (z. B. ENOLCK) gelten wie vor #94
-        als belegt: lieber einen Takt auslassen als ungesperrt doppelt eingreifen.
-        Sperr-Datei nicht öffenbar ⇒ :class:`to_spawn.sperre.SperreNichtOeffenbar` (#165)."""
+    def _sperren(self, warten: float = 0.0) -> object | None:
+        """Lauf-Sperre ``<zustand>/lock`` (:func:`to_spawn.sperre.halte`).
+
+        ``warten=0.0`` (Standard für Cron): nicht blockierend. Belegt ⇒ None. Sperr-Fehler
+        (z. B. ENOLCK) gelten wie vor #94 als belegt: lieber einen Takt auslassen als
+        ungesperrt doppelt eingreifen. Sperr-Datei nicht öffenbar ⇒
+        :class:`to_spawn.sperre.SperreNichtOeffenbar` (#165).
+        """
         if self.e.trocken:
             return object()
         stapel = ExitStack()
         try:
-            gehalten = stapel.enter_context(_sperre.halte(self.e.zustand / "lock"))
+            gehalten = stapel.enter_context(_sperre.halte(self.e.zustand / "lock", warten=warten))
         except _sperre.SperreNichtOeffenbar:
             raise
         except OSError as fehler:
@@ -3348,11 +3578,17 @@ def lauf_mit_args(args: argparse.Namespace) -> int:
     return lauf_mit_einstellungen(einstellungen)
 
 
-def platz_schaffen(tmux_socket: str | None = None) -> int:
-    """Die eine Tür für wartende Starts (#624): fertige, stille Fenster jetzt schließen.
+def platz_schaffen(
+    tmux_socket: str | None = None,
+    *,
+    sperre_warten_s: float = PLATZ_SPERRE_WARTEN_S,
+) -> int:
+    """Die eine Tür für wartende Starts (#624/#460): fertige, stille Fenster jetzt schließen.
 
-    Gleiche Regeln wie der Cron-Lauf (:meth:`Aufpasser._fertiges_fenster`), aber nur das
-    Schließen. Fehler gehen nie nach außen: ``-1`` ⇒ der Start wartet wie bisher.
+    Gleiche Regeln wie der Cron-Lauf (:meth:`Aufpasser._fertiges_fenster`), plus stille
+    ``leitstand``-/``wache``-Fenster abgeschlossener Specs. Wartet bis ``sperre_warten_s``
+    auf eine laufende Sperre statt sofort mit „Sperre belegt“ abzubrechen. Fehler gehen nie
+    nach außen: ``-1`` ⇒ der Start wartet wie bisher.
     """
     zustand = zustand_standard()
     try:
@@ -3361,7 +3597,9 @@ def platz_schaffen(tmux_socket: str | None = None) -> int:
         log.warning("Platz schaffen: Log nicht schreibbar")
         return -1
     try:
-        return Aufpasser(Einstellungen(zustand=zustand, tmux_socket=tmux_socket)).platz_schaffen()
+        return Aufpasser(
+            Einstellungen(zustand=zustand, tmux_socket=tmux_socket, sperre_warten_s=sperre_warten_s)
+        ).platz_schaffen()
     except Exception:  # Start darf daran nie scheitern
         log.exception("Platz schaffen gescheitert — Start wartet normal weiter")
         return -1

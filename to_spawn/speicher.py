@@ -953,6 +953,7 @@ def cli(
     nur_staffel: bool = False,
     trocken: bool = False,
     sitzung: str | None = None,
+    platz_schaffen: Callable[[], object] | None = None,
 ) -> int:
     """Unterbefehl ``to_spawn.py speicher``: Stand drucken, Exit 0 = frei, 5 = voll,
     3 = voll nur durch Sessions außerhalb der Sitzung (:data:`EXIT_FREMD_VOLL`, #460), 7 = Platte voll (Start-Check des Hausmeisters, vor der RAM-Prüfung).
@@ -968,7 +969,25 @@ def cli(
     if not platte_ok:
         print(platte_grund)
         return EXIT_PLATTE
-    ok, grund, fremd = _urteil_art(konfig, None, None, lambda: sitzung_nach_name(sitzung) if sitzung else None, sitzung)
+
+    def welche() -> Sitzung | None:
+        return sitzung_nach_name(sitzung) if sitzung else None
+
+    ok, grund, fremd = _urteil_art(konfig, None, None, welche, sitzung)
+    if not ok and not trocken and GESAMT_VOLL_TEXT in grund:
+        # #624/#460: auch direkte Starts (spawn_srv.sh, Nachstarter) räumen fertige stille
+        # Fenster ab, statt an einer durch Alt-Sessions gefüllten Gesamtgrenze zu hängen.
+        tuer = (
+            platz_schaffen
+            if platz_schaffen is not None
+            else (_platz_schaffen if sys.platform == "linux" and not os.environ.get("TO_SPAWN_SPEICHER_PROC") else None)
+        )
+        if tuer is not None:
+            try:
+                tuer()
+            except Exception:  # Speicherprüfung darf daran nie abbrechen
+                log.exception("Platz schaffen gescheitert")
+            ok, grund, fremd = _urteil_art(konfig, None, None, welche, sitzung)
     print(grund)
     if ok:
         return 0
