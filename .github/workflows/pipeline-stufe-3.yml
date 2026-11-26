@@ -178,16 +178,26 @@ jobs:
 
       - name: Basis-Ref für Diff-Mutationstest bestimmen
         env:
+          SKILL_PFAD: ${{ inputs.skill-pfad }}
           EINGABE_BASIS: ${{ inputs.basis-ref }}
+          EREIGNIS_NAME: ${{ github.event_name }}
+          PR_BASIS: ${{ github.event.pull_request.base.sha }}
+          PUSH_VORHER: ${{ github.event.before }}
         run: |
-          if [ -n "$EINGABE_BASIS" ]; then
-            BASIS="$EINGABE_BASIS"
-          elif git rev-parse --verify --quiet HEAD~1 >/dev/null; then
-            BASIS="HEAD~1"
+          if [ -n "${PYTHONPATH:-}" ]; then
+            SEP=":"
+            [ "${RUNNER_OS:-}" = "Windows" ] && SEP=";"
+            export PYTHONPATH="${SKILL_PFAD}${SEP}${PYTHONPATH}"
           else
-            BASIS="HEAD"
+            export PYTHONPATH="${SKILL_PFAD}"
           fi
-          echo "BASIS_REF=$BASIS" >> "$GITHUB_ENV"
+          python -m to_spawn.pruef.pipeline_vorlage basis-ref \
+            --repo . \
+            --eingabe-basis "$EINGABE_BASIS" \
+            --ereignis "$EREIGNIS_NAME" \
+            --pr-basis "$PR_BASIS" \
+            --push-vorher "$PUSH_VORHER" \
+            --github-env "$GITHUB_ENV"
 
       - name: Diff-Mutationstest ausführen (nur Bericht/Vorschläge)
         continue-on-error: true
