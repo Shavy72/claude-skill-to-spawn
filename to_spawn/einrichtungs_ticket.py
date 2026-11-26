@@ -86,6 +86,7 @@ class Ergebnis:
 
     ok: bool
     zeilen: list[str] = field(default_factory=list)
+    ticket_nr: str = ""
 
 
 def luecken(repo: Path, konfig: dict[str, Any]) -> list[str]:
@@ -372,3 +373,111 @@ def _anlegen(repo: Path, slug: str, s: str, fehlt: list[str]) -> tuple[str, str]
             ],
         )
     return treffer.group(1), titel
+
+
+def bereitschafts_ticket_sicherstellen(
+    repo: Path,
+    luecken_liste: list[tuple[str, str, str]],
+    *,
+    mit_github: bool = True,
+    trocken: bool = False,
+) -> Ergebnis:
+    """Legt für offene Bereitschafts-Lücken ein Repo-Einrichtungs-Ticket (T0, #583) an oder nutzt ein offenes.
+
+    ``luecken_liste`` enthält ``(name, fehlgrund, abhilfe)`` je nicht-risikoarmer Abweichung.
+    Nutzt denselben Repo-weiten T0-Weg (Label ``einrichtung``): ein bereits offenes Ticket
+    wird wiederverwendet, im Probelauf oder ohne GitHub-Origin wird nichts angelegt.
+    """
+    if not luecken_liste:
+        return Ergebnis(True)
+    namen = ", ".join(name for name, _, _ in luecken_liste)
+    slug = gh.repo_aus_origin(repo) if mit_github else ""
+    if trocken or not slug:
+        grund = "[trocken]" if trocken else "ohne GitHub"
+        return Ergebnis(
+            True,
+            [f"Bereitschafts-Lücken ({namen}) — {grund}: würde Einrichtungs-Ticket anlegen"],
+        )
+    offen = gh.json_lauf(
+        [
+            "issue",
+            "list",
+            "--repo",
+            slug,
+            "--label",
+            LABEL,
+            "--state",
+            "open",
+            "--json",
+            "number,title",
+        ],
+        cwd=repo,
+    )
+    if not isinstance(offen, list):
+        log.warning("gh issue list --label %s gescheitert (Bereitschaft)", LABEL)
+        return Ergebnis(
+            False,
+            [
+                (
+                    f"EINRICHTUNG FEHLT ({namen}): offene Einrichtungs-Tickets nicht lesbar "
+                    f"(gh issue list --label {LABEL}) — erneut aufrufen"
+                )
+            ],
+        )
+    treffer = sorted(
+        (x for x in offen if isinstance(x, dict) and x.get("number")),
+        key=lambda x: int(x["number"]),
+    )
+    if treffer:
+        nr = str(treffer[0]["number"])
+        return Ergebnis(
+            True,
+            [f"Bereitschafts-Lücken ({namen}) — offenes Einrichtungs-Ticket #{nr} des Repos übernommen"],
+            ticket_nr=nr,
+        )
+    titel = f"Einrichtung (Bereitschaft): {namen}"
+    punkte = "\n".join(f"- **{name}**: {grund} — Abhilfe: {abhilfe}" for name, grund, abhilfe in luecken_liste)
+    body = (
+        "Einrichtungs-Ticket (T0, Bereitschafts-Prüfung #583): "
+        "Folgende nicht-risikoarme Bereitschafts-Abweichungen müssen geschlossen werden:\n\n"
+        f"{punkte}\n"
+    )
+    gh.label_sicherstellen(
+        repo,
+        LABEL,
+        farbe="0e8a16",
+        beschreibung="Einrichtungs-Ticket des Repos: Prüfung/Staging anlegen (to-spawn #410)",
+    )
+    code, ausgabe = gh.lauf(
+        [
+            "issue",
+            "create",
+            "--repo",
+            slug,
+            "--title",
+            titel,
+            "--body",
+            body,
+            "--label",
+            LABEL,
+        ],
+        cwd=repo,
+    )
+    url_treffer = _ISSUE_URL.search(ausgabe or "")
+    if code != 0 or not url_treffer:
+        log.warning("gh issue create gescheitert (Bereitschaft, Code %s): %s", code, (ausgabe or "")[:200])
+        return Ergebnis(
+            False,
+            [
+                (
+                    f"EINRICHTUNG FEHLT ({namen}): Einrichtungs-Ticket nicht angelegt "
+                    f"(gh issue create, Code {code}) — erneut aufrufen"
+                )
+            ],
+        )
+    nr = url_treffer.group(1)
+    return Ergebnis(
+        True,
+        [f"Bereitschafts-Lücken ({namen}) — Einrichtungs-Ticket #{nr} angelegt"],
+        ticket_nr=nr,
+    )

@@ -48,15 +48,21 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from to_spawn import ort_wahl, prozessbaum
+from to_spawn import config, einrichtungs_ticket, ort_wahl, prozessbaum
+from to_spawn.pruef import pipeline_vorlage
 
 log = logging.getLogger("to_spawn.inventur")
 
 AUSGABE_PFAD = Path(".to-spawn") / "werkzeuge.json"
 HISTORIE_VORGABE = 200
 EXIT_UNBEKANNT = 2
+EXIT_ABWEICHUNG = 3
 EXIT_KAPUTT = 4
 NICHT_GESPEICHERT = "nicht gespeichert – `--schreiben` fehlt"
+_VERBOTENES_PLUGIN = pipeline_vorlage._VERBOTENES_PLUGIN
+_STANDARD_SKILL_REPO = (
+    config.OEFFENTLICHE_SLUGS[0] if config.OEFFENTLICHE_SLUGS else "Shavy72/claude-skill-to-spawn"
+)
 
 # Schlüssel → Anzeige, feste Reihenfolge.
 KATEGORIEN: dict[str, str] = {
@@ -352,6 +358,54 @@ class SetupZeile:
         return {"name": self.name, "fehlgrund": self.fehlgrund, "abhilfe": self.abhilfe}
 
 
+@dataclass(frozen=True)
+class BereitschaftsKontext:
+    """Kontext für die Bereitschafts-Prüfung (#583) aus dem Repo-Profil (#425)."""
+
+    repo: Path
+    konfig: dict[str, Any]
+    repo_art: str
+    mit_staging: bool
+    workflows: dict[str, str]
+
+
+@dataclass(frozen=True)
+class BereitschaftsPunkt:
+    """Ein Bereitschafts-Prüfpunkt nach dem Muster ``Unterbau`` („neue Zeile = neuer Punkt“)."""
+
+    name: str
+    titel: str
+    risikoarm: bool
+    pruefe: Callable[[BereitschaftsKontext], tuple[bool, str, str]]
+    regele: Callable[[BereitschaftsKontext], tuple[bool, str]] | None = None
+
+
+@dataclass(frozen=True)
+class BereitschaftsBefund:
+    """Ergebnis eines Bereitschafts-Prüfpunkts (#583)."""
+
+    name: str
+    titel: str
+    ok: bool
+    risikoarm: bool
+    fehlgrund: str = ""
+    abhilfe: str = ""
+    status: str = "ok"  # ok | abweichung | geregelt | ticket
+    aktion: str = ""
+
+    def als_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "titel": self.titel,
+            "ok": self.ok,
+            "risikoarm": self.risikoarm,
+            "fehlgrund": self.fehlgrund,
+            "abhilfe": self.abhilfe,
+            "status": self.status,
+            "aktion": self.aktion,
+        }
+
+
 @dataclass
 class Inventur:
     repo: Path
@@ -359,6 +413,7 @@ class Inventur:
     projekt: dict[str, Any]
     historie: dict[str, Any]
     setup_zeilen: list[SetupZeile] = field(default_factory=list)
+    bereitschaft: list[BereitschaftsBefund] = field(default_factory=list)
     tote_winkel: list[str] = field(default_factory=list)
     # Befunde beim Katalog-Lesen (kaputte Ordner, fehlende Agenten-Dateien).
     katalog_befunde: list[str] = field(default_factory=list)
@@ -421,6 +476,18 @@ class Inventur:
         for z in self.setup_zeilen:
             zeilen.append(f"  - {z.name}: {z.fehlgrund} → {z.abhilfe}")
         zeilen.append("")
+        offen = sum(1 for b in self.bereitschaft if not b.ok)
+        zeilen.append(f"## Bereitschaft ({len(self.bereitschaft)} Punkte, {offen} offen)")
+        if self.bereitschaft and offen == 0:
+            zeilen.append("  alle Bereitschafts-Punkte grün")
+        for b in self.bereitschaft:
+            marke = b.status.upper()
+            extra = f" ({b.aktion})" if b.aktion else ""
+            if b.ok:
+                zeilen.append(f"  [{marke}] {b.name}: {b.titel}{extra}")
+            else:
+                zeilen.append(f"  [{marke}] {b.name}: {b.fehlgrund} → {b.abhilfe}{extra}")
+        zeilen.append("")
         zeilen.append(f"## Tote Winkel ({len(self.tote_winkel)})")
         if not self.tote_winkel:
             zeilen.append("  keine")
@@ -445,6 +512,7 @@ class Inventur:
             "abgewaehlt": self.abgewaehlt,
             "abgewaehlt_nicht_gefunden": list(self.fehlend_abgewaehlt),
             "setup_zeilen": [z.als_dict() for z in self.setup_zeilen],
+            "bereitschaft": [b.als_dict() for b in self.bereitschaft],
             "tote_winkel": list(self.tote_winkel),
         }
 
@@ -939,6 +1007,413 @@ def pruefe_unterbauten(
     return zeilen
 
 
+# --- Bereitschafts-Prüfung („doctor“, #583) ---------------------------------------
+
+
+def _lies_workflows(repo: Path) -> dict[str, str]:
+    """Liest alle Workflow-Dateien unter ``.github/workflows/*.yml|*.yaml``."""
+    ordner = repo / ".github" / "workflows"
+    if not ordner.is_dir():
+        return {}
+    ergebnis: dict[str, str] = {}
+    for datei in sorted(ordner.iterdir()):
+        if datei.is_file() and datei.suffix.lower() in (".yml", ".yaml"):
+            rel = datei.relative_to(repo).as_posix()
+            ergebnis[rel] = _lies_text(datei)
+    return ergebnis
+
+
+def lies_repo_profil(repo: Path, konfig: dict[str, Any] | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Liest die Repo-Art aus dem Repo-Profil (#425) über :mod:`to_spawn.config`.
+
+    Rückgabe ``(konfig, profil)`` — kein eigenes Profil-Schema neben #425.
+    """
+    geladen = konfig if konfig is not None else config.lade(repo)
+    mit_staging = config.hat_staging(geladen)
+    stufe0 = config.stufe0_konfig(geladen)
+    live = config.live_schritt(geladen)
+    profil: dict[str, Any] = {
+        "repo_art": "mit-staging" if mit_staging else "ohne-staging",
+        "mit_staging": mit_staging,
+        "staging_bewusst_ohne": config.staging_bewusst_ohne(geladen),
+        "pruefung_schnell": bool(config.pruef_befehl(geladen, "schnell")),
+        "pruefung_komplett": bool(config.pruef_befehl(geladen, "komplett")),
+        "test_schutz": stufe0.test_schutz,
+        "live_eingerichtet": bool(live["befehl"]) or config.live_bewusst_ohne(geladen),
+    }
+    return geladen, profil
+
+
+def _bereitschafts_kontext(repo: Path, konfig: dict[str, Any] | None = None) -> BereitschaftsKontext:
+    geladen, profil = lies_repo_profil(repo, konfig)
+    return BereitschaftsKontext(
+        repo=repo,
+        konfig=geladen,
+        repo_art=str(profil["repo_art"]),
+        mit_staging=bool(profil["mit_staging"]),
+        workflows=_lies_workflows(repo),
+    )
+
+
+def _pruefe_kein_cache_plugin(k: BereitschaftsKontext) -> tuple[bool, str, str]:
+    """Prüft, dass das verbotene Test-Cache-Plugin nirgends aktiv oder eingetragen ist."""
+    plugin = _VERBOTENES_PLUGIN.lower()
+    funde: list[str] = []
+    for rel, text in k.workflows.items():
+        if plugin in text.lower():
+            funde.append(rel)
+    kandidaten = [
+        k.repo / "pyproject.toml",
+        k.repo / "pytest.ini",
+        k.repo / "setup.cfg",
+        k.repo / "tox.ini",
+    ]
+    for ordner in (k.repo, k.repo / "tests"):
+        if ordner.is_dir():
+            kandidaten.extend(sorted(ordner.glob("requirements*.txt")))
+    for datei in kandidaten:
+        if datei.is_file() and plugin in _lies_text(datei).lower():
+            funde.append(datei.relative_to(k.repo).as_posix())
+    for art in ("schnell", "komplett"):
+        if plugin in config.pruef_befehl(k.konfig, art).lower():
+            funde.append(f".to-spawn/config.json (pruefung.{art})")
+    daten_datei = k.repo / f".{plugin}data"
+    if daten_datei.exists():
+        funde.append(daten_datei.name)
+    if funde:
+        eindeutig = list(dict.fromkeys(funde))
+        return (
+            False,
+            f"verbotenes Plugin `{plugin}` gefunden in: {', '.join(eindeutig)}",
+            f"`{plugin}` aus Konfiguration/Workflows/Abhängigkeiten entfernen und auf `to_spawn.pruef.import_graph` umstellen",
+        )
+    return True, "", ""
+
+
+def _workflow_nutzt_stufe01(text: str) -> bool:
+    return (
+        "pipeline-stufe-0-1.yml" in text
+        or ("workflow_call:" in text and "stufe-0:" in text and "stufe-1:" in text)
+    )
+
+
+def _workflow_nutzt_stufe2(text: str) -> bool:
+    return (
+        "pipeline-stufe-2.yml" in text
+        or ("workflow_call:" in text and "stufe-2:" in text)
+    )
+
+
+def _pruefe_test_schutz_ci(k: BereitschaftsKontext) -> tuple[bool, str, str]:
+    """Prüft, dass der AST-Diff-Test-Schutz in Konfig und CI aktiv ist."""
+    if not config.stufe0_konfig(k.konfig).test_schutz:
+        return (
+            False,
+            "Test-Schutz ist in `.to-spawn/config.json` (`pruefung.test_schutz: false`) abgeschaltet",
+            "`pruefung.test_schutz` auf `true` setzen (oder Schlüssel entfernen) und Stufe-0+1-Vorlage anschließen",
+        )
+    aktiv = False
+    for text in k.workflows.values():
+        klein = text.lower()
+        deaktiviert = bool(re.search(r"test-schutz\s*:\s*false", klein)) or "--kein-test-schutz" in klein
+        if deaktiviert:
+            continue
+        if (
+            _workflow_nutzt_stufe01(text)
+            or "to_spawn.pruef.test_schutz" in text
+            or "to_spawn.pruef.pipeline_vorlage stufe0" in text
+            or "to_spawn.pruef.sofort" in text
+        ):
+            aktiv = True
+            break
+    if not aktiv:
+        return (
+            False,
+            "kein CI-Workflow mit aktivem Test-Schutz in `.github/workflows/` gefunden",
+            "Pipeline-Vorlage Stufe 0+1 anschließen (`pipeline-stufe-0-1.yml`) oder `to_spawn.pruef.test_schutz` in CI ausführen",
+        )
+    return True, "", ""
+
+
+def _pruefe_pipeline_vorlage(k: BereitschaftsKontext) -> tuple[bool, str, str]:
+    """Prüft den Anschluss an die Pipeline-Vorlage Stufe 0–2 (mit Repo-Art aus #425)."""
+    hat_01 = any(_workflow_nutzt_stufe01(t) for t in k.workflows.values())
+    stufe2_texte = [t for t in k.workflows.values() if _workflow_nutzt_stufe2(t)]
+    hat_2 = bool(stufe2_texte)
+    fehlend: list[str] = []
+    if not hat_01:
+        fehlend.append("Stufe 0+1 (`pipeline-stufe-0-1.yml`)")
+    if not hat_2:
+        fehlend.append("Stufe 2 (`pipeline-stufe-2.yml`)")
+    if fehlend:
+        return (
+            False,
+            "Anschluss an Pipeline-Vorlage fehlt: " + ", ".join(fehlend),
+            "Anschluss-Workflows unter `.github/workflows/` anlegen (`to_spawn.py inventur --regeln`)",
+        )
+    if k.mit_staging:
+        staging_an = any(
+            re.search(r"mit-staging-app\s*:\s*true", t.lower()) or "inputs.mit-staging-app" in t
+            for t in stufe2_texte
+        )
+        if not staging_an:
+            return (
+                False,
+                "Repo-Profil ist `mit-staging`, aber Stufe-2-Workflow setzt nicht `mit-staging-app: true`",
+                "im Stufe-2-Workflow `mit-staging-app: true` setzen",
+            )
+    return True, "", ""
+
+
+def _regele_pipeline_vorlage(k: BereitschaftsKontext) -> tuple[bool, str]:
+    """Legt fehlende Anschluss-Workflows für Stufe 0+1 und Stufe 2 risikoarm neu an (überschreibt nie)."""
+    wf_ordner = k.repo / ".github" / "workflows"
+    ist_skill_repo = (k.repo / "to_spawn" / "pruef" / "pipeline_vorlage.py").is_file()
+    basis_ref = "./.github/workflows" if ist_skill_repo else f"{_STANDARD_SKILL_REPO}/.github/workflows"
+    suffix = "" if ist_skill_repo else "@main"
+    angelegt: list[str] = []
+
+    hat_01 = any(_workflow_nutzt_stufe01(t) for t in k.workflows.values())
+    if not hat_01:
+        ziel_01 = wf_ordner / "pipeline-stufe-0-1.yml"
+        if not ziel_01.exists():
+            wf_ordner.mkdir(parents=True, exist_ok=True)
+            ziel_01.write_text(
+                "# Anschluss an die Pipeline-Vorlage Stufe 0+1 (#580, #583).\n"
+                "name: Pipeline Stufe 0+1\n\n"
+                "on:\n"
+                "  pull_request:\n"
+                "  push:\n"
+                "    branches: [main]\n"
+                "  workflow_dispatch:\n\n"
+                "permissions:\n"
+                "  contents: read\n\n"
+                "jobs:\n"
+                "  stufe-0-1:\n"
+                f"    uses: {basis_ref}/pipeline-stufe-0-1.yml{suffix}\n",
+                encoding="utf-8",
+            )
+            angelegt.append(ziel_01.relative_to(k.repo).as_posix())
+
+    hat_2 = any(_workflow_nutzt_stufe2(t) for t in k.workflows.values())
+    if not hat_2:
+        ziel_2 = wf_ordner / "pipeline-stufe-2.yml"
+        if not ziel_2.exists():
+            wf_ordner.mkdir(parents=True, exist_ok=True)
+            staging_bool = "true" if k.mit_staging else "false"
+            ziel_2.write_text(
+                "# Anschluss an die Pipeline-Vorlage Stufe 2 (#581, #583).\n"
+                "name: Pipeline Stufe 2\n\n"
+                "on:\n"
+                "  workflow_dispatch:\n"
+                "  push:\n"
+                "    branches: [main]\n\n"
+                "permissions:\n"
+                "  contents: read\n\n"
+                "jobs:\n"
+                "  stufe-2:\n"
+                f"    uses: {basis_ref}/pipeline-stufe-2.yml{suffix}\n"
+                "    with:\n"
+                f"      mit-staging-app: {staging_bool}\n",
+                encoding="utf-8",
+            )
+            angelegt.append(ziel_2.relative_to(k.repo).as_posix())
+
+    if not angelegt:
+        return False, "bestehende Workflows nicht automatisch überschrieben"
+    return True, ", ".join(angelegt)
+
+
+def _pruefe_import_graph(k: BereitschaftsKontext) -> tuple[bool, str, str]:
+    """Prüft, dass die Testauswahl per AST-Import-Graph in CI oder Konfig verdrahtet ist."""
+    in_ci = any(
+        _workflow_nutzt_stufe01(t)
+        or "to_spawn.pruef.import_graph" in t
+        or "to_spawn.pruef.pipeline_vorlage stufe1" in t
+        for t in k.workflows.values()
+    )
+    schnell = config.pruef_befehl(k.konfig, "schnell")
+    in_konfig = "to_spawn.pruef.import_graph" in schnell or "to_spawn.py pruefen" in schnell
+    if not (in_ci or in_konfig):
+        return (
+            False,
+            "keine Testauswahl per Import-Graph in CI oder `pruefung.schnell` erkannt",
+            "Pipeline-Vorlage Stufe 0+1 anschließen oder `python -m to_spawn.pruef.import_graph` einbinden",
+        )
+    return True, "", ""
+
+
+def _pruefe_braucht_server_marker(k: BereitschaftsKontext) -> tuple[bool, str, str]:
+    """Prüft, dass die Pytest-Markierung „braucht Server“ registriert ist."""
+    kandidaten = (
+        k.repo / "pyproject.toml",
+        k.repo / "pytest.ini",
+        k.repo / "setup.cfg",
+        k.repo / "tox.ini",
+        k.repo / "conftest.py",
+        k.repo / "tests" / "conftest.py",
+    )
+    muster = re.compile(r"\bbraucht_server\b|\bbraucht\s*:|addinivalue_line\([^)]*braucht")
+    for datei in kandidaten:
+        if datei.is_file() and muster.search(_lies_text(datei)):
+            return True, "", ""
+    return (
+        False,
+        "Pytest-Markierung `braucht_server` nicht registriert (pyproject.toml / pytest.ini / conftest.py)",
+        'in `pyproject.toml` unter `[tool.pytest.ini_options]` `markers = ["braucht_server: Test benötigt den Bau-Server"]` eintragen',
+    )
+
+
+def _regele_braucht_server_marker(k: BereitschaftsKontext) -> tuple[bool, str]:
+    """Trägt die Markierung ``braucht_server`` risikoarm in ``pyproject.toml`` ein."""
+    if (k.repo / "pytest.ini").is_file():
+        return False, "pytest.ini vorhanden — nicht automatisch geändert"
+    pyproject = k.repo / "pyproject.toml"
+    marker_block = 'markers = [\n    "braucht_server: Test benötigt den Bau-Server",\n]\n'
+    if pyproject.is_file():
+        text = _lies_text(pyproject)
+        if re.search(r"(?m)^\s*markers\s*=", text):
+            return False, "markers in pyproject.toml bereits vorhanden — nicht automatisch geändert"
+        kopf = re.search(r"(?m)^\[tool\.pytest\.ini_options\]\s*$", text)
+        if kopf:
+            pos = kopf.end()
+            trenner = "\n" if pos == len(text) or text[pos : pos + 1] != "\n" else ""
+            neu = text[:pos] + trenner + ("\n" if not trenner else "") + marker_block + text[pos:].lstrip("\n")
+        else:
+            trenner = "" if not text or text.endswith("\n") else "\n"
+            neu = text + trenner + "\n[tool.pytest.ini_options]\n" + marker_block
+        pyproject.write_text(neu, encoding="utf-8")
+        return True, "pyproject.toml"
+    pyproject.write_text("[tool.pytest.ini_options]\n" + marker_block, encoding="utf-8")
+    return True, "pyproject.toml"
+
+
+# Erweiterbar nach Muster UNTERBAUTEN: neue Zeile = neuer Bereitschafts-Prüfpunkt (#583).
+BEREITSCHAFTS_PUNKTE: tuple[BereitschaftsPunkt, ...] = (
+    BereitschaftsPunkt(
+        f"kein_{_VERBOTENES_PLUGIN}",
+        f"kein verbotenes Plugin ({_VERBOTENES_PLUGIN})",
+        risikoarm=False,
+        pruefe=_pruefe_kein_cache_plugin,
+    ),
+    BereitschaftsPunkt(
+        "test_schutz_ci",
+        "Test-Schutz in der CI aktiv",
+        risikoarm=False,
+        pruefe=_pruefe_test_schutz_ci,
+    ),
+    BereitschaftsPunkt(
+        "pipeline_vorlage",
+        "Anschluss an die Pipeline-Vorlage Stufe 0–2",
+        risikoarm=True,
+        pruefe=_pruefe_pipeline_vorlage,
+        regele=_regele_pipeline_vorlage,
+    ),
+    BereitschaftsPunkt(
+        "import_graph",
+        "Testauswahl per Import-Graph",
+        risikoarm=False,
+        pruefe=_pruefe_import_graph,
+    ),
+    BereitschaftsPunkt(
+        "braucht_server_marker",
+        "Markierung „braucht Server“ vorhanden",
+        risikoarm=True,
+        pruefe=_pruefe_braucht_server_marker,
+        regele=_regele_braucht_server_marker,
+    ),
+)
+
+
+def pruefe_bereitschaft(repo: Path, konfig: dict[str, Any] | None = None) -> list[BereitschaftsBefund]:
+    """Prüft alle fünf Bereitschafts-Punkte lesend gegen ``repo`` (#583)."""
+    kontext = _bereitschafts_kontext(repo, konfig)
+    befunde: list[BereitschaftsBefund] = []
+    for punkt in BEREITSCHAFTS_PUNKTE:
+        ok, fehlgrund, abhilfe = punkt.pruefe(kontext)
+        befunde.append(
+            BereitschaftsBefund(
+                name=punkt.name,
+                titel=punkt.titel,
+                ok=ok,
+                risikoarm=punkt.risikoarm,
+                fehlgrund="" if ok else fehlgrund,
+                abhilfe="" if ok else abhilfe,
+                status="ok" if ok else "abweichung",
+            )
+        )
+    return befunde
+
+
+def regele_bereitschaft(
+    repo: Path,
+    *,
+    konfig: dict[str, Any] | None = None,
+    selbst_regeln: bool = True,
+    mit_ticket: bool = False,
+    mit_github: bool = True,
+    trocken: bool = False,
+) -> list[BereitschaftsBefund]:
+    """Regelt risikoarme Bereitschafts-Punkte selbst; Rest optional als T0-Einrichtungs-Ticket (#583)."""
+    vorher = {b.name: b for b in pruefe_bereitschaft(repo, konfig)}
+    aktionen: dict[str, str] = {}
+    if selbst_regeln and not trocken:
+        kontext = _bereitschafts_kontext(repo, konfig)
+        for punkt in BEREITSCHAFTS_PUNKTE:
+            if not vorher[punkt.name].ok and punkt.risikoarm and punkt.regele is not None:
+                try:
+                    geregelt, meldung = punkt.regele(kontext)
+                except OSError as fehler:
+                    log.warning("Selbst-Regeln für %s gescheitert: %s", punkt.name, fehler)
+                    continue
+                if geregelt:
+                    aktionen[punkt.name] = meldung
+                    # Kontext neu einlesen, falls ein Folge-Punkt auf denselben Dateien arbeitet.
+                    kontext = _bereitschafts_kontext(repo, konfig)
+
+    nachher = pruefe_bereitschaft(repo, konfig)
+    offen = [(b.name, b.fehlgrund, b.abhilfe) for b in nachher if not b.ok]
+    ticket_nr = ""
+    if mit_ticket and offen:
+        erg = einrichtungs_ticket.bereitschafts_ticket_sicherstellen(
+            repo,
+            offen,
+            mit_github=mit_github,
+            trocken=trocken,
+        )
+        ticket_nr = erg.ticket_nr
+
+    ergebnis: list[BereitschaftsBefund] = []
+    for b in nachher:
+        if b.ok and not vorher[b.name].ok:
+            ergebnis.append(
+                BereitschaftsBefund(
+                    name=b.name,
+                    titel=b.titel,
+                    ok=True,
+                    risikoarm=b.risikoarm,
+                    status="geregelt",
+                    aktion=aktionen.get(b.name, "durch Vorlagen-Anschluss gelöst"),
+                )
+            )
+        elif not b.ok and ticket_nr:
+            ergebnis.append(
+                BereitschaftsBefund(
+                    name=b.name,
+                    titel=b.titel,
+                    ok=False,
+                    risikoarm=b.risikoarm,
+                    fehlgrund=b.fehlgrund,
+                    abhilfe=b.abhilfe,
+                    status="ticket",
+                    aktion=f"#{ticket_nr}",
+                )
+            )
+        else:
+            ergebnis.append(b)
+    return ergebnis
+
+
 # --- Zusammenbau -------------------------------------------------------------------
 
 
@@ -978,6 +1453,8 @@ def erstelle(
 
     projekt = lies_projekt(repo)
     projekt["grosse_runde"] = ort_wahl.pruefe_repo_runde(repo).als_dict()
+    konfig, repo_profil = lies_repo_profil(repo)
+    projekt["repo_profil"] = repo_profil
     historie = lies_historie(repo, claude_home, letzte)
     katalog = lies_katalog(repo, claude_home, home_json)
     werkzeuge = katalog.werkzeuge
@@ -1014,6 +1491,7 @@ def erstelle(
         kommando_dateien=katalog.kommandos,
     )
     inventur.setup_zeilen = pruefe_unterbauten(umgebung, set(projekt["env_schluessel"]), heim, which, ausfuehren)
+    inventur.bereitschaft = pruefe_bereitschaft(repo, konfig)
     inventur.tote_winkel = _tote_winkel(inventur)
     return inventur
 
@@ -1107,6 +1585,7 @@ def schreibe(inventur: Inventur, datei: Path) -> Path:
         "abgewaehlt": inventur.abgewaehlt,
         "kategorien": {schluessel: [w.name for w in liste] for schluessel, liste in inventur.je_kategorie().items()},
         "setup_zeilen": [z.als_dict() for z in inventur.setup_zeilen],
+        "bereitschaft": [b.als_dict() for b in inventur.bereitschaft],
         "tote_winkel": list(inventur.tote_winkel),
     }
     datei.parent.mkdir(parents=True, exist_ok=True)
@@ -1129,9 +1608,20 @@ def lauf(
     schreiben: bool = False,
     ausgabe: Path | None = None,
     letzte: int = HISTORIE_VORGABE,
+    doctor: bool = False,
+    regeln: bool = False,
+    mit_ticket: bool = False,
+    trocken: bool = False,
 ) -> int:
-    """Befehl ``inventur``: lesen, Abwahl anwenden, ausgeben, optional schreiben."""
+    """Befehl ``inventur``: lesen, Abwahl anwenden, optional Bereitschaft regeln, ausgeben, schreiben."""
     inventur = erstelle(repo, letzte=letzte)
+    if regeln or mit_ticket:
+        inventur.bereitschaft = regele_bereitschaft(
+            repo.resolve(),
+            selbst_regeln=regeln,
+            mit_ticket=mit_ticket,
+            trocken=trocken,
+        )
     ziel = ausgabe or repo / AUSGABE_PFAD
     try:
         gespeichert = lies_abwahl(ziel)
@@ -1167,4 +1657,6 @@ def lauf(
     if schreiben:
         schreibe(inventur, ziel)
         log.info("Freigabeliste geschrieben: %s", ziel)
+    if doctor and any(not b.ok for b in inventur.bereitschaft):
+        return EXIT_ABWEICHUNG
     return 0
