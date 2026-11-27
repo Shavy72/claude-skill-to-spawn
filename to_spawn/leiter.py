@@ -668,7 +668,7 @@ class _EchteUmwelt:
         # Stand-Datei wird nur gelesen — schreiben tut sie der Aufseher-Tick.
         blick = aufseher_stand.ticket_lage(spec, ticket, self.q)
         if blick.lage is None:
-            raise RuntimeError(f"#{ticket} ist kein Sub-Issue von Spec #{spec}")
+            raise RuntimeError(f"#{ticket} ist weder Sub-Issue noch Manifest-Ticket von Spec #{spec}")
         wt = self.worktree(ticket)
         prompt = seit is not None and respawn.start_prompt_da(wt, ticket, seit)
         start, unlesbar = self._letzter_start(ticket, wt)
