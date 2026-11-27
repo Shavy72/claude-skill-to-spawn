@@ -8,6 +8,7 @@ Nur Linux mit tmux (wie ``test_platz_schaffen_624`` und ``test_obergrenze_rechne
 # ruff: noqa: F811 — ``welt``/``zu_9003`` kommen als Fixtures aus den Nachbar-Tests.
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -901,3 +902,275 @@ def test_weg_460_kleine_grenze_wartet_und_aufseher_startet_ohne_ueberbuchung(tmp
     assert "-n bau 902 " in gestartet, gestartet
     assert gesamt_claude() == 6, f"Überbuchung: {gesamt_claude()} > 6"
     assert not warte_datei.exists()
+
+
+# --- #624 Rest-Defekt nach PR #838: Alt-Hashes in stand.json & flüchtige Zeichen in Gegenprobe ---
+
+
+def test_hash_formatwechsel_und_fluechtige_zeichen_sperren_stille_nicht(tmp_path: Path) -> None:
+    """#624:
+    1. Ein alter unversionierter ``stand.json``-Hash (wie vor PR #838) darf bei ``eintrag()``
+       weder ``seit`` auf ``jetzt`` noch ``pane_aenderung`` setzen — echte Stille aus
+       ``seit_hinweis`` bleibt sofort wirksam.
+    2. Flüchtige Zeichen und UI-Einblendungen (blinkende Status-Symbole, NBSP/Nullbreite,
+       gedimmter oder ``Try "..."``-Platzhalter im Eingabefeld, ``/remote-control``-Banner,
+       ``Tip:``-Hinweis) ändern ``pane_hash`` nicht.
+    3. Echte Inhaltsänderungen (Tippen im Eingabefeld, neue Antwortzeile) ändern ``pane_hash``
+       weiterhin und setzen ``seit`` + ``pane_aenderung``."""
+    jetzt = time.time()
+    a = aufpasser.Aufpasser(
+        aufpasser.Einstellungen(
+            zustand=tmp_path,
+            tmux_socket="nie-benutzt",
+            trocken=True,
+            jetzt=lambda: jetzt,
+        )
+    )
+    a.jetzt = jetzt
+    schluessel = "spec-probe-5-mit-41/wache 41"
+
+    # (1) Alter pre-#838-Hash (SHA-1 ohne Versionspräfix, inkl. /clear-Zeile) + jüngeres 'seit'
+    # als Session-JSON-mtime (578 min idle): Formatwechsel darf still_min nicht auf 0 sperren.
+    alt_hash_vor_838 = hashlib.sha1(aufpasser.ohne_statuszeile(ECHTES_PANE_WACHE_41).encode("utf-8")).hexdigest()
+    a.stand.fenster[schluessel] = {
+        "hash": alt_hash_vor_838,
+        "seit": jetzt - 180 * 60,
+        "stufe": 0,
+    }
+    e = a.eintrag(schluessel, ECHTES_PANE_WACHE_41, seit_hinweis=jetzt - 578 * 60)
+    assert e["hash"] == aufpasser.pane_hash(ECHTES_PANE_WACHE_41)
+    assert e["seit"] == pytest.approx(jetzt - 578 * 60, abs=1.0)
+    assert "pane_aenderung" not in e
+
+    # (2) Flüchtige Zeichen & Claude-Code-UI-Einblendungen ändern pane_hash nicht.
+    basis_hash = aufpasser.pane_hash(ECHTES_PANE_OHNE_UMFRAGE)
+    varianten = [
+        # Blinkende Status-Symbole (● → ⏺ / ◐, ✻ → ✶) + NBSP + Nullbreite + Leerzeichen
+        ECHTES_PANE_OHNE_UMFRAGE.replace("●", "⏺").replace("✻", "✶").replace("❯ \n", "❯\xa0\u200b   \n"),
+        ECHTES_PANE_OHNE_UMFRAGE.replace("●", "◐"),
+        # Gedimmter Prompt-Vorschlag (SGR 2) und inverser Cursor davor (capture-pane -e -p)
+        ECHTES_PANE_OHNE_UMFRAGE.replace("❯ \n", '❯ \x1b[2mTry "fix lint errors"\x1b[0m\n'),
+        ECHTES_PANE_OHNE_UMFRAGE.replace("❯ \n", '❯ \x1b[7mT\x1b[27m\x1b[2mry "refactor"\x1b[0m\n'),
+        ECHTES_PANE_OHNE_UMFRAGE.replace("❯ \n", "❯ \x1b[2mcommit and push\x1b[0m\n"),
+        # Klartext-Platzhalter Try "..." (capture-pane -p ohne -e)
+        ECHTES_PANE_OHNE_UMFRAGE.replace("❯ \n", '❯ Try "fix lint errors"\n'),
+        # /remote-control-Banner + Session-URL + /clear-Hinweis (echtes wache-41-Muster)
+        ECHTES_PANE_OHNE_UMFRAGE.replace(
+            "─" * 80 + "\n❯",
+            "  /remote-control is active · Continue here, on your phone, or at\n"
+            "  https://claude.ai/code/session_01Bi5ejqT9MkZfY4G2kKdXaG\n"
+            "                                          new task? /clear to save 133k tokens\n" + "─" * 80 + "\n❯",
+        ),
+        # Tip-Hinweis inkl. umgebrochener Folgezeile (echtes leitstand-1-Muster)
+        ECHTES_PANE_OHNE_UMFRAGE.replace(
+            "─" * 80 + "\n❯",
+            "  ⎿ \xa0Tip: Get notified on your phone when long tasks finish · turn on push \n"
+            "     notifications in /config\n\n" + "─" * 80 + "\n❯",
+        ),
+    ]
+    for idx, variante in enumerate(varianten):
+        assert aufpasser.pane_hash(variante) == basis_hash, f"Flüchtige Variante {idx} änderte den Hash"
+
+    # (3) Gegenprobe: echte Inhaltsänderung (Tippen / neue Ausgabe) ändert den Hash und setzt Sperre.
+    assert aufpasser.pane_hash(ECHTES_PANE_OHNE_UMFRAGE.replace("❯ \n", "❯ halb getippt\n")) != basis_hash
+    assert (
+        aufpasser.pane_hash(ECHTES_PANE_OHNE_UMFRAGE.replace("geschlossen.\n", "geschlossen.\n● Neue Antwort.\n"))
+        != basis_hash
+    )
+    a.stand.fenster[schluessel] = {"hash": basis_hash, "seit": jetzt - 90 * 60, "stufe": 0}
+    e_echt = a.eintrag(
+        schluessel,
+        ECHTES_PANE_OHNE_UMFRAGE.replace("❯ \n", "❯ halb getippt\n"),
+        seit_hinweis=jetzt - 90 * 60,
+    )
+    assert e_echt["seit"] == pytest.approx(jetzt, abs=1.0)
+    assert e_echt.get("pane_aenderung") == pytest.approx(jetzt, abs=1.0)
+
+
+def test_vor_eingriff_ignoriert_fluechtiges_rauschen_und_schuetzt_echte_aenderung(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#624: Während der Gegenprobe darf ein flüchtiger UI-Wechsel (``/remote-control``, ``Tip:``,
+    blinkendes Symbol, gedimmter Vorschlag) ``vor_eingriff()`` weder abbrechen noch
+    ``pane_aenderung`` setzen; echte Eingabe bricht weiter ab und merkt ``pane_aenderung``."""
+    jetzt = time.time()
+    a = aufpasser.Aufpasser(
+        aufpasser.Einstellungen(
+            zustand=tmp_path,
+            tmux_socket="nie-benutzt",
+            trocken=True,
+            jetzt=lambda: jetzt,
+        )
+    )
+    a.jetzt = jetzt
+    f = aufpasser.Fenster("spec-34", "34", "0", "wache 34", str(tmp_path), 0, "@0", "%0")
+    schluessel = f"{f.sitzung}/{f.name}"
+    info = aufpasser.SessionInfo("sid-34", tmp_path, "idle", 123, aus_json=True, mtime=jetzt - 25 * 60)
+    monkeypatch.setattr(a, "deploy_laeuft", lambda _m=None: [])
+    monkeypatch.setattr(a, "gate_im_fenster", lambda _f, _w=None: None)
+    monkeypatch.setattr(a, "session", lambda _f: info)
+
+    e = a.eintrag(schluessel, ECHTES_PANE_OHNE_UMFRAGE, seit_hinweis=info.mtime)
+    hash_start = e["hash"]
+
+    # (1) Flüchtige UI-Änderung während der 30-s-Gegenprobe → vor_eingriff bleibt True, kein pane_aenderung.
+    fluechtig = ECHTES_PANE_OHNE_UMFRAGE.replace("●", "⏺").replace(
+        "─" * 80 + "\n❯ \n",
+        "  /remote-control is active · Continue here, on your phone, or at\n"
+        "  https://claude.ai/code/session_01Bi5ejqT9MkZfY4G2kKdXaG\n"
+        + "─" * 80
+        + '\n❯ \x1b[2mTry "fix lint errors"\x1b[0m\n',
+    )
+    monkeypatch.setattr(a, "pane_text", lambda _z: fluechtig)
+    assert a.vor_eingriff(f, hash_start, tmp_path, limit_ignorieren=True) is True
+    assert "pane_aenderung" not in a.stand.fenster[schluessel]
+    assert a.stand.fenster[schluessel]["seit"] == pytest.approx(info.mtime, abs=1.0)
+
+    # (2) Gegenprobe: Nutzer tippt im Eingabefeld → vor_eingriff bricht ab (False) und setzt pane_aenderung.
+    getippt = ECHTES_PANE_OHNE_UMFRAGE.replace("❯ \n", "❯ warte kurz\n")
+    monkeypatch.setattr(a, "pane_text", lambda _z: getippt)
+    assert a.vor_eingriff(f, hash_start, tmp_path, limit_ignorieren=True) is False
+    assert a.stand.fenster[schluessel]["seit"] == pytest.approx(jetzt, abs=1.0)
+    assert a.stand.fenster[schluessel].get("pane_aenderung") == pytest.approx(jetzt, abs=1.0)
+
+
+@pytest.mark.braucht("tmux")
+def test_weg_624_alt_stand_json_und_fluechtige_gegenprobe_raeumt_im_ersten_zyklus(
+    welt: Welt, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#624 Weg-Test (Beleg-Lauf l233_624):
+    Bestehende ``stand.json`` mit altem pre-#838-Hash + stille ``wache``/``leitstand``-Fenster
+    einer fertigen Spec (> 15 min idle) + flüchtige Pane-Änderung während der Gegenprobe →
+    ``speicher.auf_platz_warten`` → ``Aufpasser.platz_schaffen()`` räumt im ERSTEN Zyklus
+    (< 60 s, 0 Wartezyklen, kein ``inzwischen aktiv``)."""
+    _grenze(welt, monkeypatch, max_sessions=2)
+    monkeypatch.setenv("GH_STUB_UNTER", f"{SPEC}:9002,8881:8882")
+    monkeypatch.setenv("GH_STUB_ZU", "8882")
+    sitzung_alt = "spec-altstand-8881"
+    _zweite_sitzung(
+        welt,
+        sitzung_alt,
+        "8881",
+        "repo-altstand-8881",
+        [
+            ("wache 8881", ""),
+            ("leitstand 8881", f"{speicher.ANZEIGE_VARIABLE}=1"),
+        ],
+    )
+    _alle_sessions_altern(welt, 90 * 60)
+
+    # Vorbestehende stand.json mit alten unversionierten pre-#838-Hashes (inkl. /clear-Hinweis)
+    # und 'seit' jünger als Session-JSON-mtime (wie im Echtlauf auf dem Bau-Server).
+    a_vor = _aufpasser(welt)
+    alt_fenster = a_vor.fenster(sitzung_alt, "8881")
+    ziel_zu_name = {f.ziel: f.name for f in alt_fenster}
+    jetzt = time.time()
+    stand_daten = {"fenster": {}, "meldungen": {}, "starts": {}}
+    for f in alt_fenster:
+        text_vor = ECHTES_PANE_WACHE_41 if f.ist_wache else ECHTES_PANE_MIT_UMFRAGE
+        alt_hash = hashlib.sha1(aufpasser.ohne_statuszeile(text_vor).encode("utf-8")).hexdigest()
+        stand_daten["fenster"][f"{sitzung_alt}/{f.name}"] = {
+            "hash": alt_hash,
+            "seit": jetzt - 5 * 60,
+            "stufe": 0,
+        }
+    welt.zustand.mkdir(parents=True, exist_ok=True)
+    (welt.zustand / "stand.json").write_text(json.dumps(stand_daten), encoding="utf-8")
+
+    # Simuliert flüchtige Claude-Code-UI-Änderungen zwischen Erstblick und 30-s-Gegenprobe
+    # (blinkendes Symbol, /remote-control + URL, Tip-Zeile, gedimmter Prompt-Vorschlag).
+    abrufe: dict[str, int] = {}
+
+    def pane_mit_flackern(self: aufpasser.Aufpasser, ziel: str) -> str:
+        name = ziel_zu_name.get(ziel)
+        if name is None:
+            return self.tmux("capture-pane", "-p", "-t", ziel)
+        abrufe[name] = abrufe.get(name, 0) + 1
+        basis = ECHTES_PANE_WACHE_41 if name.startswith("wache") else ECHTES_PANE_MIT_UMFRAGE
+        if abrufe[name] == 1:
+            return basis
+        return (
+            basis.replace("●", "⏺")
+            .replace("✻", "✶")
+            .replace(
+                "─" * 80 + "\n❯ \n",
+                "  /remote-control is active · Continue here, on your phone, or at\n"
+                "  https://claude.ai/code/session_01Bi5ejqT9MkZfY4G2kKdXaG\n"
+                "  ⎿ \xa0Tip: Get notified on your phone when long tasks finish\n"
+                + "─" * 80
+                + '\n❯ \x1b[2mTry "fix lint errors"\x1b[0m\n',
+            )
+        )
+
+    monkeypatch.setattr(aufpasser.Aufpasser, "pane_text", pane_mit_flackern)
+
+    def pruefen(_konfig: object) -> tuple[bool, str]:
+        if _sitzung_fenster(sitzung_alt):
+            return False, f"{speicher.GESAMT_VOLL_TEXT}: schon 20 Claude-Sessions insgesamt"
+        return True, "frei"
+
+    schlafen_aufrufe: list[float] = []
+
+    def schlafen_abbruch(sek: float) -> None:
+        schlafen_aufrufe.append(sek)
+        pytest.fail(
+            f"platz_schaffen räumte nicht im ersten Zyklus (Warte-Schlaf {sek}s): "
+            f"offen={_sitzung_fenster(sitzung_alt)}, log={caplog.text}"
+        )
+
+    start = time.monotonic()
+    with caplog.at_level("INFO", logger="aufpasser"):
+        zyklen = speicher.auf_platz_warten(
+            None,
+            pruefen=pruefen,
+            schlafen=schlafen_abbruch,
+            platz_schaffen=lambda: _aufpasser(welt, karenz_s=0.3).platz_schaffen(),
+        )
+    dauer_s = time.monotonic() - start
+
+    assert zyklen == 0 and schlafen_aufrufe == [], (zyklen, schlafen_aufrufe, caplog.text, welt.log())
+    assert dauer_s < 60.0, f"platz_schaffen brauchte {dauer_s:.1f} s (>= 60 s)"
+    assert _sitzung_fenster(sitzung_alt) == [], (caplog.text, welt.log())
+    assert "inzwischen aktiv" not in caplog.text, caplog.text
+
+
+def test_hash_migration_bewahrt_aelteres_seit_und_erkennt_platzhalter_als_aenderung(tmp_path: Path) -> None:
+    """#624 Fix-Runde 3:
+    1. Bei einer v1→v2-Hash-Migration darf ein jüngerer ``seit_hinweis`` (z. B. frische
+       Session-JSON-``mtime``) ein bereits älteres ``seit`` im Stand nicht verkürzen.
+    2. Nicht-Hash-Platzhalter wie ``"alt"`` zählen nicht als Formatwechsel — ``eintrag()``
+       wertet sie als echte Textänderung und setzt ``stufe`` zurück auf 0."""
+    jetzt = time.time()
+    a = aufpasser.Aufpasser(
+        aufpasser.Einstellungen(
+            zustand=tmp_path,
+            tmux_socket="nie-benutzt",
+            trocken=True,
+            jetzt=lambda: jetzt,
+        )
+    )
+    a.jetzt = jetzt
+
+    # (1) Alter 40-stelliger v1-SHA-1 + bestehendes seit (20 min alt) + frischer seit_hinweis (2 s alt):
+    #     Formatwechsel migriert den Hash, behält aber das ältere seit (20 min).
+    alt_v1 = hashlib.sha1(ECHTES_PANE_OHNE_UMFRAGE.encode("utf-8")).hexdigest()
+    schluessel_1 = "spec-9001/bau 9003"
+    a.stand.fenster[schluessel_1] = {"hash": alt_v1, "seit": jetzt - 20 * 60, "stufe": 0}
+    e1 = a.eintrag(schluessel_1, ECHTES_PANE_OHNE_UMFRAGE, seit_hinweis=jetzt - 2.0)
+    assert e1["hash"] == aufpasser.pane_hash(ECHTES_PANE_OHNE_UMFRAGE)
+    assert e1["seit"] == pytest.approx(jetzt - 20 * 60, abs=1.0)
+    assert "pane_aenderung" not in e1
+
+    # (2) Platzhalter-Hash ("alt", kein gültiger SHA-1) mit stufe=1: kein Formatwechsel,
+    #     sondern Textänderung nach Eingriff → stufe zurück auf 0.
+    schluessel_2 = "spec-9001/bau 9002"
+    a.stand.fenster[schluessel_2] = {
+        "hash": "alt",
+        "seit": jetzt - 100 * 60,
+        "eingriff": jetzt - 100 * 60,
+        "stufe": 1,
+    }
+    e2 = a.eintrag(schluessel_2, ECHTES_PANE_OHNE_UMFRAGE, seit_hinweis=jetzt - 0.5)
+    assert e2["hash"] == aufpasser.pane_hash(ECHTES_PANE_OHNE_UMFRAGE)
+    assert e2["stufe"] == 0
+    assert abs(e2["seit"] - jetzt) < 2.0

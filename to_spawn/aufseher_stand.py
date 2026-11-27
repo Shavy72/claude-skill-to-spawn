@@ -654,9 +654,8 @@ FRAGE_MAX = 600
 #: Eingabezeile des Menschen im Verlauf (``> …``/``❯ …``) — nur ganz links, mit Text, nie eine
 #: Auswahlzeile (``❯ 1. Yes``).
 EINGABE_ZEILE = re.compile(r"^[>❯]\s+(?!\d+\.)\S")
-#: Führende blinkende Status- und Spinner-Zeichen aus Claude-Code- bzw. Terminal-Ausgaben, die
-#: bei derselben unberührten Frage zwischen zwei Aufnahmen wechseln können (#372).
-_STATUS_PRAEFIX = re.compile(r"^(?:[●⏺○◯◐◓◑◒◔◕◌✻✶✳✢✽✦✧∗·⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⣾⣽⣻⢿⡿⣟⣯⣷](?:\s+|$))+")
+#: Führende blinkende Status- und Spinner-Zeichen (einzige Quelle: :data:`aufpasser.STATUS_PRAEFIX`, #372, #624).
+_STATUS_PRAEFIX = aufpasser.STATUS_PRAEFIX
 
 
 def _zeile_normalisieren(zeile: str) -> str:
