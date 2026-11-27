@@ -2621,8 +2621,11 @@ def _tick(
     if katalog and not dry_run:
         aktionen += katalog_pflegen(repo, konfig, gelernt)
 
+    # #853: Abnahme-Tickets (checkpoint:human) warten auf den Menschen und zählen für
+    # Moment.ALLE_AUF_STAGING nicht als Bau-Tickets mit.
+    bau_tickets = [i for i in liste if checkpoint not in label_namen(i)]
     komplett_haelt = False
-    if not teilauswahl and liste and all(ticket_zustand.fertig_gebaut(i) for i in liste):
+    if not teilauswahl and bau_tickets and all(ticket_zustand.fertig_gebaut(i) for i in bau_tickets):
         komplett_haelt = _komplett_alle_auf_staging(repo, spec, konfig, aktionen, dry_run)
 
     # #1407: unlesbares Staging ist kein „fehlt“, aber auch kein Beleg „liegt drauf“ — Abschluss zurückhalten.
