@@ -351,6 +351,8 @@ def expand_heim(pfad: str | Path) -> Path:
 
 #: Umgebungsvariable für einen abweichenden Skill-Ort (z. B. getrennter Probe-Install, #786).
 SKILL_HOME_ENV = "TO_SPAWN_HOME"
+#: Umgebungsvariable für eine abweichende Maschinen-Liste (z. B. Probe-Lauf, #846).
+MASCHINE_ENV = "TO_SPAWN_MASCHINE"
 #: Wurzel dieses laufenden Skills (Ordner über ``to_spawn/``).
 _SKILL_EIGEN = Path(__file__).resolve().parent.parent
 #: Einzige Rückfall-Stelle für den Skill-Ort auf dem Bau-Server per SSH (#786).
@@ -1056,7 +1058,7 @@ def repo_klon_pfad(eintrag: Mapping[str, Any], *, skill: Path | None = None) -> 
 
 def maschine_datei() -> Path:
     """Ort der Maschinen-Liste: ``TO_SPAWN_MASCHINE``, sonst ``~/.config/to-spawn/maschine.json``."""
-    roh = os.environ.get("TO_SPAWN_MASCHINE")
+    roh = os.environ.get(MASCHINE_ENV)
     if roh:
         return expand_heim(roh)
     return heim_ordner() / ".config" / "to-spawn" / "maschine.json"

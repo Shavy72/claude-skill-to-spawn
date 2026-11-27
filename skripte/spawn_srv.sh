@@ -285,11 +285,10 @@ warteliste_aendern() {
 # <<< warteliste
 # LAEUFT = Tickets dieses Laufs, die schon liefen oder gestartet wurden — nur die trägt der Lauf aus.
 LAEUFT=""
-VORSPANN="export REPO=$(printf %q "$REPO") TO_SPAWN_HOME=$(printf %q "$SKILL_HOME") TO_SPAWN_REPO=$(printf %q "$REPO") TO_SPAWN_WARTE_DATEI=$(printf %q "$WARTE_DATEI")"
-if [ -n "${TO_SPAWN_MASCHINE:-}" ]; then
-  VORSPANN="$VORSPANN TO_SPAWN_MASCHINE=$(printf %q "$TO_SPAWN_MASCHINE")"
-fi
-VORSPANN="$VORSPANN;"
+# Start-Umgebung aus der einen Quelle to_spawn.sitzung_env.shell_vorspann (#846):
+# identisch für spawn_srv.sh, Aufseher/capo, Ablösung und Aufpasser.
+VORSPANN="$(TO_SPAWN_REPO="$REPO" "$PY" -c 'import sys; sys.path.insert(0, sys.argv[1]); from to_spawn import sitzung_env; print(sitzung_env.shell_vorspann(sys.argv[2], skill_home=sys.argv[1], warte_datei=sys.argv[3]))' "$SKILL_HOME" "$REPO" "$WARTE_DATEI")" \
+  || { echo "Start-Vorspann nicht ermittelbar (to_spawn.sitzung_env.shell_vorspann)." >&2; exit 2; }
 # GEPLANT = echte Fensterbefehle, KURZ = Kurzform ``bau <N> [--umzug …]`` / ``wache <S>`` für
 # Anzeige und Fenstername (erste zwei Wörter; sessions_stand/aufpasser lesen die Namen) —
 # beide Listen laufen parallel.

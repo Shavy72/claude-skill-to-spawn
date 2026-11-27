@@ -66,6 +66,7 @@ from . import (
     konsole,
     melder,
     mensch_noetig,
+    sitzung_env,
     staging_schalter,
     starter,
     ticket_zustand,
@@ -1222,7 +1223,18 @@ def laeuft_noch(ticket: int, fenster: list[str] | None, wt_zeit: float | None, j
 
 
 #: Wurzel des Skills; ``skripte/bau.py`` darin ist der eigentliche Launcher.
-_SKILL = Path(__file__).resolve().parent.parent
+_SKILL_DEFAULT = Path(__file__).resolve().parent.parent
+_SKILL = _SKILL_DEFAULT
+
+
+def _skill_ort() -> Path:
+    """Aktiver Skill-Ordner für Startzeilen: ``TO_SPAWN_HOME`` (falls gesetzt), sonst ``_SKILL``.
+
+    Lenkt ein Test ``capo._SKILL`` um, gewinnt diese Test-Naht (#277/#786/#846).
+    """
+    if _SKILL != _SKILL_DEFAULT:
+        return _SKILL
+    return config.skill_ordner()
 
 
 def _bau_skript(repo: Path) -> Path:
@@ -1237,7 +1249,7 @@ def _bau_skript(repo: Path) -> Path:
     im_repo = repo / "scripts" / "bau.py"
     if im_repo.is_file():
         return im_repo
-    return _SKILL / "skripte" / "bau.py"
+    return _skill_ort() / "skripte" / "bau.py"
 
 
 def fenster_log(repo: Path, ticket: int) -> Path:
@@ -1251,17 +1263,17 @@ def bau_startzeile(repo: Path, ticket: int, auftrag: str = "", *schalter: str) -
     Einziger Ort für Ablösung (respawn), Folge-Runde und Aufpasser (#419). Ruft ``bau.py`` des Skills direkt
     mit diesem Python auf, wie ``skripte/spawn_srv.sh`` (#257) — nie die Shell-Funktion
     ``bau`` aus ``~/.bashrc`` oder die ``.venv`` des Repos, die ein Spec-Klon nicht hat
-    (#277). Vorspann ``REPO``/``TO_SPAWN_HOME``/``TO_SPAWN_REPO`` wie dort (#212). Die
+    (#277). Vorspann (``REPO``/``TO_SPAWN_HOME``/``TO_SPAWN_REPO``/``TO_SPAWN_MASCHINE``)
+    kommt gebündelt aus :func:`sitzung_env.shell_vorspann` (#212/#846). Die
     Konfiguration der Session liefert allein ``bau.py``. ``schalter`` hängt weitere
     ``bau.py``-Schalter an (respawn #431: ``--ohne-prompt``). stderr von ``bau.py`` geht
     weiter ins Fenster und zusätzlich in :func:`fenster_log`; endet ``bau.py`` mit Fehler,
     schließt sich das Fenster — Meldung und Exit-Code bleiben dort lesbar.
     """
-    ort = shlex.quote(str(repo))
-    vorspann = f"REPO={ort} TO_SPAWN_HOME={shlex.quote(str(_SKILL))} TO_SPAWN_REPO={ort}"
-    if auftrag.strip():
-        vorspann += f" BAU_AUFTRAG={shlex.quote(_kurz(auftrag, AUFTRAG_MAX_ZEICHEN))}"
-    bau = [sys.executable or "python3", str(_SKILL / "skripte" / "bau.py"), str(ticket)]
+    skill = _skill_ort()
+    auftrag_kurz = _kurz(auftrag, AUFTRAG_MAX_ZEICHEN) if auftrag.strip() else ""
+    vorspann = sitzung_env.shell_vorspann(repo, skill_home=skill, auftrag=auftrag_kurz)
+    bau = [sys.executable or "python3", str(skill / "skripte" / "bau.py"), str(ticket)]
     log_pfad = fenster_log(repo, ticket)
     log = shlex.quote(str(log_pfad))
     # stderr über tee ins Log, Original bleibt auf fd 3 fürs Fenster (Wartezeilen, #431).
@@ -1276,7 +1288,7 @@ def bau_startzeile(repo: Path, ticket: int, auftrag: str = "", *schalter: str) -
     )
     ordner = shlex.quote(str(log_pfad.parent))
     lauf = shlex.join([*bau, "--sofort", *schalter])
-    return f"export {vorspann}; mkdir -p {ordner}; {tee}; {lauf}; {spur}"
+    return f"{vorspann} mkdir -p {ordner}; {tee}; {lauf}; {spur}"
 
 
 def folge_befehl(
