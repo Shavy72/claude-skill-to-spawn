@@ -15,7 +15,7 @@ import logging
 import os
 import re
 import tempfile
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -367,7 +367,7 @@ def pruefe(
 
 
 def _pruefe_effort(bericht: Bericht, daten: dict[str, Any], spec: int | str) -> None:
-    """Optionales Spec-Feld ``effort``: fehlt es, gilt der claude-Standard; sonst nur gültige Stufen."""
+    """Optionales Spec-Feld ``effort``: fehlt es, gilt Konfig/Vorgabe; sonst nur gültige Stufen."""
     from .setup import EFFORTS  # spät: setup zieht viele Module, Manifest bleibt leicht
 
     if "effort" in daten and daten["effort"] not in EFFORTS:
@@ -377,8 +377,40 @@ def _pruefe_effort(bericht: Bericht, daten: dict[str, Any], spec: int | str) -> 
         )
 
 
+def effort_fuer(
+    manifest_daten: Mapping[str, Any] | None = None,
+    ticket_eintrag: Mapping[str, Any] | None = None,
+    konfig: Mapping[str, Any] | None = None,
+    *,
+    standard: str = "low",
+) -> str:
+    """Effektive Denkstufe für ein Ticket auflösen (#845).
+
+    Einzige Auflösungs-Stelle im Skill: Ticket-Effort (``ticket_eintrag["effort"]``) >
+    Spec-Effort (``manifest_daten["effort"]``) > Repo-Konfig (``konfig["effort"]["ticket"]``) >
+    ``standard`` (Vorgabe ``"low"``). Ungültige Werte werden gewarnt und übersprungen.
+    """
+    from .setup import EFFORTS  # spät: setup zieht viele Module, Manifest bleibt leicht
+
+    konfig_effort = konfig.get("effort") if isinstance(konfig, Mapping) else None
+    konfig_ticket = konfig_effort.get("ticket") if isinstance(konfig_effort, Mapping) else None
+    kandidaten = (
+        ("Ticket-Manifest", ticket_eintrag.get("effort") if isinstance(ticket_eintrag, Mapping) else None),
+        ("Spec-Manifest", manifest_daten.get("effort") if isinstance(manifest_daten, Mapping) else None),
+        ("Konfig", konfig_ticket),
+    )
+    for quelle, roh in kandidaten:
+        if roh is None or (isinstance(roh, str) and not roh.strip()):
+            continue
+        wert = roh.strip().lower() if isinstance(roh, str) else roh
+        if isinstance(wert, str) and wert in EFFORTS:
+            return wert
+        log.warning("Ungültiger Effort %r in %s — wird ignoriert.", roh, quelle)
+    return standard
+
+
 def pruefe_eintrag(nummer: str, roh: Any, konfig: dict[str, Any]) -> list[str]:
-    """Fehler eines einzelnen Manifest-Eintrags (Pflichtfelder, Grenze ``staffel.grenze_k``).
+    """Fehler eines einzelnen Manifest-Eintrags (Pflichtfelder, optionales ``effort``, Grenze ``staffel.grenze_k``).
 
     Einzige Stelle der Feld- und Grenz-Regel: :func:`pruefe` nutzt sie für jedes
     Ticket, ``spec_rand.anhaengen`` vor dem ersten Schreibzugriff. Leer = in Ordnung.
@@ -401,6 +433,14 @@ def pruefe_eintrag(nummer: str, roh: Any, konfig: dict[str, Any]) -> list[str]:
         )
     if not isinstance(umfang, str) or not umfang.strip():
         fehler.append(f"#{nummer}: Feld umfang (Klartext) fehlt — in /to-tickets in einem Satz eintragen.")
+    if "effort" in eintrag:
+        from .setup import EFFORTS  # spät: setup zieht viele Module, Manifest bleibt leicht
+
+        if eintrag["effort"] not in EFFORTS:
+            fehler.append(
+                f"#{nummer}: effort {eintrag['effort']!r} ungültig — erlaubt: {', '.join(EFFORTS)} "
+                "(oder Feld weglassen)."
+            )
     return fehler
 
 

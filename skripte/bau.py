@@ -53,6 +53,7 @@ from to_spawn import (
     context_mode,
     gh,
     konsole,
+    manifest,
     nest,
     probesitz,
     prozessbaum,
@@ -1037,16 +1038,14 @@ def main() -> int:
     regel_kopie_warnen()
     default = load_default()
     found = None if args.probesitz else find_manifest(ticket)
-    # Optionales Spec-Feld ``effort`` (low…max): gewinnt vor der Konfig; ``--effort`` wird immer gesetzt.
-    spec_effort: str | None = None
+    manifest_daten: dict[str, Any] | None = None
     if args.probesitz:
         # Wegwerf-Ticket: kein Manifest, kein gh — der Auftrag ist fest (#214).
         entry = {}
         spec, title = "probesitz", f"Probesitz-Wegwerf-Session #{ticket}"
     elif found:
-        manifest, entry = found
-        spec = str(manifest.get("spec", "?"))
-        spec_effort = manifest.get("effort") or None
+        manifest_daten, entry = found
+        spec = str(manifest_daten.get("spec", "?"))
         title = entry.get("title") or f"Ticket {ticket}"
     else:
         log.warning("Kein Manifest führt Ticket #%s — nur Core, Spec aus gh.", ticket)
@@ -1135,15 +1134,19 @@ def main() -> int:
             encoding="utf-8",
         )
 
-    # Vorrang: --model > Repo-Konfig ``modelle.ticket`` (#205) > Werkzeug-Vorgabe (#660).
-    model = werkzeug.modell_fuer(runner, konfig, cli_modell=args.model, default_modell=default.get("model"))
-    # Immer ausdrücklich setzen (für claude): ohne Flag erbt die Session den globalen
-    # Standard, und ein einmal per /effort gespeichertes high frisst bei vielen Sessions das Abo.
-    konfig_effort = konfig.get("effort") if isinstance(konfig.get("effort"), dict) else {}
-    effort = spec_effort or konfig_effort.get("ticket") or "low"
-    if effort not in {"low", "medium", "high", "xhigh", "max"}:
-        log.warning("Ungültiger Effort %r in der Konfig — nehme low.", effort)
-        effort = "low"
+    # Effektiver Effort an genau einer Stelle (to_spawn.manifest, #845):
+    # Ticket-Effort > Spec-Effort > Konfig ``effort.ticket`` > ``low``.
+    # Immer ausdrücklich setzen: ohne Flag erbt ``claude`` den globalen Standard, und ``agy``
+    # übersetzt den Effort in ``gemini-4-neon-<effort>``.
+    effort = manifest.effort_fuer(manifest_daten, entry, konfig)
+    # Vorrang: --model > Repo-Konfig ``modelle.ticket`` (#205) > Effort-Übersetzung (agy, #845) > Vorgabe (#660).
+    model = werkzeug.modell_fuer(
+        runner,
+        konfig,
+        cli_modell=args.model,
+        default_modell=default.get("model"),
+        effort=effort,
+    )
     # Unter Test nur die Attrappe (#1406); explizites ``starter.finde("claude")`` hält
     # die bekannte Start-Stelle (#97) auch für statische Prüfungen sichtbar.
     programm = starter.finde("claude") if runner == "claude" else starter.finde(runner)
