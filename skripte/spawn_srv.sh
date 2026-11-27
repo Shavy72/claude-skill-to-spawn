@@ -146,7 +146,7 @@ elif [ ! -f "$SKILL_HOME/to_spawn.py" ]; then
   echo "WEIGERUNG: Regularien-Prüfer fehlt ($SKILL_HOME/to_spawn.py) — Skill to-spawn installieren (github.com/Shavy72/claude-skill-to-spawn), dann erneut." >&2
   exit 3
 else
-  PRUEF_ARGS=(pruefen "$SPEC")
+  PRUEF_ARGS=(regularien "$SPEC")
   if [ -n "$TICKETS_ARG" ]; then PRUEF_ARGS+=(--tickets "$TICKETS_ARG"); fi
   # Probelauf und --nur-wache (startet kein Ticket-Fenster) legen kein Einrichtungs-Ticket an (#410);
   # --nur-wache ist kein Probelauf: Konfig-Einrichtung (config.sicherstellen) läuft.
