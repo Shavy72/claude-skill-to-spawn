@@ -344,7 +344,7 @@ def _an_spec_haengen(repo: Path, gh_repo: str, spec: int, neu: int, zeilen: list
             ],
         )
     if lauf.exit != 0:
-        zeilen.append(f"Hinweis: Manifest-Prüfung der Spec #{spec} meldet Mängel — `to_spawn.py pruefen`")
+        zeilen.append(f"Hinweis: Manifest-Prüfung der Spec #{spec} meldet Mängel — `to_spawn.py regularien {spec}`")
     return Ergebnis(ok=True, zeilen=[*zeilen, f"#{neu} hängt an Spec #{spec}"])
 
 
