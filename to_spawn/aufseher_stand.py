@@ -72,6 +72,7 @@ from to_spawn import (
     config,
     gh,
     komplett_lauf,
+    manifest,
     pc_fenster,
     prozessbaum,
     ticket_zustand,
@@ -191,6 +192,22 @@ class Quellen:
     #: :func:`wiederanlauf.feststellen`. :func:`echte_quellen` setzt es immer; ``None`` nur in
     #: Test-Fakes ohne diese Frage (die Leiter entscheidet dann allein nach der Stufe).
     anlauf: Callable[[int, Path], wiederanlauf.Wiederanlauf | None] | None = None
+    #: Einzelnes GitHub-Issue für zusätzliche Manifest-Tickets ohne Sub-Issue-Kante (#867),
+    #: ``None`` = Fehler/unlesbar. :func:`echte_quellen` setzt es immer; ``None`` nur in
+    #: Test-Fakes ohne diese Quelle.
+    issue: Callable[[int], dict[str, Any] | None] | None = None
+
+
+def _issue_echt(gh_repo: str, nummer: int, repo: Path) -> dict[str, Any] | None:
+    """Einzelnes GitHub-Issue (REST-Form wie :func:`capo.kinder`), ``None`` bei Fehler (#867)."""
+    daten = gh.json_lauf(
+        ["api", f"repos/{gh_repo}/issues/{nummer}"],
+        cwd=repo,
+        timeout=gh.ticket_stand_timeout(),
+    )
+    if not (isinstance(daten, dict) and "state" in daten and str(daten.get("number", "")).isdigit()):
+        return None
+    return daten
 
 
 def _tmux_echt(args: list[str]) -> str | None:
@@ -227,6 +244,7 @@ def echte_quellen(repo: Path, gh_repo: str) -> Quellen:
         tmux=_tmux_echt,
         pc_still=pc_still,
         anlauf=wiederanlauf.feststellen,
+        issue=lambda n: _issue_echt(gh_repo, n, repo),
     )
 
 
@@ -578,18 +596,48 @@ class _Ergebnis:
     ziele: dict[int, str] = field(default_factory=dict)
 
 
-def sammeln(spec: int, q: Quellen, vorher: _Vorher) -> _Ergebnis:
-    """Lage jedes Sub-Issues der Spec; :class:`RuntimeError`, wenn gh nichts liefert.
+def _mit_manifest_tickets(
+    spec: int,
+    kinder: list[dict[str, Any]],
+    q: Quellen,
+    auswahl_stand: auswahl.Auswahl | None,
+) -> list[dict[str, Any]]:
+    """Ergänzt Sub-Issues um zusätzliche Manifest-Tickets ohne Sub-Issue-Verknüpfung (#867)."""
+    if q.issue is None:
+        return kinder
+    bekannt = {int(k["number"]) for k in kinder if str(k.get("number", "")).isdigit()}
+    ergebnis = list(kinder)
+    for nummer in manifest.ticket_nummern(q.repo, spec):
+        if nummer in bekannt:
+            continue
+        if auswahl_stand is not None and not auswahl_stand.enthaelt(nummer):
+            continue
+        daten = q.issue(nummer)
+        if isinstance(daten, dict) and "state" in daten:
+            ergebnis.append({"number": nummer, **daten})
+            bekannt.add(nummer)
+        else:
+            log.warning(
+                "Manifest-Ticket #%s von Spec #%s nicht lesbar (gh) — übersprungen.",
+                nummer,
+                spec,
+            )
+    return ergebnis
 
-    „Nichts“ heißt Fehler (``None``) oder leere Liste — eine Spec ohne Sub-Issues hat
-    keinen Stand, der Aufrufer schreibt dann keine Zeile in die Stand-Datei.
+
+def sammeln(spec: int, q: Quellen, vorher: _Vorher) -> _Ergebnis:
+    """Lage jedes Tickets der Spec (Sub-Issues ∪ Manifest #867); :class:`RuntimeError`, wenn gh nichts liefert.
+
+    „Nichts“ heißt Fehler (``None``) oder leere Liste — eine Spec ohne Sub-Issues und
+    Manifest-Tickets hat keinen Stand, der Aufrufer schreibt dann keine Zeile in die Stand-Datei.
     """
     kinder = q.kinder(spec)
     if kinder is None:
         raise RuntimeError(f"Sub-Issues von Spec #{spec} nicht lesbar (gh)")
+    auswahl_stand = auswahl.lesen(q.repo, spec)
+    kinder = _mit_manifest_tickets(spec, kinder, q, auswahl_stand)
     if not kinder:
         raise RuntimeError(f"Spec #{spec} hat keine Sub-Issues — Spec-Nummer prüfen (gh)")
-    auswahl_stand = auswahl.lesen(q.repo, spec)
     if auswahl_stand is not None:
         kinder = auswahl.filtere_issues(kinder, auswahl_stand)
     bau_log.protokoll_holen(q.repo)
@@ -847,7 +895,7 @@ def beleg_fuer(spec: int, ticket: int, q: Quellen, ordner: Path | None = None) -
     erg = sammeln(spec, q, _vorher(spec, ordner))
     lage = next((t for t in erg.lagen if t.nummer == ticket), None)
     if lage is None:
-        raise RuntimeError(f"#{ticket} ist kein Sub-Issue von Spec #{spec}")
+        raise RuntimeError(f"#{ticket} ist weder Sub-Issue noch Manifest-Ticket von Spec #{spec}")
     zustand = sitzungs_zustand(lage)
     zeit = datetime.fromtimestamp(q.jetzt(), tz=UTC).astimezone().strftime("%H:%M")
     return StandBeleg(

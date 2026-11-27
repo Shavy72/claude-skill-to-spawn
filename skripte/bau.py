@@ -528,6 +528,7 @@ def build_prompt(
     ``{MINDSET}``/``{ABLOESE_SOP}`` = feste Texte aus ``anleitung`` (#500),
     ``{BEFUGNIS}`` = Befugnis-Abschnitt aus ``befugnis.start_text`` (#278),
     ``{ENTSCHEIDUNGS_LINIE}`` = ``anleitung.entscheidungs_linie`` mit dem Hauptzweig (#376),
+    ``{MASTER_ROT_REGEL}`` = ``anleitung.master_rot_regel`` mit Hauptzweig und Kennzeichen (#900),
     ``{ANNAHME_GRENZE}`` = ``capo.annahme_grenze`` (was die Checkpoint-Annahme deckt, #490),
     ``{REPO_ZUSATZ}`` = Inhalt von ``start_text.zusatz_datei`` (#274 P1) — zuletzt eingesetzt, darin
     nur :data:`ZUSATZ_PLATZHALTER` ersetzt; leer → Platzhalter samt Überschrift darüber entfällt.
@@ -541,6 +542,7 @@ def build_prompt(
     ziel_gh = gh_repo if gh_repo is not None else GH_REPO
     konfig = konfig if konfig is not None else config.lade(ziel_repo)
     label = str((konfig.get("regularien") or {}).get("checkpoint_label") or "checkpoint:human")
+    master_rot = str((konfig.get("regularien") or {}).get("master_rot_kennzeichen") or anleitung.MASTER_ROT_KENNZEICHEN)
     haupt = gh.hauptzweig(ziel_repo)
     werte = {
         "{WT}": config.worktree_pfad(ticket, ziel_repo) if repo is not None else worktree_pfad(ticket),
@@ -556,6 +558,7 @@ def build_prompt(
         "{ABLOESE_SOP}": anleitung.ABLOESE_SOP,
         "{BEFUGNIS}": befugnis.start_text(ticket),
         "{ENTSCHEIDUNGS_LINIE}": anleitung.entscheidungs_linie(haupt),
+        "{MASTER_ROT_REGEL}": anleitung.master_rot_regel(haupt, master_rot),
         "{ANNAHME_GRENZE}": capo.annahme_grenze(ticket),
     }
     if "{ANNAHME_GRENZE}" not in template:

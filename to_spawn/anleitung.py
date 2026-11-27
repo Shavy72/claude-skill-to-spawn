@@ -18,6 +18,25 @@ from .ticket_zustand import STAGING_FERTIG_LABEL
 #: Überschrift der Entscheidungs-Linie (#376).
 LINIE_KOPF = "Entscheidungs-Linie"
 
+#: Kennzeichen im Commit-Betreff an der Spitze für Fix-Commits auf einem roten Hauptzweig (#900).
+MASTER_ROT_KENNZEICHEN = "(master-rot)"
+
+
+def master_rot_regel(hauptzweig: str = "", kennzeichen: str = MASTER_ROT_KENNZEICHEN) -> str:
+    """Regel für Fix-Commits auf einem roten Hauptzweig (#900, aus App #1532).
+
+    Steht an genau einer Stelle im Skill und wird über ``{MASTER_ROT_REGEL}`` in
+    ``skripte/bau.py`` in den Start-Text jeder Bau-Session eingesetzt.
+    """
+    zweig = f"`origin/{hauptzweig}`" if hauptzweig else "dem Hauptzweig"
+    return (
+        f"Fix für roten Hauptzweig ({zweig}): Betreff des Spitzen-Commits trägt "
+        f"„{kennzeichen}“ (z. B. `fix: … {kennzeichen} (#<N>)`), damit die "
+        f"Warteschlange den Fix vor regulären Tickets durchlässt — nur für echte "
+        f"Reparaturen eines roten {zweig}, nie für normale Tickets."
+    )
+
+
 #: Mindset (E10, E41, E40, E42): steht wortgleich im Aufseher-Prompt, in jedem
 #: Anstupser und in der Bau-Prompt-Vorlage.
 MINDSET = (
@@ -128,8 +147,9 @@ def handoff_auftrag(handoff: str, start: str) -> str:
 #: Aufseher-Takt (``to_spawn/waechter_takt.py``) (#367, #429). Platzhalter ``{S}`` und ``{SKILL}``
 #: werden erst beim Bauen des jeweiligen Prompts gefüllt.
 ABSCHLUSS_ANWEISUNG = (
-    "Bau fertig, bereit zur Abnahme (alle Bau-Tickets zu oder nur noch Live-Belege/checkpoint:human-Abnahme offen, "
-    "bzw. „Kette … durch“ oder „SPEC FERTIG“) → PFLICHT Abschluss-Paket `--stand abnahme` (einmal): "
+    "Ob die Spec fertig und bereit zur Abnahme ist, entscheidet nur capo, nie du: "
+    "die Abschluss-Kette startet nur nach capos Zeile „#{S} SPEC FERTIG — Abschluss-Kette“ "
+    "(sonst nichts davon tun, auch wenn alle Tickets zu wirken) → PFLICHT Abschluss-Paket `--stand abnahme` (einmal): "
     "zuerst Rundschau-Auftrag erzeugen mit `python {SKILL}/skripte/abschluss_paket.py rundschau-auftrag {S}` "
     "(schreibt docs/agents/rundschau_auftrag_{S}.md mit Tickets, Direkt-Links, Pflicht-Folie Bild + Klick-Schritte je Bau-Ticket "
     "und Pflicht-Folie „Für dich entschieden“ aus docs/agents/entscheidungen_{S}.md). "
@@ -174,10 +194,13 @@ ABSCHLUSS_ANWEISUNG = (
     "Exit 4 → überspringen. Exit 3 → KI nachstarten, erneut sammeln. Exit 1 → Grund notieren, weiter. "
     "Zum Schluss `python {SKILL}/skripte/abschluss_paket.py nachsehen {S}` "
     "(genau eine Mail an den Menschen; nur für `--stand abnahme` gilt: Exit 3 = wartet noch, capo stößt es je Tick selbst an — nicht warten). "
+    "`ablegen`/`nachsehen` Exit 4 = capo meldet nicht fertig → abbrechen, nicht umgehen, im Notizzettel vermerken. "
     "Live-Schritt nur über `python {SKILL}/to_spawn.py live {S}` (die Tür prüft selbst vorher die Komplett-Prüfung, höchstens einmal je Spec): "
     "Exit 0 → live; Exit 1 → kein Live, Grund aus der Zeile beheben und erneut rufen; "
     "Exit 2 → `live.befehl` fehlt, Komplett-Prüfung grün, Live-Schritt nach Repo-Ablauf von Hand. "
-    "Ohne ausdrückliches Wort des Nutzers geht nichts live. "
+    "Ohne ausdrückliches Wort des Nutzers geht nichts live — der Abnahme-Kommentar „passt“ des Nutzers im Abnahme-Ticket "
+    "ist die Live-Freigabe für diese Spec (kein zweites Live-Ja, keine Briefkasten-Frage): direkt `python {SKILL}/to_spawn.py live {S}` "
+    "(startet ohne Staging vorher die Komplett-Prüfung), dann Aufräumen. "
     "Meldet der Nutzer nach dem Abnahme-Paket Nachbesserungen (Kommentar im Spec-Issue), je Punkt ein Folge-Ticket an derselben Spec ausschließlich über "
     '`python {SKILL}/skripte/abschluss_paket.py nachbesserung {S} --punkt "<Punkt>"` anlegen (nie über `befund --stufe gelb`; Manifest ergänzt, Kette baut weiter); '
     "sind die Folge-Tickets fertig, läuft der Abnahme-Abschluss erneut (neue Rundschau, neue Selbstprüfung, `thermo_lauf.py live-bereit plan {S} --neu`, "

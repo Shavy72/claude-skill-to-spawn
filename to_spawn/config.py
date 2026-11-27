@@ -92,6 +92,9 @@ DEFAULTS: dict[str, Any] = {
         "nur_kritisch": True,
         #: Versand-Befehl als argv-Liste, JSON auf stdin (leer = kein Versand, nur Log) (#213).
         "befehl": [],
+        #: Nacht-Fenster „HH:MM-HH:MM“ (Ortszeit, #885): darin geht nur ``server_tot`` raus,
+        #: alles andere bleibt stumm ohne Nachhol-Schwall. Leer = keine Nachtruhe.
+        "nacht": "",
     },
     "regularien": {
         "checkpoint_label": "checkpoint:human",

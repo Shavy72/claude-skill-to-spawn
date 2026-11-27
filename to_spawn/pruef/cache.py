@@ -100,6 +100,7 @@ _LAUF_DATEIEN = tuple(
         "umzug-anfrage-*",
         "folgerunde-*.log",
         "abschluss_*_paket.json",
+        "morgen_bericht_*.md",
         "stand.json",
         "werkzeuge.json",
         "sandbox.json",
