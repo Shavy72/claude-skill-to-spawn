@@ -206,3 +206,47 @@ def test_programmfehler_haelt_gueltigen_halt_ueber_frist(klon: Path, monkeypatch
     assert halt.pruefen(klon) is not None
     assert (klon / halt.DATEI).exists()
     assert _sicherungen(klon) == []
+
+
+def test_git_ausfall_warnt_nur_einmal_je_halt(
+    klon: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#895: nicht erreichbares ``git`` (OSError/Timeout) ⇒ Halt bleibt über Frist, genau eine Warnung je Halt."""
+    halt.anlegen(klon, "Fix", halt.Bedingung("commit", "abcdef1234567"))
+
+    def _git_weg(*_a: object, **_k: object) -> None:
+        raise FileNotFoundError("git fehlt")
+
+    monkeypatch.setattr(halt.subprocess, "run", _git_weg)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="to_spawn.halt"):
+        assert halt.pruefen(klon) is not None
+        assert halt.pruefen(klon) is not None
+        _merker_altern(klon)
+        assert halt.pruefen(klon) is not None
+        assert halt.pruefen(klon) is not None
+    assert (klon / halt.DATEI).exists()
+    assert _sicherungen(klon) == []
+    warnungen = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert len(warnungen) == 1, [r.getMessage() for r in warnungen]
+
+
+def test_sicherung_bei_identischem_zeitstempel_eindeutig(klon: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#895: zwei Fristabläufe mit exakt gleichem Zeitstempel ⇒ zwei eindeutige Sicherungen ohne Überschreiben."""
+    fest = datetime.now(UTC).astimezone().replace(microsecond=0)
+    monkeypatch.setattr(halt, "_jetzt", lambda: fest)
+    echt = halt._erfuellt
+    inhalte: list[str] = []
+    for grund in ("erster", "zweiter"):
+        halt.anlegen(klon, grund, _bis_spaeter())
+        inhalte.append((klon / halt.DATEI).read_text(encoding="utf-8"))
+        monkeypatch.setattr(halt, "_erfuellt", _kaputt)
+        assert halt.pruefen(klon) is not None
+        _merker_altern(klon)
+        assert halt.pruefen(klon) is None
+        monkeypatch.setattr(halt, "_erfuellt", echt)
+    gesichert = _sicherungen(klon)
+    assert len(gesichert) == 2
+    assert sorted(p.read_text(encoding="utf-8") for p in gesichert) == sorted(inhalte)
+    aufgehoben = [z for z in _log(klon) if z["ereignis"] == "aufgehoben"]
+    assert sorted(z["gesichert_als"] for z in aufgehoben) == sorted(p.name for p in gesichert)
