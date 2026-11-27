@@ -643,6 +643,7 @@ def test_pc_anmelde_lauf_holt_liegengebliebene_tickets_nach_mit_gh_aufzeichnung(
     befehl, kw = wt.aufrufe[0]
     assert befehl[0] == str(attrappe)
     assert "--title" in befehl and "bau 603" in befehl
+    assert "\ufffd" not in " ".join(befehl), f"Kaputte Kodierung im Tab-Befehl: {befehl}"
     flags = int(kw.get("creationflags") or 0)
     assert flags & CREATE_NO_WINDOW
     assert flags & CREATE_NEW_PROCESS_GROUP
@@ -675,6 +676,32 @@ def test_pc_anmelde_lauf_holt_liegengebliebene_tickets_nach_mit_gh_aufzeichnung(
     nach2 = _gh_stand(welt)
     assert len(wt.aufrufe) == 1, "Zweiter Lauf bei laufender Session darf keinen zweiten Tab öffnen"
     assert nach2["aufrufe"] == aufrufe_nach1
+
+
+def test_gh_taktgeber_stub_liefert_utf8_trotz_cp1252_pipe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#907: ``gh_taktgeber_1402.py`` schreibt wie echtes ``gh`` immer UTF-8, auch ohne ``PYTHONIOENCODING=utf-8``."""
+    welt = _welt_bauen(
+        tmp_path,
+        issues=[_vorlage_issue(610)],
+        kommentare={
+            "610": [
+                _vorlage_kommentar("Deploy-Schlange: grün auf master · " + "a" * 40),
+                _vorlage_kommentar("Aufseher: Belegseite — Klickweg prüfen"),
+            ]
+        },
+    )
+    monkeypatch.setenv("TO_SPAWN_GH_STUB", welt["env"]["TO_SPAWN_GH_STUB"])
+    monkeypatch.setenv("GH_TAKTGEBER_ZUSTAND", welt["env"]["GH_TAKTGEBER_ZUSTAND"])
+    # Simuliert Windows-Pipe ohne gesetztes PYTHONIOENCODING=utf-8 (dort Standard cp1252):
+    monkeypatch.setenv("PYTHONIOENCODING", "cp1252")
+    monkeypatch.setenv("PYTHONUTF8", "0")
+
+    kommentare = capo.issue_kommentare("test-org/beispiel-app", 610)
+    assert kommentare is not None
+    texte = [str(k.get("body") or "") for k in kommentare]
+    assert any("grün auf master · " + "a" * 40 in t for t in texte), texte
+    assert any("Belegseite — Klickweg prüfen" in t for t in texte), texte
+    assert all("\ufffd" not in t for t in texte), texte
 
 
 # --- 3. Echter schtasks-Lauf unter Windows (CI / PC) ---
