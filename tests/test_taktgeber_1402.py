@@ -684,20 +684,19 @@ def test_adr_0008_nachtrag_dokumentiert() -> None:
 
 
 def test_delegiert_an_schliess_pruefer_wenn_vorhanden(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ist ``to_spawn.schliess_pruefer`` installiert, nutzt der Taktgeber direkt dessen ``pruefe(stand)``-Tür."""
-    from types import ModuleType
+    """Der Taktgeber delegiert fest an ``to_spawn.schliess_pruefer.pruefe(Stand(...))``."""
+    from to_spawn import schliess_pruefer, taktgeber
 
-    from to_spawn import taktgeber
+    aufrufe: list[schliess_pruefer.Stand] = []
 
-    aufrufe: list[dict[str, Any]] = []
-    fake_modul = ModuleType("to_spawn.schliess_pruefer")
-
-    def fake_pruefe(stand: dict[str, Any]) -> tuple[bool, list[str]]:
+    def fake_pruefe(stand: schliess_pruefer.Stand) -> schliess_pruefer.PruefErgebnis:
         aufrufe.append(stand)
-        return False, ["Belegseite entspricht nicht der festen Form"]
+        return schliess_pruefer.PruefErgebnis(
+            ok=False,
+            gruende=[schliess_pruefer.Grund(regel="beleg_form", text="Belegseite entspricht nicht der festen Form")],
+        )
 
-    fake_modul.pruefe = fake_pruefe  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "to_spawn.schliess_pruefer", fake_modul)
+    monkeypatch.setattr(schliess_pruefer, "pruefe", fake_pruefe)
 
     erg = taktgeber.pruefe_mit_pruefer(
         tmp_path,
@@ -708,6 +707,287 @@ def test_delegiert_an_schliess_pruefer_wenn_vorhanden(tmp_path: Path, monkeypatc
         gruen_sha="a" * 40,
     )
     assert erg.ok is False
-    assert erg.gruende == ("Belegseite entspricht nicht der festen Form",)
-    assert len(aufrufe) == 1 and aufrufe[0]["ticket"] == 777
+    assert erg.gruende == ("beleg_form: Belegseite entspricht nicht der festen Form",)
+    assert len(aufrufe) == 1
+    assert isinstance(aufrufe[0], schliess_pruefer.Stand)
+    assert aufrufe[0].ticket == 777
+    assert aufrufe[0].gruen_auf_hauptzweig == "a" * 40
     assert befund.KOPF == "Aufseher:"
+
+
+# --- Nachbesserung #906: festes Stand-Objekt, echtes Protokoll, Trockenlauf-Cron ---
+
+
+def test_pruefe_mit_pruefer_nutzt_festes_stand_objekt_ohne_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``pruefe_mit_pruefer`` verdrahtet fest gegen ``schliess_pruefer.Stand`` + ``pruefe(stand)`` ohne Fallback."""
+    from to_spawn import schliess_pruefer, taktgeber
+
+    quelltext = (SKILL / "to_spawn" / "taktgeber.py").read_text(encoding="utf-8")
+    assert "_schliess_pruefer_modul" not in quelltext, "Übergangs-Loader _schliess_pruefer_modul muss entfernt sein"
+    assert "capo.reopen_funde" not in quelltext, "Übergangs-Fallback capo.reopen_funde muss entfernt sein"
+
+    aufrufe: list[Any] = []
+
+    def spion_pruefe(stand: Any) -> schliess_pruefer.PruefErgebnis:
+        aufrufe.append(stand)
+        return schliess_pruefer.PruefErgebnis(
+            ok=False,
+            gruende=[schliess_pruefer.Grund(regel="beleg_form", text="Handy-Bild fehlt")],
+        )
+
+    monkeypatch.setattr(schliess_pruefer, "pruefe", spion_pruefe)
+
+    commits = [
+        schliess_pruefer.Commit("1" * 40, "feat: Ticket (#778)", 1_700_000_000),
+        schliess_pruefer.Commit("2" * 40, "feat: anderes (#999)", 1_700_000_001),
+    ]
+    erg = taktgeber.pruefe_mit_pruefer(
+        tmp_path,
+        "origin/master",
+        778,
+        commits,
+        {"regularien": {"belege_ordner": "docs/eigene-belege"}},
+        gruen_sha="b" * 40,
+    )
+    assert erg.ok is False
+    assert erg.gruende == ("beleg_form: Handy-Bild fehlt",)
+    assert len(aufrufe) == 1
+    stand = aufrufe[0]
+    assert isinstance(stand, schliess_pruefer.Stand), f"Erwartet schliess_pruefer.Stand, erhalten: {type(stand)}"
+    assert stand.repo == tmp_path
+    assert stand.ticket == 778
+    assert stand.ref == "origin/master"
+    assert stand.belege_ordner == "docs/eigene-belege"
+    assert stand.gruen_auf_hauptzweig == "b" * 40
+    assert [c.sha for c in (stand.eigene or [])] == ["1" * 40]
+
+
+def test_integration_echter_schliess_pruefer_ohne_mock_prueft_beleg_form_und_gruen(tmp_path: Path) -> None:
+    """Echter Integrationstest ohne Mock gegen ``schliess_pruefer.pruefe`` (feste Belegform + Grün-SHA)."""
+    from to_spawn import schliess_pruefer, taktgeber
+
+    welt = _welt_bauen(
+        tmp_path,
+        issues=[
+            _vorlage_issue(551),
+            _vorlage_issue(552),
+            _vorlage_issue(553),
+        ],
+        kommentare={},
+    )
+    repo: Path = welt["repo"]
+
+    # #551: vollständige feste Belegform (#864) → grün und geschlossen
+    sha_551 = _commit_mit_beleg(repo, 551, mit_beleg=True, mit_nummer=True)
+
+    # #552: Kurz-Beleg ohne Pflichtfelder/Klickweg (verletzt beleg_form) → abgelehnt, bleibt offen
+    (repo / "modul_552.py").write_text("WERT_552 = 552\n", encoding="utf-8")
+    beleg_552 = repo / "docs" / "verify-hard" / "552_beweis.md"
+    beleg_552.parent.mkdir(parents=True, exist_ok=True)
+    beleg_552.write_text("# Beleg #552\n\nTODO folgt\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "feat: Umsetzung (#552)")
+    _git(repo, "update-ref", "refs/remotes/origin/master", "HEAD")
+    sha_552 = _git(repo, "rev-parse", "HEAD")
+
+    # #553: gültige feste Belegform, aber nach dem grünen SHA kam ein weiterer Ticket-Commit → nicht grün
+    sha_553_alt = _commit_mit_beleg(repo, 553, mit_beleg=True, mit_nummer=True)
+    (repo / "modul_553_nachzug.py").write_text("NACHZUG = True\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "fix: Nachzug (#553)")
+    _git(repo, "update-ref", "refs/remotes/origin/master", "HEAD")
+
+    # Direkter Integrationsaufruf ohne Mock gegen schliess_pruefer.pruefe
+    alle = schliess_pruefer.alle_commits(repo, "origin/master")
+    erg_551 = taktgeber.pruefe_mit_pruefer(repo, "origin/master", 551, alle, {}, gruen_sha=sha_551)
+    assert erg_551.ok is True, erg_551.gruende
+
+    erg_552 = taktgeber.pruefe_mit_pruefer(repo, "origin/master", 552, alle, {}, gruen_sha=sha_552)
+    assert erg_552.ok is False
+    assert any(g.startswith("beleg_form:") for g in erg_552.gruende), erg_552.gruende
+
+    erg_553 = taktgeber.pruefe_mit_pruefer(repo, "origin/master", 553, alle, {}, gruen_sha=sha_553_alt)
+    assert erg_553.ok is False
+    assert any(g.startswith("nicht_gruen_auf_hauptzweig:") for g in erg_553.gruende), erg_553.gruende
+
+    # Vollständiger CLI-Lauf gegen echten schliess_pruefer
+    stand = _gh_stand(welt)
+    stand["kommentare"] = {
+        "551": [_vorlage_kommentar(f"Deploy-Schlange: grün auf master · {sha_551}")],
+        "552": [_vorlage_kommentar(f"Deploy-Schlange: grün auf master · {sha_552}")],
+        "553": [_vorlage_kommentar(f"Deploy-Schlange: grün auf master · {sha_553_alt}")],
+    }
+    welt["zustand"].write_text(json.dumps(stand, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    erg = _taktgeber_cli(welt)
+    assert erg.returncode == 0, erg.stdout + erg.stderr
+    nachher = _gh_stand(welt)
+    assert _issue_aus_stand(nachher, 551)["state"] == "closed"
+    assert _issue_aus_stand(nachher, 552)["state"] == "open"
+    assert _issue_aus_stand(nachher, 553)["state"] == "open"
+    assert "552" in erg.stdout and "beleg_form" in erg.stdout
+    assert "553" in erg.stdout and "nicht_gruen_auf_hauptzweig" in erg.stdout
+
+
+def test_protokolliere_schreibt_ueber_neue_bau_log_tuer_auf_origin_protokoll(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``_protokolliere`` nutzt die neue ``bau_log.schreibe(typ, **felder)``-Tür mit Pflichtfeldern auf ``origin/protokoll``."""
+    from to_spawn import taktgeber
+
+    # 1) AST-Nachweis: kein 3-Argumente-Altweg mehr in to_spawn/taktgeber.py
+    quelltext = (SKILL / "to_spawn" / "taktgeber.py").read_text(encoding="utf-8")
+    baum = ast.parse(quelltext, filename="to_spawn/taktgeber.py")
+    schreibe_aufrufe = [
+        knoten
+        for knoten in ast.walk(baum)
+        if isinstance(knoten, ast.Call)
+        and isinstance(knoten.func, ast.Attribute)
+        and knoten.func.attr == "schreibe"
+        and isinstance(knoten.func.value, ast.Name)
+        and knoten.func.value.id == "bau_log"
+    ]
+    assert len(schreibe_aufrufe) >= 1
+    for aufruf in schreibe_aufrufe:
+        assert len(aufruf.args) <= 1, (
+            f"to_spawn/taktgeber.py:{aufruf.lineno}: alter 3-Argumente-Aufruf von bau_log.schreibe() gefunden"
+        )
+
+    # 2) Weg-Test gegen echtes lokales Bare-Repo + zweiten Klon (ohne lokale .to-spawn/bau_log-Dateien)
+    bare = tmp_path / "origin.git"
+    bare.mkdir()
+    _git(bare, "init", "--bare", "-q", "-b", "master")
+
+    klon_a = tmp_path / "klon_a"
+    _git(tmp_path, "clone", "-q", str(bare), str(klon_a))
+    (klon_a / ".to-spawn").mkdir()
+    (klon_a / ".to-spawn" / "config.json").write_text(
+        json.dumps({"hauptzweig": "master", "live": {"ohne": False, "befehl": "python deploy.py live"}}),
+        encoding="utf-8",
+    )
+    (klon_a / "tests").mkdir()
+    (klon_a / "tests" / "test_basis.py").write_text("def test_bestehend():\n    assert True\n", encoding="utf-8")
+    _git(klon_a, "add", ".")
+    _git(klon_a, "commit", "-q", "-m", "chore: basis")
+    _git(klon_a, "push", "-q", "-u", "origin", "master")
+
+    klon_b = tmp_path / "klon_b"
+    _git(tmp_path, "clone", "-q", str(bare), str(klon_b))
+
+    sha_561 = _commit_mit_beleg(klon_a, 561, mit_beleg=True, mit_nummer=True)
+    sha_562 = _commit_mit_beleg(klon_a, 562, mit_beleg=True, mit_nummer=True)
+    sha_563 = _commit_mit_beleg(klon_a, 563, mit_beleg=True, mit_nummer=True)
+    _git(klon_a, "push", "-q", "origin", "master")
+
+    zustand_pfad = tmp_path / "gh_zustand_560.json"
+    kommentar_vorlage = json.loads((FIXTURE / "kommentar_315.json").read_text(encoding="utf-8"))
+    zustand_pfad.write_text(
+        json.dumps(
+            {
+                "issues": [
+                    _vorlage_issue(561),
+                    _vorlage_issue(562),
+                    _vorlage_issue(563, state="open", state_reason="reopened", closed_at="2026-11-27T09:50:00Z"),
+                ],
+                "kommentare": {
+                    "561": [
+                        _vorlage_kommentar(f"Deploy-Schlange: grün auf master · {sha_561}"),
+                        _vorlage_kommentar(f"Deploy-Schlange: ist live · {sha_561}", created_at="2026-11-27T10:05:00Z"),
+                    ],
+                    "562": [_vorlage_kommentar(f"Deploy-Schlange: grün auf master · {sha_562}")],
+                    "563": [
+                        _vorlage_kommentar(
+                            f"Deploy-Schlange: grün auf master · {sha_563}", created_at="2026-11-27T09:40:00Z"
+                        ),
+                        _vorlage_kommentar("Aufseher: Belegseite — Rolle prüfen", created_at="2026-11-27T10:00:00Z"),
+                    ],
+                },
+                "repo_labels": [ticket_zustand.STAGING_FERTIG_LABEL],
+                "kommentar_vorlage": kommentar_vorlage,
+                "aufrufe": [],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    puffer_a = tmp_path / "puffer_a"
+    puffer_b = tmp_path / "puffer_b"
+    monkeypatch.setenv("TO_SPAWN_GH_STUB", str(GH_STUB))
+    monkeypatch.setenv("GH_TAKTGEBER_ZUSTAND", str(zustand_pfad))
+    monkeypatch.setenv("TO_SPAWN_START_SPERREN", str(tmp_path / "sperren_560"))
+    monkeypatch.setenv("TO_SPAWN_TEST_FERN_SPERRE_AUS", "1")
+    monkeypatch.setenv("TO_SPAWN_PROTOKOLL_PUFFER", str(puffer_a))
+
+    erg = taktgeber.lauf(
+        klon_a,
+        293,
+        "test-org/beispiel-app",
+        wecker=lambda _r, _s, nr, _g, grund, _d: (True, f"#{nr} geweckt ({grund})"),
+    )
+    assert erg.ok is True, erg.fehler
+    assert {a.ticket: a.aktion for a in erg.aktionen} == {561: "geschlossen", 562: "label_gesetzt", 563: "geweckt"}
+
+    # Keine lokale .to-spawn/bau_log-Datei im Worktree angelegt
+    assert not (klon_a / ".to-spawn" / "bau_log").exists()
+    assert not (klon_a / "docs" / "agents" / "bau_log").exists()
+    assert _git(klon_a, "status", "--porcelain") == ""
+
+    # Im zweiten Klon mit leerem Puffer sind alle 3 Ereignisse direkt über origin/protokoll lesbar
+    monkeypatch.setenv("TO_SPAWN_PROTOKOLL_PUFFER", str(puffer_b))
+    for nr, erw_typ, erw_aktion in (
+        (561, "schliessen", "geschlossen"),
+        (562, "taktgeber", "label_gesetzt"),
+        (563, "taktgeber", "geweckt"),
+    ):
+        zeilen = bau_log.lese(klon_b, nr)
+        assert len(zeilen) == 1, f"#{nr}: {zeilen}"
+        eintrag = zeilen[0]
+        for pflichtfeld in bau_log.PFLICHTFELDER:
+            assert pflichtfeld in eintrag, f"Pflichtfeld {pflichtfeld!r} fehlt in {eintrag}"
+        assert eintrag["typ"] == erw_typ, eintrag
+        assert eintrag["wer"] == "taktgeber", eintrag
+        assert eintrag["aktion"] == erw_aktion, eintrag
+        assert eintrag["ticket"] == str(nr), eintrag
+        assert str(eintrag["was"]).strip(), eintrag
+        assert str(eintrag["session"]).strip(), eintrag
+        assert str(eintrag["commit"]).strip(), eintrag
+        assert str(eintrag["grund"]).strip(), eintrag
+        assert eintrag["kontextstand"] is not None, eintrag
+    assert bau_log.lese(klon_b, 561)[0]["commit"] == sha_561
+    assert bau_log.lese(klon_b, 562)[0]["commit"] == sha_562
+
+
+def test_cron_einrichten_trocken_legt_kein_verzeichnis_an(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``cron_einrichten(..., trocken=True)`` darf im Trockenlauf keine Verzeichnisse anlegen."""
+    from to_spawn import aufpasser, taktgeber
+
+    log_ordner = tmp_path / "nicht-anlegen" / "taktgeber-logs"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.setenv("TO_SPAWN_TAKTGEBER_LOG", str(log_ordner))
+
+    crontab_aufrufe: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+    def fake_crontab(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        crontab_aufrufe.append((args, kwargs))
+        if args == ("-l",):
+            return subprocess.CompletedProcess(["crontab", "-l"], 0, "0 3 * * * /usr/local/bin/backup\n", "")
+        return subprocess.CompletedProcess(["crontab", *args], 0, "", "")
+
+    monkeypatch.setattr(aufpasser, "_crontab", fake_crontab)
+
+    meldung_trocken = taktgeber.cron_einrichten(293, repo, trocken=True)
+    assert "[trocken]" in meldung_trocken
+    assert not log_ordner.exists(), f"Trockenlauf hat Log-Ordner angelegt: {log_ordner}"
+    assert not log_ordner.parent.exists(), f"Trockenlauf hat Eltern-Ordner angelegt: {log_ordner.parent}"
+    assert [a for a, _ in crontab_aufrufe] == [("-l",)]
+
+    # Im echten Lauf wird der Ordner angelegt, Sicherung geschrieben und crontab installiert
+    meldung_echt = taktgeber.cron_einrichten(293, repo, trocken=False)
+    assert meldung_echt.startswith("Cron eingerichtet:")
+    assert log_ordner.is_dir()
+    assert list(log_ordner.glob("crontab.vorher.*"))
+    assert ("-",) in [a for a, _ in crontab_aufrufe]
