@@ -171,7 +171,9 @@ def _cmd_zeile(argv: list[str]) -> str:
     zweites Mal aus; ein ``"`` im Argument öffnet dort eine Befehlsinjektion (BatBadBut) — dann
     abgelehnt. Prompts mit solchen Zeichen gehören per Datei/stdin übergeben."""
     # npm-Shim ``claude.cmd`` + mehrzeiliger Prompt (jeder Bau-Start) landet hier (#1412/#868)
-    abhilfe = f"kein Start von {argv[0]}. Abhilfe: claude.exe (nativer Installer) statt npm-Shim, oder Text per Datei/stdin"
+    abhilfe = (
+        f"kein Start von {argv[0]}. Abhilfe: claude.exe (nativer Installer) statt npm-Shim, oder Text per Datei/stdin"
+    )
     if any("\n" in arg or "\r" in arg for arg in argv):
         raise ValueError(f"Notnagel: Zeilenumbruch im Argument würde von cmd.exe abgeschnitten — {abhilfe}")
     if _endung(argv[0]) not in {".exe", ".com"} and any('"' in arg for arg in argv[1:]):

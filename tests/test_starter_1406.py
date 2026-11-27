@@ -144,7 +144,10 @@ KEIN_START = frozenset(
         ("skripte/spec_stand.py", "sh"),  # Lese-Befehle
         ("tests/hilfen/claude_aufzeichnung_316.py", "main"),  # Attrappe ruft to_spawn.py takt → Tür
         ("tests/hilfen/fake_claude.py", "_hooks_ausfuehren"),  # Hook-Befehle des Tests; Hooks starten über die Tür
-        ("tests/hilfen/session_git_bash_kind_122.py", "<modul>"),  # Test-Hilfe #122: startet Git-Bash-Kind (sleep) als Session-Ersatz
+        (
+            "tests/hilfen/session_git_bash_kind_122.py",
+            "<modul>",
+        ),  # Test-Hilfe #122: startet Git-Bash-Kind (sleep) als Session-Ersatz
         ("to_spawn/aufpasser.py", "Aufpasser.sh"),  # Lese-Befehle (tmux list/capture); start=True → Tür
         ("to_spawn/aufseher_stand.py", "_tmux_echt"),  # tmux lesen
         # bash-Tür (#186): einzige subprocess-Stelle für bash; Aufrufer startklar._standard_laeufer
@@ -267,7 +270,13 @@ def _ist_start(aufruf: ast.Call, aliase: dict[str, str] | None = None) -> bool:
         # Befehl = Liste mit Programm vorn oder Programm vor weiteren Argumenten — so bleiben
         # ``which("ssh")``, ``vps.get("ssh")``, ``startswith("claude")`` außen vor; Klassen
         # (``_Terminal("wt", …)``) bauen nur Daten.
-        kopf = werte[0].elts[0] if isinstance(werte[0], ast.List) and werte[0].elts else werte[0] if len(werte) > 1 else None
+        kopf = (
+            werte[0].elts[0]
+            if isinstance(werte[0], ast.List) and werte[0].elts
+            else werte[0]
+            if len(werte) > 1
+            else None
+        )
         return (
             isinstance(kopf, ast.Constant)
             and isinstance(kopf.value, str)
