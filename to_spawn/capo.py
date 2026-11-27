@@ -1787,8 +1787,45 @@ def _checkpoint(
 # --- Tick -----------------------------------------------------------------------
 
 
+def _zustand_name(kennung: str, spec: int) -> str:
+    """Dateiname der capo-Zustandsdatei; ``kennung="*"`` ergibt das Glob-Muster aller Repos."""
+    return f"{kennung}_{spec}.json"
+
+
 def _zustand_datei(repo: Path, gh_repo: str, spec: int) -> Path:
-    return melder.zustand_ordner() / f"{melder.repo_kennung(repo, gh_repo)}_{spec}.json"
+    return melder.zustand_ordner() / _zustand_name(melder.repo_kennung(repo, gh_repo), spec)
+
+
+def _repo_vermerk(repo: Path) -> str:
+    """Wofür capo eine Spec führt: das gemeinsame Git-Verzeichnis (#871).
+
+    Haupt-Repo und alle seine Worktrees ergeben denselben Wert. Kein Git-Repo bzw. git fehlt →
+    Rückfall auf den aufgelösten Pfad. Vermerken (:func:`_tick`) und Finden nutzen nur diese Funktion.
+    """
+    code, aus = _git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if code == 0 and aus.strip():
+        return str(Path(aus.strip()).resolve())
+    return str(repo.resolve())
+
+
+def _gefuehrte_zustand_datei(repo: Path, gh_repo: str, spec: int) -> Path | None:
+    """Zustandsdatei der Spec, auch wenn capo mit abweichendem ``--gh-repo`` oder im Haupt-Repo lief (#871)."""
+    datei = _zustand_datei(repo, gh_repo, spec)
+    if datei.is_file():
+        return datei
+    if not datei.parent.is_dir():
+        return None
+    ziel = _repo_vermerk(repo)
+    treffer: list[tuple[float, Path]] = []
+    for kandidat in datei.parent.glob(_zustand_name("*", spec)):
+        try:
+            daten = json.loads(kandidat.read_text(encoding="utf-8"))
+            geaendert = kandidat.stat().st_mtime
+        except (OSError, ValueError):
+            continue  # fremde kaputte Datei: Zugehörigkeit unklar, nicht sperren
+        if isinstance(daten, dict) and daten.get("repo") == ziel:
+            treffer.append((geaendert, kandidat))
+    return max(treffer)[1] if treffer else None  # mehrere Vermerke: die jüngste Datei zählt
 
 
 def fertig_urteil(repo: Path, spec: int, gh_repo: str = "") -> str | None:
@@ -1798,9 +1835,9 @@ def fertig_urteil(repo: Path, spec: int, gh_repo: str = "") -> str | None:
     sie, meldet aber (noch) nicht fertig · sonst der Zeitpunkt ``spec_fertig_seit``. Das Urteil
     selbst fällt nur :func:`tick` (``erg.fertig``); hier wird es nur gelesen.
     """
-    datei = _zustand_datei(repo, gh_repo, spec)
-    if not datei.is_file():
-        _fremder_zustand_melden(datei, spec)
+    datei = _gefuehrte_zustand_datei(repo, gh_repo, spec)
+    if datei is None:
+        _fremder_zustand_melden(_zustand_datei(repo, gh_repo, spec), spec)
         return None
     return str(melder.lade_json(datei).get("spec_fertig_seit") or "")
 
@@ -1815,7 +1852,9 @@ def fertig_luecke(repo: Path, spec: int, gh_repo: str = "") -> tuple[Path, str] 
     urteil = fertig_urteil(repo, spec, gh_repo)
     if urteil is None or urteil:
         return None
-    datei = _zustand_datei(repo, gh_repo, spec)
+    datei = _gefuehrte_zustand_datei(repo, gh_repo, spec)
+    if datei is None:
+        return None
     try:
         daten = json.loads(datei.read_text(encoding="utf-8"))
     except (OSError, ValueError) as fehler:
@@ -2353,6 +2392,7 @@ def _tick(
 
     datei = _zustand_datei(repo, gh_repo, spec)
     zustand = melder.lade_json(datei)
+    zustand["repo"] = _repo_vermerk(repo)  # Sperre in abschluss_paket.py findet die Datei darüber (#871)
     erledigt = set(zustand.get("erledigt") or [])
     gelesen: dict[str, int] = dict(zustand.get("log_zeilen") or {})
     folgerunden: dict[str, int] = dict(zustand.get("folgerunden") or {})
