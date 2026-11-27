@@ -61,6 +61,8 @@ TYPEN = (
     "aufseher_abloesung",
     # komplett_lauf (#496): Komplett-Prüfung aus einem Bau-Ticket abgelehnt (Felder ``spec``, ``weg``).
     KOMPLETT_ABGELEHNT,
+    # Taktgeber (#906, App #1402): zustandslose Handlungen (geschlossen, label_gesetzt, geweckt; wer="taktgeber").
+    "taktgeber",
 )
 
 #: Felder, deren ``None`` als ``null`` stehen bleibt, weil es etwas bedeutet (sonst

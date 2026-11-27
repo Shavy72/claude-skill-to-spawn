@@ -124,6 +124,14 @@ def handoff_auftrag(handoff: str, start: str) -> str:
     )
 
 
+#: Urteils-Grenze des Aufsehers (#906, App #1402): maschinelle Schließ-Regeln prüft der
+#: Taktgeber über den Prüfer; der Aufseher beurteilt ausschließlich Inhalt und Beleg-Qualität.
+AUFSEHER_URTEIL = (
+    "Dein Urteil bei geschlossenen Tickets beschränkt sich auf Klickweg, Rolle, Bild und Inhalt "
+    "(passen Klickweg, Rolle und Bild zum Ticket und stimmt der Inhalt?) — maschinelle "
+    "Schließ-Regeln prüft der Taktgeber über den Prüfer; bei inhaltlichem Mangel darfst du wieder öffnen."
+)
+
 #: Einzige Quelle der Abschluss-Anweisung für Aufseher-Prompt (``skripte/wache.py``) und
 #: Aufseher-Takt (``to_spawn/waechter_takt.py``) (#367, #429). Platzhalter ``{S}`` und ``{SKILL}``
 #: werden erst beim Bauen des jeweiligen Prompts gefüllt.
