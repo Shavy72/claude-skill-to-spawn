@@ -38,6 +38,7 @@ from __future__ import annotations
 import contextlib
 import fnmatch
 import hashlib
+import io
 import json
 import logging
 import os
@@ -46,6 +47,8 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tarfile
+import tempfile
 import time
 import urllib.parse
 from collections.abc import Callable, Iterator
@@ -238,6 +241,22 @@ def _git(repo: Path, *args: str) -> tuple[int, str]:
     return fertig.returncode, fertig.stdout.rstrip("\n")
 
 
+def _git_wiederholen(repo: Path, *args: str) -> tuple[int, str]:
+    """``_git`` mit genau einer Wiederholung bei Zeitablauf (Exit 124, Infrastruktur, #861)."""
+    code, text = _git(repo, *args)
+    if code == 124:
+        log.warning("git %s Zeitablauf (Exit 124) — einmaliger Wiederholungsversuch", args[:2])
+        code, text = _git(repo, *args)
+    return code, text
+
+
+def _nicht_pruefbar_grund(befehl: str, code: int) -> str:
+    """Fehlertext für :class:`_NichtPruefbar`; Exit 124 wird als Infrastruktur gekennzeichnet (#861)."""
+    if code == 124:
+        return f"{befehl} Zeitablauf (Infrastruktur, Exit 124)"
+    return f"{befehl} Exit {code}"
+
+
 def haupt_ref(repo: Path) -> str | None:
     """Weiterleitung auf :func:`bau_log.haupt_ref` (#375)."""
     return bau_log.haupt_ref(repo)
@@ -270,10 +289,19 @@ def ticket_commits(commits: list[Commit], ticket: int) -> list[Commit]:
     return [c for c in commits if betreff_hat_nummer(c.betreff, ticket)]
 
 
-def _dateien(repo: Path, sha: str) -> list[tuple[str, str]]:
-    """(Status, Pfad) je Datei eines Commits, Umbenennungen als Status ``R`` mit neuem Pfad."""
-    code, text = _git(repo, "show", "--format=", "--name-status", "-M", sha)
+def _dateien(repo: Path, sha: str, *, streng: bool = False) -> list[tuple[str, str]]:
+    """(Status, Pfad) je Datei eines Commits, Umbenennungen als Status ``R`` mit neuem Pfad.
+
+    Mit ``streng=True`` (Testverlust-Pfad, #861) wird bei Exit 124 einmal wiederholt und jeder
+    git-Fehler mit Warnung als :class:`_NichtPruefbar` gemeldet statt still ``[]`` zurückzugeben.
+    """
+    abruf = _git_wiederholen if streng else _git
+    code, text = abruf(repo, "show", "--format=", "--name-status", "-M", sha)
     if code != 0:
+        if streng:
+            grund = _nicht_pruefbar_grund("git show --name-status", code)
+            log.warning("git show --name-status %s gescheitert (%s) — Testverlust nicht prüfbar", sha[:7], grund)
+            raise _NichtPruefbar(grund)
         return []
     ergebnis = []
     for zeile in text.splitlines():
@@ -490,12 +518,13 @@ def _test_verluste(
     Scheitert ``git show`` des Commits, wirft die Funktion :class:`_NichtPruefbar`
     (#1210) — der Aufrufer meldet „nicht prüfbar“ statt „kein Verlust“.
     """
-    code, diff = _git(repo, "show", "--format=", "-M", "--unified=0", sha)
+    code, diff = _git_wiederholen(repo, "show", "--format=", "-M", "--unified=0", sha)
     if code != 0:
-        # #1210: Ein gescheitertes ``git show`` ist kein „sauber“ — sonst fällt ein
+        # #1210/#861: Ein gescheitertes ``git show`` ist kein „sauber“ — sonst fällt ein
         # echter Testverlust still weg und das Ticket bleibt zu.
-        log.warning("git show %s gescheitert (Exit %s) — Testverlust nicht prüfbar", sha[:7], code)
-        raise _NichtPruefbar(f"git show Exit {code}")
+        grund = _nicht_pruefbar_grund("git show", code)
+        log.warning("git show %s gescheitert (%s) — Testverlust nicht prüfbar", sha[:7], grund)
+        raise _NichtPruefbar(grund)
     abschnitte = _test_abschnitte(diff)
     verluste = entfernte_tests("".join(abschnitte.values()))
     if verluste:
@@ -512,7 +541,7 @@ def _test_verluste(
         verluste = [name for name in verluste if name not in umbenannt]
     if verluste and spitze:
         verluste = [n for n in verluste if not _kein_netto_verlust(repo, basis, spitze, n, abschnitte)]
-    for status, pfad in _dateien(repo, sha):
+    for status, pfad in _dateien(repo, sha, streng=True):
         if status != "D" or not ist_testdatei(pfad):
             continue
         # Gelöschte Testdatei ohne erkennbare Testfälle: die Datei selbst zählt.
@@ -526,9 +555,27 @@ def _test_verluste(
 
 
 def _datei_an_spitze(repo: Path, spitze: str, pfad: str) -> str | None:
-    """Inhalt von ``pfad`` im Baum von ``spitze``; ``None``, wenn die Datei dort fehlt."""
-    code, text = _git(repo, "show", f"{spitze}:{pfad}")
-    return text if code == 0 else None
+    """Inhalt von ``pfad`` im Baum von ``spitze``; ``None``, wenn die Datei dort nachweislich fehlt.
+
+    Trennt „Datei fehlt im gültigen Ref“ sauber von git-Fehlern und Zeitabläufen (#861):
+    bei Exit 124 wird einmal wiederholt; bei jedem echten git-Fehler wird eine Warnung geloggt
+    und :class:`_NichtPruefbar` geworfen.
+    """
+    code, text = _git_wiederholen(repo, "show", f"{spitze}:{pfad}")
+    if code == 0:
+        return text
+    if code in (124, 127):
+        grund = _nicht_pruefbar_grund(f"git show {spitze[:7]}:{pfad}", code)
+        log.warning("Datei %s an %s nicht lesbar (%s) — Testverlust nicht prüfbar", pfad, spitze[:7], grund)
+        raise _NichtPruefbar(grund)
+    ls_code, ls_text = _git_wiederholen(repo, "ls-tree", "-r", "--name-only", spitze, "--", pfad)
+    if ls_code == 0 and pfad not in ls_text.splitlines():
+        return None
+    fehler_code = ls_code if ls_code != 0 else code
+    befehl = f"git ls-tree {spitze[:7]}" if ls_code != 0 else f"git show {spitze[:7]}:{pfad}"
+    grund = _nicht_pruefbar_grund(befehl, fehler_code)
+    log.warning("Datei %s an %s nicht lesbar (%s) — Testverlust nicht prüfbar", pfad, spitze[:7], grund)
+    raise _NichtPruefbar(grund)
 
 
 def _steht_drin(name: str, text: str, zeichen: str = "") -> bool:
@@ -778,6 +825,130 @@ def live_freigabe(vps: dict[str, Any], ticket: int) -> bool:
         return False
 
 
+class _StandUnlesbar(Exception):
+    """Der Deckungs-Stand (origin/<Hauptzweig>) ließ sich nicht lesen."""
+
+
+# Was das Deckungs-Skript zum Laufen braucht: es selbst, sein Import ``schlange_spur`` und
+# ``staging/deploy_ziel.py`` (Unterprozess). Erstes Element = das Skript.
+_DECKUNG_DATEIEN = ("scripts/schlange_deckung.py", "scripts/schlange_spur.py", "scripts/staging/deploy_ziel.py")
+_MANIFESTE_VORGABE: str = str(config.DEFAULTS["pfade"]["manifeste"])
+
+
+def _manifest_ordner(repo: Path) -> str:
+    """Relativer Manifest-Ordner des Repos für ``git ls-tree``/``git archive`` (Konfig ``pfade.manifeste``)."""
+    pfade = config.lade(repo).get("pfade")
+    wert = pfade.get("manifeste") if isinstance(pfade, dict) else None
+    text = wert.strip() if isinstance(wert, str) and wert.strip() else _MANIFESTE_VORGABE
+    if Path(text).is_absolute() or text.startswith("~"):
+        return _MANIFESTE_VORGABE
+    return text.replace("\\", "/").strip("/") or _MANIFESTE_VORGABE
+
+
+@dataclass(frozen=True)
+class _Stand:
+    """Entpackter Deckungs-Stand: Pfad zum Skript und zum Manifest-Ordner."""
+
+    skript: Path
+    manifeste: Path
+
+
+@contextlib.contextmanager
+def _deckungs_stand(repo: Path) -> Iterator[_Stand | None]:
+    """Der Stand, aus dem die Deploy-Schlange deckt — einzige Stelle mit diesem Wissen (#1504/#860).
+
+    Die Schlange rechnet in ihrem Klon auf ``origin/master``; ein ungepushtes Manifest oder Skript
+    im Arbeitsbaum darf capos Urteil deshalb nicht ändern. Entpackt nur :data:`_DECKUNG_DATEIEN`
+    und die Manifeste aus ``origin/<Hauptzweig>`` (``git archive``, Stand des letzten ``git fetch``
+    in :func:`tick`) in einen Wegwerf-Ordner. ``None``: Deckungs-Skript gibt es dort nachweislich
+    nicht (Fremd-Repo, alter Stand). Wirft :class:`_StandUnlesbar`, wenn Ref, Baum-Abfrage
+    (Zeitablauf, OSError, …) oder Archiv scheitern — der Aufrufer wertet das als „nicht gedeckt“
+    (fail-closed); eine gescheiterte Abfrage heißt nie „fehlt“.
+    """
+    ref = haupt_ref(repo)
+    if ref is None:
+        raise _StandUnlesbar("kein origin/<Hauptzweig>")
+    manifeste = _manifest_ordner(repo)
+    code, text = _git(repo, "ls-tree", "-r", "-z", "--name-only", ref, "--", *_DECKUNG_DATEIEN, manifeste)
+    if code != 0:
+        raise _StandUnlesbar(f"git ls-tree {ref} Exit {code}")
+    vorhanden = set(filter(None, text.split("\0")))
+    if _DECKUNG_DATEIEN[0] not in vorhanden:
+        yield None
+        return
+    pfade = [d for d in _DECKUNG_DATEIEN if d in vorhanden]
+    if any(n.startswith(manifeste + "/") for n in vorhanden):
+        pfade.append(manifeste)
+    with tempfile.TemporaryDirectory(prefix="capo-deckung-") as ordner:
+        ziel = Path(ordner)
+        try:
+            archiv = subprocess.run(
+                ["git", "archive", "--format=tar", ref, "--", *pfade],
+                cwd=str(repo),
+                capture_output=True,
+                timeout=gh.GIT_ZEIT_S,
+                check=False,
+                **prozessbaum.fensterlos(),
+            )
+            if archiv.returncode != 0:
+                raise _StandUnlesbar(f"git archive {ref} Exit {archiv.returncode}")
+            with tarfile.open(fileobj=io.BytesIO(archiv.stdout)) as tar:
+                tar.extractall(ziel, filter="data")
+        except (OSError, subprocess.SubprocessError, tarfile.TarError) as fehler:
+            raise _StandUnlesbar(str(fehler)) from fehler
+        (ziel / manifeste).mkdir(parents=True, exist_ok=True)
+        yield _Stand(skript=ziel / _DECKUNG_DATEIEN[0], manifeste=ziel / manifeste)
+
+
+def live_gedeckt(repo: Path, vps: dict[str, Any], ticket: int, kopf: str, sha: str) -> bool:
+    """Nimmt der Deploy-Dienst ``sha`` beim nächsten Lauf live? Urteil allein bei der SSOT im Repo.
+
+    ``scripts/schlange_deckung.py --bis-spitze`` wählt den Bereich wie die Deploy-Schlange
+    (``kopf..origin/master``) und rechnet Schlüssel und Deckung mit derselben Funktion (#395, #1207/#859):
+    ein Ticket-Zettel allein deckt kein fremdes Ticket, ein SHA-Zettel auf der Spitze deckt alles davor.
+    Antwort: Exit 0 = gedeckt, 1 = nicht gedeckt, JSON ``{"gedeckt", "offen"}``.
+    Fehlt das Skript ganz (Fremd-Repo, alter Stand), zählt wie früher nur der eigene Zettel.
+    Jede andere unbrauchbare Antwort (Exit ≠ 0/1, Zeitlimit, kein JSON, Widerspruch) heißt
+    „nicht gedeckt“ mit Warnzeile — nie Rückfall auf den eigenen Zettel (sonst Fehlalarm).
+    Skript und Manifeste kommen aus :func:`_deckungs_stand` (origin/master, #1504/#860); ist der Stand
+    unlesbar, heißt das ebenfalls „nicht gedeckt“ mit Warnzeile.
+    """
+    try:
+        with _deckungs_stand(repo) as stand:
+            if stand is None:
+                return live_freigabe(vps, ticket)
+            befehl = [
+                sys.executable,
+                str(stand.skript),
+                kopf,
+                sha,
+                "--bis-spitze",
+                "--repo",
+                str(repo),
+                "--manifeste",
+                str(stand.manifeste),
+                "--freigabe-ordner",
+                str(Path(str(vps.get("freigabe_ordner") or FREIGABE_STANDARD)).expanduser()),
+            ]
+            lauf = subprocess.run(
+                befehl,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=60,
+                check=False,
+                **prozessbaum.fensterlos(),
+            )
+            daten = json.loads(lauf.stdout or "null") if lauf.returncode in (0, 1) else None
+    except (OSError, subprocess.SubprocessError, ValueError, _StandUnlesbar) as fehler:
+        log.warning("Deckung für #%s nicht prüfbar (%s) — gilt als nicht gedeckt.", ticket, fehler)
+        return False
+    if not isinstance(daten, dict) or daten.get("gedeckt") is not (lauf.returncode == 0):
+        log.warning("Deckung für #%s nicht prüfbar (Exit %s) — gilt als nicht gedeckt.", ticket, lauf.returncode)
+        return False
+    return daten["gedeckt"]
+
+
 def regel_vps(
     repo: Path,
     ticket: int,
@@ -802,9 +973,12 @@ def regel_vps(
         if code == 1:
             # Seit 22.09. deployen Bau-Sessions nur nach Staging; live nur mit Zettel.
             staging = staging_stand.kopf()
-            if staging_stand.unlesbar and not live_freigabe(vps, ticket):
+            # Live erwartet nur, wenn der Deploy-Dienst den Stand live nimmt (#1207/#859), nicht schon beim
+            # Ticket-Zettel. Ohne Staging-Stand zählt das Urteil nicht — dann kein Unterprozess.
+            live = (staging_stand.unlesbar or bool(staging)) and live_gedeckt(repo, vps, ticket, kopf, commit.sha)
+            if staging_stand.unlesbar and not live:
                 return None  # nicht lesbar ≠ fehlt auf Staging (#1407), Log-Zeile kommt aus StagingStand
-            if staging and not live_freigabe(vps, ticket):
+            if staging and not live:
                 auf_staging, _ = _git(repo, "merge-base", "--is-ancestor", commit.sha, staging)
                 if auf_staging == 0:
                     continue
@@ -1088,6 +1262,126 @@ def uebersicht(repo: Path, spec: int, tickets: list[int], *, hinweis: str = "") 
     datei.parent.mkdir(parents=True, exist_ok=True)
     datei.write_text("\n".join(zeilen) + "\n", encoding="utf-8")
     return datei
+
+
+#: Höchstzahl Punkte je Abschnitt im Morgen-Bericht — er soll in 5 Minuten lesbar sein (#885).
+BERICHT_MAX = 12
+BERICHT_ZEILE = 220
+
+
+def morgen_bericht_datei(repo: Path, spec: int) -> Path:
+    """``.to-spawn/morgen_bericht_<S>.md`` — Laufdatei neben ``abschluss_<S>_paket.json`` (#885)."""
+    return repo / config.KONFIG_PFAD.parent / f"morgen_bericht_{spec}.md"
+
+
+def _umweg(z: dict[str, Any]) -> str | None:
+    """Kurztext einer Bau-Log-Zeile, die einen Umweg zeigt; ``None`` = kein Umweg."""
+    typ = z.get("typ")
+    if typ == "vorfall":
+        return " → ".join(t for t in (_kurz(z.get("symptom")), _kurz(z.get("loesung"))) if t) or None
+    if ist_gate_rot(z):
+        return f"Gate rot: {_kurz(z.get('grund') or z.get('ergebnis') or z.get('phase'))}"
+    if typ == "blockiert":
+        return f"blockiert: {_kurz(z.get('grund'))}"
+    if typ == "ruecknahme":
+        return f"Fehl-Reopen zurückgenommen: {_kurz(z.get('text'))}"
+    return None
+
+
+def _abschnitt(titel: str, punkte: list[str], leer: str) -> list[str]:
+    zeilen = ["", f"## {titel}", ""]
+    if not punkte:
+        return [*zeilen, f"_{leer}_"]
+    zeilen += [f"- {_kurz(p, BERICHT_ZEILE)}" for p in punkte[:BERICHT_MAX]]
+    if len(punkte) > BERICHT_MAX:
+        zeilen.append(f"- … und {len(punkte) - BERICHT_MAX} weitere (siehe Bau-Log)")
+    return zeilen
+
+
+def morgen_bericht(
+    repo: Path,
+    ref: str | None,
+    spec: int,
+    liste: list[dict[str, Any]],
+    *,
+    checkpoint: str = "checkpoint:human",
+) -> tuple[Path, str]:
+    """Schreibt ``morgen_bericht_<S>.md`` mit 4 Teilen und Deckel (#885) und gibt ``(Pfad, Text)``.
+
+    Fertig · Entscheidungen zum Kippen · Umwege · Wartet auf den Nutzer — aus den Unter-Tickets
+    und den Bau-Logs auf ``ref``. Je Teil höchstens :data:`BERICHT_MAX` Punkte; am Ende steht
+    einmal die Liste der Kritisch-Ausnahmen (:func:`melder.kritisch_liste`).
+    """
+    fertig: list[str] = []
+    kippen: list[str] = []
+    umwege: list[str] = []
+    wartet: list[str] = []
+    for issue in sorted(liste, key=lambda i: int(i["number"])):
+        n = int(issue["number"])
+        titel = _kurz(issue.get("title"), 90)
+        stufe = ticket_zustand.stufe(issue)
+        if stufe in ("zu", "verworfen"):
+            fertig.append(f"#{n} {titel}" + (" (nicht geplant)" if stufe == "verworfen" else ""))
+        else:
+            art = "Checkpoint" if checkpoint in label_namen(issue) else "noch offen"
+            wartet.append(f"#{n} {art}: {titel}")
+        for z in log_vom_ref(repo, ref, n) if ref else []:
+            zeit = _zeit(z.get("ts"))
+            wann = zeit.astimezone().strftime("%d.%m. %H:%M") if zeit else "-"
+            if z.get("typ") == "entscheidung":
+                frage, wahl, grund = entscheidung_teile(z)
+                kippen.append(f"#{n} {wann}: {frage} → {wahl or '?'}" + (f" — {grund}" if grund else ""))
+            elif (umweg := _umweg(z)) is not None:
+                umwege.append(f"#{n} {wann}: {umweg}")
+    for eintrag in mensch_noetig.eintraege_fuer_spec(spec, set()):
+        wartet.append(f"#{eintrag.get('ticket') or spec} Mensch nötig: {mensch_noetig_was(eintrag)}")
+    wartet.append("Spec abnehmen und Live freigeben — Live-Deploy wartet auf Freigabe des Nutzers.")
+    kritisch_text = ", ".join(melder.kritisch_liste())
+    ent_pfad = entscheidungs_datei(repo, spec)
+    try:
+        ent_rel = ent_pfad.relative_to(repo).as_posix()
+    except ValueError:
+        ent_rel = ent_pfad.as_posix()
+    zeilen = [
+        f"# Morgen-Bericht Spec #{spec}",
+        "",
+        f"Stand {datetime.now().astimezone():%d.%m.%Y %H:%M} · Quelle: Unter-Tickets (GitHub) und "
+        f"Bau-Logs auf {ref or '-'} (to-spawn capo). Alle Entscheidungen: {ent_rel}",
+        *_abschnitt("Fertig", fertig, "Noch kein Ticket zu."),
+        *_abschnitt("Entscheidungen zum Kippen", kippen, "Keine Entscheidungen im Bau-Log."),
+        *_abschnitt("Umwege", umwege, "Keine Umwege im Bau-Log."),
+        *_abschnitt("Wartet auf den Nutzer", wartet, "Nichts."),
+        "",
+        f"Sofort-Mails (Kritisch-Ausnahmen tagsüber; nachts nur server_tot): {kritisch_text}",
+    ]
+    text = "\n".join(zeilen) + "\n"
+    datei = morgen_bericht_datei(repo, spec)
+    datei.parent.mkdir(parents=True, exist_ok=True)
+    datei.write_text(text, encoding="utf-8")
+    return datei, text
+
+
+def morgen_bericht_verschicken(
+    repo: Path,
+    spec: int,
+    text: str,
+    *,
+    konfig: dict[str, Any] | None = None,
+    gh_repo: str = "",
+    schluessel: str | None = None,
+    jetzt: datetime | None = None,
+) -> bool:
+    """Genau 1 Morgen-Bericht als Mail (Art ``morgen_bericht``, nachts stumm, Doppel-Schutz, #885)."""
+    return melder.melden(
+        repo,
+        "morgen_bericht",
+        f"Morgen-Bericht Spec #{spec}",
+        text,
+        schluessel or f"morgen_bericht|{spec}",
+        konfig=konfig,
+        gh_repo=gh_repo,
+        jetzt=jetzt,
+    )
 
 
 # --- GitHub ---------------------------------------------------------------------
@@ -2676,9 +2970,29 @@ def _tick(
     # #853: Abnahme-Tickets (checkpoint:human) warten auf den Menschen und zählen für
     # Moment.ALLE_AUF_STAGING nicht als Bau-Tickets mit.
     bau_tickets = [i for i in liste if checkpoint not in label_namen(i)]
+    abnahme_tickets = [i for i in liste if checkpoint in label_namen(i)]
     komplett_haelt = False
     if not teilauswahl and bau_tickets and all(ticket_zustand.fertig_gebaut(i) for i in bau_tickets):
         komplett_haelt = _komplett_alle_auf_staging(repo, spec, konfig, aktionen, dry_run)
+        if (
+            abnahme_tickets
+            and not erg.verstoesse
+            and not regeln_aus
+            and not vps_fehlt
+            and not staging_stand.unlesbar
+            and not komplett_haelt
+            and _live_nach_abnahme_passt(
+                repo,
+                spec,
+                gh_repo,
+                konfig,
+                abnahme_tickets,
+                erledigt,
+                aktionen,
+                dry_run=dry_run,
+            )
+        ):
+            sichern()
 
     # #1407: unlesbares Staging ist kein „fehlt“, aber auch kein Beleg „liegt drauf“ — Abschluss zurückhalten.
     unlesbar_takte = int(zustand.get("staging_unlesbar_takte") or 0) + 1 if staging_stand.unlesbar else 0
@@ -2719,9 +3033,11 @@ def _tick(
             erg.zeilen.append(f"SPEC FERTIG — alle {len(liste)} Tickets zu, keine Verstöße{alt_hinweis}. [Probe]")
         else:
             pfad = uebersicht(repo, spec, [int(i["number"]) for i in liste])
+            bericht_pfad, _bericht = morgen_bericht(repo, ref, spec, liste, checkpoint=checkpoint)
             erg.zeilen.append(
                 f"SPEC FERTIG — alle {len(liste)} Tickets zu, keine Verstöße{alt_hinweis}. Übersicht: {pfad}"
             )
+            erg.zeilen.append(f"Morgen-Bericht: {bericht_pfad}")
         if not dry_run and not zustand.get("spec_fertig_seit"):
             zustand["spec_fertig_seit"] = jetzt.astimezone().isoformat(timespec="seconds")
             sichern()  # abschluss_paket.py liest das Urteil aus der Datei (#889) — noch in diesem Tick
@@ -2838,6 +3154,122 @@ def _spec_fenster_wegraeumen(repo: Path, spec: int) -> None:
     except Exception as fehler:  # der Takt endet nie rot am Aufräumen
         log.exception("Fenster der Spec #%s nicht geschlossen", spec)
         _werkzeug_fehler("capo.spec_fenster", "Spec-Fenster schließen: unerwarteter Fehler", fehler, spec=spec)
+
+
+#: Ganzes Wort „passt“ (Groß/klein egal) — Abnahme-Freigabe des Menschen (#924).
+_ABNAHME_PASST_WORT = re.compile(r"\bpasst\b", re.IGNORECASE)
+#: Verneinung, Einschränkung oder Nachbesserung: dann ist ein Kommentar mit „passt“ keine Freigabe (#924).
+_ABNAHME_EINWAND = re.compile(
+    r"\b(?:nicht|kein\w*|aber|jedoch|allerdings|sonst|nachbesser\w*|kritik|"
+    r"änder\w*|aender\w*|korrigier\w*|fehl\w*|mangel|mängel|falsch|anders|statt|noch)\b",
+    re.IGNORECASE,
+)
+
+
+def ist_abnahme_passt(text: str) -> bool:
+    """True, wenn ein Mensch-Kommentar am Abnahme-Ticket eine klare „passt“-Freigabe ist (#924).
+
+    Zitierte Zeilen (``> …``) werden ausgeblendet. Verneinungen oder Nachbesserungs-Wünsche
+    (z. B. „passt nicht“, „Sonst passt alles. Bitte nachbessern…“) gelten nie als Freigabe.
+    """
+    ohne_zitat = "\n".join(zeile for zeile in text.splitlines() if not zeile.lstrip().startswith(">")).strip()
+    if not ohne_zitat:
+        return False
+    return bool(_ABNAHME_PASST_WORT.search(ohne_zitat)) and not _ABNAHME_EINWAND.search(ohne_zitat)
+
+
+def abnahme_passt_kommentar(kommentare: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Jüngster Mensch-Kommentar nach dem letzten eigenen Kommentar, wenn er eine „passt“-Freigabe ist (#924).
+
+    ``kommentare`` stammt aus :func:`issue_kommentare` (nur Repo-Beteiligte). Kommentare mit
+    Aufseher-, Aufpasser- oder Session-Marke zählen nie als Freigabe des Menschen — auch eine
+    automatische Aufseher-Annahme nach Frist löst kein Live aus. Folgt auf ein „passt“ später
+    noch ein anderer Mensch-Kommentar (z. B. Stopp/Kritik), gilt nur der jüngste Mensch-Kommentar.
+    """
+    sortiert = sorted(
+        kommentare,
+        key=lambda e: (_kommentar_teile(e)[2] or datetime.min.replace(tzinfo=timezone.utc), int(e.get("id") or 0)),
+    )
+    letzter_eigen = -1
+    for i, eintrag in enumerate(sortiert):
+        text = _kommentar_teile(eintrag)[1].lstrip()
+        if text.startswith(EIGENE_KOEPFE) or _ist_session_kommentar(text):
+            letzter_eigen = i
+    mensch_danach = [
+        eintrag
+        for eintrag in sortiert[letzter_eigen + 1 :]
+        if not (
+            _kommentar_teile(eintrag)[1].lstrip().startswith(EIGENE_KOEPFE)
+            or _ist_session_kommentar(_kommentar_teile(eintrag)[1])
+        )
+    ]
+    if not mensch_danach:
+        return None
+    juengster = mensch_danach[-1]
+    return juengster if ist_abnahme_passt(_kommentar_teile(juengster)[1]) else None
+
+
+def _live_nach_abnahme_passt(
+    repo: Path,
+    spec: int,
+    gh_repo: str,
+    konfig: dict[str, Any],
+    abnahme_tickets: list[dict[str, Any]],
+    erledigt: set[str],
+    zeilen: list[str],
+    *,
+    dry_run: bool = False,
+) -> bool:
+    """Abnahme-Kommentar „passt“ startet den Live-Schritt direkt ohne Briefkasten-Frage (#924).
+
+    Läuft nur, wenn alle Bau-Tickets fertig sind, noch kein Live-Merker liegt und das Repo nicht
+    bewusst ohne Live arbeitet (``live.ohne: true``). Fehlt sowohl ``live.befehl`` als auch
+    ``pruefung.komplett`` (nicht eingerichtetes Repo), bleibt der Takt still. Rückgabe ``True``,
+    wenn ``erledigt`` ergänzt wurde (Aufrufer sichert).
+    """
+    if config.live_bewusst_ohne(konfig) or live_gelaufen(repo, spec, gh_repo):
+        return False
+    if not config.live_schritt(konfig)["befehl"] and not config.pruef_befehl(konfig, "komplett"):
+        return False
+    treffer: tuple[int, dict[str, Any]] | None = None
+    for issue in abnahme_tickets:
+        n = int(issue["number"])
+        kommentare = issue_kommentare(gh_repo, n)
+        if kommentare is None:
+            continue
+        kommentar = abnahme_passt_kommentar(kommentare)
+        if kommentar is not None:
+            treffer = (n, kommentar)
+            break
+    if treffer is None:
+        return False
+    n, kommentar = treffer
+    if dry_run:
+        zeilen.append(f"#{n} [Probe] Abnahme „passt“ — würde Live-Schritt starten (to_spawn.py live {spec}).")
+        return False
+    from to_spawn import live_tuer  # spät: live_tuer importiert capo
+
+    try:
+        code, live_zeilen = live_tuer.starte(repo, spec, konfig, gh_repo=gh_repo)
+    except Exception as fehler:  # der Tick (sichern) bricht nie ab
+        log.exception("Live-Schritt nach Abnahme #%s (Spec #%s): unerwarteter Fehler", n, spec)
+        _werkzeug_fehler("capo.abnahme_live", "Live-Schritt nach Abnahme: unerwarteter Fehler", fehler, spec=spec)
+        zeilen.append(
+            f"FEHLER: #{n} Live-Schritt nach Abnahme — unerwarteter Fehler ({type(fehler).__name__}: {fehler})."
+        )
+        return False
+    if code == 0:
+        zeilen.append(f"#{n} Abnahme „passt“ — Live-Schritt gestartet ({'; '.join(live_zeilen)}).")
+        return False
+    if code == 2:
+        schluessel = f"abnahme_live_hand|{spec}|{n}|{kommentar.get('id', '')}"
+        if schluessel not in erledigt:
+            erledigt.add(schluessel)
+            zeilen.append(f"#{n} Abnahme „passt“ — {'; '.join(live_zeilen)}")
+            return True
+        return False
+    zeilen.append(f"FEHLER: #{n} Abnahme „passt“ — {'; '.join(live_zeilen)}")
+    return False
 
 
 def _komplett_alle_auf_staging(

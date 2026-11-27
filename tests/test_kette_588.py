@@ -95,6 +95,7 @@ def _keine_kurzmail(kette: dict[str, Path]) -> None:
     assert all(m["betreff"] != f"Spec #{SPEC} fertig" for m in _mails(kette)), _mails(kette)
 
 
+@pytest.mark.xfail(strict=True, reason="überholt durch #885: tagsüber keine Mail je Spec (Entscheidung 27.11.)")
 def test_a_ablage_und_marker_genau_eine_mail(kette: dict[str, Path]) -> None:
     _spec_fertig(kette)
     _ablegen(kette, _jetzt())
@@ -110,6 +111,7 @@ def test_a_ablage_und_marker_genau_eine_mail(kette: dict[str, Path]) -> None:
     _keine_kurzmail(kette)
 
 
+@pytest.mark.xfail(strict=True, reason="überholt durch #885: tagsüber keine Mail je Spec (Entscheidung 27.11.)")
 def test_b_ohne_marker_nach_120_min_mail_mit_vermerk(kette: dict[str, Path]) -> None:
     _spec_fertig(kette)
     _ablegen(kette, _jetzt() - timedelta(minutes=150))
@@ -209,6 +211,7 @@ def test_e_ohne_mail_befehl_zeile_mail_aus(kette: dict[str, Path]) -> None:
     assert _mails(kette) == []
 
 
+@pytest.mark.xfail(strict=True, reason="überholt durch #885: tagsüber keine Mail je Spec (Entscheidung 27.11.)")
 def test_f_drei_fehlversuche_einmal_kommentar_erfolg_setzt_zurueck(
     kette: dict[str, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -253,6 +256,7 @@ def test_g_notfall_ablage_ohne_zugangsdaten(kette: dict[str, Path], url: str, er
     assert json.loads(datei.read_text(encoding="utf-8"))["paket"]["stage"] == erwartet
 
 
+@pytest.mark.xfail(strict=True, reason="überholt durch #885: tagsüber keine Mail je Spec (Entscheidung 27.11.)")
 def test_h_ticket_wieder_offen_anstoss_laeuft_weiter(kette: dict[str, Path]) -> None:
     _spec_fertig(kette)
     _ablegen(kette, _jetzt())
