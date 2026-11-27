@@ -1493,36 +1493,192 @@ def session_finden(pane_pid: int, window_id: str, pane_id: str, heim: Path | Non
     return None
 
 
-def _git(cwd: Path, *args: str, env: dict[str, str] | None = None) -> str:
+def _git(
+    cwd: Path, *args: str, env: dict[str, str] | None = None, zeitgrenze: int = 300
+) -> str:
+    # Eigene Prozessgruppe: nach der Zeitgrenze stirbt die ganze Gruppe, auch
+    # Remote-Helfer (ssh, remote-ext), nicht nur git selbst (#1497, B5).
     try:
-        ergebnis = subprocess.run(
+        lauf = subprocess.Popen(
             ["git", *args],
             cwd=str(cwd),
             env=env,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
             errors="replace",
-            check=False,
-            timeout=300,
+            start_new_session=os.name != "nt",
             **prozessbaum.fensterlos(),
         )
-    except subprocess.TimeoutExpired:
-        raise RuntimeError(f"git {' '.join(args[:3])}: Zeitgrenze 300 s") from None
     except FileNotFoundError as fehler:
         raise RuntimeError(f"git {' '.join(args[:3])}: {fehler}") from None
-    if ergebnis.returncode != 0:
-        raise RuntimeError(f"git {' '.join(args[:3])}: {ergebnis.stderr.strip()[:300]}")
-    return ergebnis.stdout
+    try:
+        stdout, stderr = lauf.communicate(timeout=zeitgrenze)
+    except subprocess.TimeoutExpired:
+        try:
+            if hasattr(os, "killpg"):
+                os.killpg(lauf.pid, signal.SIGKILL)
+            else:
+                lauf.kill()
+        except ProcessLookupError:
+            pass
+        lauf.communicate()
+        raise RuntimeError(f"git {' '.join(args[:3])}: Zeitgrenze {zeitgrenze} s") from None
+    if lauf.returncode != 0:
+        raise RuntimeError(f"git {' '.join(args[:3])}: {stderr.strip()[:300]}")
+    return stdout
 
 
 #: Öffentlicher Name für andere Module (Hausmeister #1368); ``_git`` bleibt.
 git_lauf = _git
 
 
-def worktree_schmutzig(worktree: Path) -> bool:
+def worktree_schmutzig(worktree: Path, unversioniert: bool = True) -> bool:
+    """Gibt es Änderungen? ``unversioniert=False`` zählt nur versionierte Dateien.
+
+    ``--no-optional-locks``: der Blick selbst nimmt nie ``index.lock`` (sonst stört
+    schon das Prüfen einen gleichzeitigen git-Befehl der Session).
+    """
     # ``status.showUntrackedFiles=no`` darf neue Dateien nicht verstecken (#1368).
-    return bool(_git(worktree, "status", "--porcelain", "--untracked-files=normal").strip())
+    modus = "--untracked-files=normal" if unversioniert else "--untracked-files=no"
+    return bool(_git(worktree, "--no-optional-locks", "status", "--porcelain", modus).strip())
+
+
+#: Marker offener git-Vorgänge im (Worktree-)git-Ordner.
+_OFFENE_VORGAENGE = (
+    ("MERGE_HEAD", "Merge offen"),
+    ("rebase-merge", "Rebase offen"),
+    ("rebase-apply", "Rebase offen"),
+    ("CHERRY_PICK_HEAD", "Cherry-pick offen"),
+    ("REVERT_HEAD", "Revert offen"),
+)
+
+
+def nachziehen_verboten(
+    wurzel: Path, haupt: str, fenster_texte: Callable[[], Iterable[str]] | None = None
+) -> str | None:
+    """Warum der Klon nicht vorgespult werden darf — ``None`` heißt: darf (#897, #1497).
+
+    Einzige Stelle für diese Regel. Darf nur, wenn alles zutrifft: kein Fenster in
+    diesem Ordner arbeitet (:func:`arbeitet` auf den frisch gelesenen Texten aus
+    ``fenster_texte`` — sonst tauscht der Code unter laufendem pytest/Skript),
+    keine ``index.lock``, kein offener Merge/Rebase/Cherry-pick/Revert, ausgecheckt
+    ist der Hauptzweig, keine uncommitteten Änderungen an versionierten Dateien.
+    Liest nur (nimmt selbst keine Sperre).
+    """
+    if fenster_texte is not None and any(arbeitet(t) for t in fenster_texte()):
+        return "Fenster arbeitet"
+    git_ordner = Path(_git(wurzel, "rev-parse", "--absolute-git-dir").strip())
+    if (git_ordner / "index.lock").exists():
+        return "index.lock vorhanden"
+    for marke, grund in _OFFENE_VORGAENGE:
+        if (git_ordner / marke).exists():
+            return grund
+    try:
+        zweig = _git(wurzel, "symbolic-ref", "-q", "--short", "HEAD").strip()
+    except RuntimeError:
+        return "abgehängter HEAD"
+    if zweig != haupt:
+        return f"Zweig {zweig}, nicht {haupt}"
+    if worktree_schmutzig(wurzel, unversioniert=False):
+        return "uncommittete Änderungen"
+    return None
+
+
+def _nachziehen_einstellung(wurzel: Path, haupt: str) -> dict[str, Any] | None:
+    """``nachziehen`` aus ``origin/<haupt>:.to-spawn/config.json`` (lokaler Ref)."""
+    try:
+        roh = _git(wurzel, "show", f"origin/{haupt}:.to-spawn/config.json")
+        einstellung = json.loads(roh).get("nachziehen")
+    except (RuntimeError, json.JSONDecodeError, AttributeError):
+        return None
+    return einstellung if isinstance(einstellung, dict) else None
+
+
+def klon_nachziehen(
+    ordner: Path, fenster_texte: Callable[[], Iterable[str]] | None = None
+) -> str:
+    """Klon einer laufenden Session auf ``origin/<Hauptzweig>`` vorspulen (#897, #1497).
+
+    Ohne diesen Schritt zieht nur der Spawn einen Klon nach; Hooks und Skripte, die
+    aus dem Arbeitsordner laufen, veralten dann still. Eingeschaltet je Repo über
+    ``nachziehen`` in ``.to-spawn/config.json`` — gelesen aus ``origin/<Hauptzweig>``,
+    nie aus dem (evtl. alten) Arbeitsordner. Angefasst wird nur, was
+    :func:`nachziehen_verboten` erlaubt, und nur per ``--ff-only``; erst danach
+    läuft ``fetch`` (60 s). Danach läuft ``nachziehen.danach`` (argv-Liste, muss
+    idempotent sein, z. B. ein Hook-Installer) — auch bei ``aktuell``, damit ein
+    schon aktueller Klon seine Hooks bekommt. Rückgabe: ``aus`` · ``nachgezogen`` ·
+    ``aktuell`` · ``übersprungen: <Grund>``. Loggt nur ``nachgezogen``; Gründe
+    meldet der Aufrufer (nur bei Wechsel). ``fenster_texte`` liefert die
+    Bildschirme der Panes in diesem Ordner (siehe :func:`nachziehen_verboten`).
+    """
+    try:
+        wurzel = Path(_git(ordner, "rev-parse", "--show-toplevel").strip())
+        haupt = gh.hauptzweig(wurzel)
+    except RuntimeError:
+        return "aus"
+    if _nachziehen_einstellung(wurzel, haupt) is None:
+        return "aus"
+    try:
+        grund = nachziehen_verboten(wurzel, haupt, fenster_texte)
+        if grund:
+            return f"übersprungen: {grund}"
+        try:
+            # Ohne FETCH_HEAD: ein eigenes ``fetch … && merge FETCH_HEAD`` der
+            # Session bekommt sonst unseren Hauptzweig untergeschoben (B4).
+            _git(
+                wurzel,
+                "fetch",
+                "-q",
+                "--no-write-fetch-head",
+                "origin",
+                haupt,
+                zeitgrenze=60,
+            )
+        except RuntimeError as fehler:
+            log.warning("%s: fetch gescheitert: %s", wurzel, fehler)
+            return "übersprungen: fetch gescheitert"
+        einstellung = _nachziehen_einstellung(wurzel, haupt)
+        if einstellung is None:
+            return "aus"
+        # Die Session kann während des fetch etwas begonnen haben.
+        grund = nachziehen_verboten(wurzel, haupt, fenster_texte)
+        if grund:
+            return f"übersprungen: {grund}"
+        vorher = _git(wurzel, "rev-parse", "HEAD").strip()
+        _git(wurzel, "merge", "-q", "--ff-only", f"origin/{haupt}")
+        ergebnis = (
+            "aktuell"
+            if _git(wurzel, "rev-parse", "HEAD").strip() == vorher
+            else "nachgezogen"
+        )
+    except RuntimeError as fehler:
+        return f"übersprungen: {fehler}"
+    danach = einstellung.get("danach")
+    if isinstance(danach, list) and danach and all(isinstance(t, str) for t in danach):
+        try:
+            lauf = subprocess.run(
+                danach,
+                cwd=str(wurzel),
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+                **prozessbaum.fensterlos(),
+            )
+            if lauf.returncode != 0:
+                log.warning(
+                    "%s: nachziehen.danach Exit %s: %s",
+                    wurzel,
+                    lauf.returncode,
+                    lauf.stderr.strip()[:300],
+                )
+        except (OSError, subprocess.TimeoutExpired) as fehler:
+            log.warning("%s: nachziehen.danach scheiterte: %s", wurzel, fehler)
+    if ergebnis == "nachgezogen":
+        log.info("%s: auf origin/%s vorgespult", wurzel, haupt)
+    return ergebnis
 
 
 def worktree_finden(repo: Path, ticket: int, cwd: Path | None = None) -> Path | None:
@@ -2080,6 +2236,45 @@ class Aufpasser:
                 belegt.add(ticket)
                 belegt.update(kette_folge(pane_pid, ticket))
         return belegt
+
+    def klone_nachziehen(self) -> None:
+        """Jeden Ordner, in dem irgendein tmux-Pane steht (auch Leit-Sessions außerhalb
+        ``spec-<S>``), per :func:`klon_nachziehen` vorspulen (#897, #1497)."""
+        try:
+            zeilen = self.tmux(
+                "list-panes", "-a", "-F", "#{pane_current_path}\t#{pane_id}"
+            ).splitlines()
+        except RuntimeError as fehler:
+            log.warning("Panes nicht lesbar — kein Nachziehen: %s", fehler)
+            return
+        wurzeln: dict[str, set[str]] = {}
+        for pfad, _, pane in (z.partition("\t") for z in zeilen):
+            if not pfad.strip():
+                continue
+            try:
+                wurzel = _git(Path(pfad), "rev-parse", "--show-toplevel").strip()
+            except RuntimeError:
+                continue  # kein git-Ordner
+            wurzeln.setdefault(wurzel, set()).update([pane] if pane else [])
+        for wurzel, panes in sorted(wurzeln.items()):
+            if self.e.trocken:
+                print(f"[trocken] nachziehen: {wurzel}")
+                continue
+            ergebnis = klon_nachziehen(
+                Path(wurzel),
+                lambda panes=panes: [self.pane_text(p) for p in sorted(panes)],
+            )
+            # Grund im Stand merken: eine Log-Zeile je Wechsel, nicht je Takt.
+            praefix = f"nachziehen:{wurzel}:"
+            alt = {k for k in self.stand.meldungen if k.startswith(praefix)}
+            if ergebnis.startswith("übersprungen"):
+                schluessel = praefix + ergebnis
+                if schluessel not in alt:
+                    log.info("nachziehen %s: %s", wurzel, ergebnis)
+                alt.discard(schluessel)
+                self.stand.meldungen[schluessel] = self.jetzt
+            for k in alt:
+                del self.stand.meldungen[k]
 
     def repo_ordner(self, fenster: list[Fenster]) -> Path | None:
         for attr in ("pfad", "start_pfad"):
@@ -4042,6 +4237,9 @@ class Aufpasser:
         # eigenen Sperren je Ordner (laufender Prozess im Ordner, offenes Ticket, 24 h).
         self._hausmeister_lauf()
         self._wecker_lauf()
+        # Vor sitzung_pruefen: frisch gestartete oder angestupste Sessions sehen so
+        # gleich den neuen Stand samt Hooks; die Deploy/Gate-Sperre oben gilt schon.
+        self.klone_nachziehen()
         for sitzung, spec, fenster, repo in gesehen:
             try:
                 self.sitzung_pruefen(sitzung, spec, fenster, repo)
