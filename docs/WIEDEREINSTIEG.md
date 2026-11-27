@@ -559,6 +559,11 @@ Etappen und Abnahme gilt der Plan. Der Plan-Abschnitt „Stand“ ist ein älter
   Prüfung wiederholt und getrennt gemeldet, nie still übergangen.
 - **Schlange (Deploy-Schlange):** Serielle Prüf- und Bereitstellungs-Reihe im App-Repo; Änderungen am
   Skill-Repo laufen davon getrennt.
+- **Ereignis-Protokoll (`origin/protokoll`):** Gemeinsames, verwaistes Git-Protokoll für Bau-Ereignisse
+  (Start, Übergabe, Schließen, Wiedereröffnen, Hindernis) unter `bau_log/<Ticket>.jsonl` auf dem
+  Zweig `protokoll`; wird ausschließlich über die gesperrte Schreib-Tür `bau_log.schreibe()` mit
+  lokalem Puffer unter `~/.local/state/to-spawn/protokoll` (nie im Worktree) gebündelt per
+  Git-Plumbing hochgeladen, damit beide Maschinen denselben Stand ohne Gate-/Staging-Auslösung sehen.
 - **App-Repo / App-Live:** Ein nutzendes Anwendungs-Repo (erstes Beispiel: DuoPlus); dessen
   Produktivbetrieb (`App-Live`) wird im autonomen Lauf nie angefasst.
 - **Probe-Varianten (`-mit` / `-ohne`):** Zwei Durchläufe im Probe-Repo — einmal mit bereits
