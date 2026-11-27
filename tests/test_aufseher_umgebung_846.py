@@ -79,9 +79,7 @@ def test_aufseher_startweg_vererbt_maschine_und_skill_home_echt(
     assert geerbt["REPO"] == str(repo)
 
 
-def test_alle_linux_startwege_exportieren_to_spawn_maschine(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_alle_linux_startwege_exportieren_to_spawn_maschine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``capo.bau_startzeile``, ``respawn._startbefehl``, ``aufpasser.bau_befehl`` und
     ``aufpasser.wache_befehl`` tragen alle ``TO_SPAWN_MASCHINE`` weiter — und lassen sie weg,
     wenn sie nicht gesetzt ist."""
@@ -167,4 +165,3 @@ def test_sitzung_env_buendelt_fenster_umgebung_und_quotet_sonderzeichen(tmp_path
     assert ";" not in pwsh
     assert "nutzer''s dir" in pwsh
     assert f"Set-Item Env:TO_SPAWN_HOME '{skill}'" in pwsh
-
