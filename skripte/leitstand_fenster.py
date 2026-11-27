@@ -338,6 +338,10 @@ def start_mail(ablage: Ablage) -> int:
     schluessel = f"{MAIL_ART}_{ablage.spec}"
     betreff = f"Bau-Leitstand Spec #{ablage.spec}"
     text = f"Live-Stand der Spec #{ablage.spec} (auch am Handy): {url}"
+    if not melder.darf_raus(MAIL_ART, konfig):
+        melder.melden(ablage.repo, MAIL_ART, betreff, text, schluessel, konfig=konfig)
+        speichere_json(ablage.mail_datei, {"status": "nur_log", "url": url, "zeit": jetzt_iso()})
+        return 0
     if melder.melden(ablage.repo, MAIL_ART, betreff, text, schluessel, konfig=konfig) or melder.schon_gesendet(
         ablage.repo, schluessel
     ):

@@ -410,6 +410,7 @@ def test_takt_meldet_nachbesserung_kommentar_im_spec_issue(tmp_path: Path) -> No
 # --- Abnahme-Kriterium 2: Folge-Tickets fertig -> neue Rundschau, neue Selbstprüfung, „Runde 2“ im Titel ---
 
 
+@pytest.mark.xfail(strict=True, reason="überholt durch #885: tagsüber keine Mail je Spec (Entscheidung 27.11.)")
 def test_runde_2_verlangt_neue_rundschau_und_selbstpruefung_und_titel_runde_2(tmp_path: Path) -> None:
     """Nach Folge-Ticket verlangt Runde 2 neue Rundschau + neue Selbstprüfung und trägt „Runde 2“ im Titel ohne zweite Mail."""
     repo, postfach = _repo_anlegen(tmp_path, mit_staging=True)
@@ -521,6 +522,85 @@ def test_runde_2_verlangt_neue_rundschau_und_selbstpruefung_und_titel_runde_2(tm
     assert len(mails_nach_r2) == 1, "Runde 2 darf keine ungeklärte zweite Mail schicken"
 
     # stand-Unterbefehl meldet Runde 2 und nicht mehr fällig.
+    stand = _lauf("abschluss_paket.py", "stand", str(SPEC), "--repo", str(repo), "--json", env=env)
+    assert stand.returncode == 0, stand.stdout + stand.stderr
+    stand_daten = json.loads(stand.stdout)
+    assert stand_daten["runde"] == 2 and stand_daten["faellig"] is False
+
+
+def test_runde_2_ohne_spec_fertig_mail_885(tmp_path: Path) -> None:
+    """#370 + #885: Runde 2 verlangt neue Rundschau + Selbstprüfung mit „Runde 2“ im Titel; spec_fertig nur Log."""
+    repo, postfach = _repo_anlegen(tmp_path, mit_staging=True)
+    env = _env(tmp_path)
+
+    _selbstpruefung_gruen(repo, SPEC, ["901", "902"], runde=1)
+    live_bereit_marker(repo, SPEC)
+    r1_deck = rundschau_args(repo, SPEC)
+    r1 = _lauf(
+        "abschluss_paket.py",
+        "ablegen",
+        str(SPEC),
+        "--repo",
+        str(repo),
+        *_LINKS,
+        *r1_deck,
+        "--spec-fertig",
+        _FERTIG,
+        env=env,
+    )
+    assert r1.returncode == 0, r1.stdout + r1.stderr
+
+    (repo / "docs" / "agents" / f"rueckblick_{SPEC}.md").write_text("Rückblick ok\n", encoding="utf-8")
+    (repo / "docs" / "agents" / f"thermo_{SPEC}.md").write_text("Thermo ok\n", encoding="utf-8")
+    mail1 = _lauf(
+        "abschluss_paket.py",
+        "nachsehen",
+        str(SPEC),
+        "--repo",
+        str(repo),
+        "--jetzt",
+        "2026-11-25T10:05:00+01:00",
+        env=env,
+    )
+    assert mail1.returncode == 0, mail1.stdout + mail1.stderr
+    assert not postfach.exists(), "tagsüber keine spec_fertig-Mail (#885)"
+
+    m_pfad = repo / "docs" / "agents" / "manifests" / f"spec-{SPEC}.json"
+    m_daten = json.loads(m_pfad.read_text(encoding="utf-8"))
+    m_daten["tickets"]["910"] = {
+        "title": "Gelb aus #370: Knopf-Farbe kräftiger",
+        "schaetzung_k": 30,
+        "umfang": "Knopf-Farbe kräftiger",
+        "gelb_von": SPEC,
+    }
+    m_pfad.write_text(json.dumps(m_daten, indent=2), encoding="utf-8")
+
+    alt_versuch = _lauf("abschluss_paket.py", "ablegen", str(SPEC), "--repo", str(repo), *_LINKS, *r1_deck, env=env)
+    assert alt_versuch.returncode == 4, alt_versuch.stdout + alt_versuch.stderr
+    assert "#910" in alt_versuch.stdout and "Selbstprüfung" in alt_versuch.stdout
+
+    r2_deck = rundschau_args(repo, SPEC)
+    assert (
+        _lauf("abschluss_paket.py", "selbstpruefung", "planen", str(SPEC), "--repo", str(repo), env=env).returncode == 0
+    )
+    _selbstpruefung_gruen(repo, SPEC, ["901", "902", "910"], runde=2)
+    assert (
+        _lauf("abschluss_paket.py", "selbstpruefung", "sammeln", str(SPEC), "--repo", str(repo), env=env).returncode
+        == 0
+    )
+
+    r2 = _lauf("abschluss_paket.py", "ablegen", str(SPEC), "--repo", str(repo), *_LINKS, *r2_deck, env=env)
+    assert r2.returncode == 0, r2.stdout + r2.stderr
+    ablage2 = json.loads((repo / ".to-spawn" / f"abschluss_{SPEC}_paket.json").read_text(encoding="utf-8"))
+    assert (
+        ablage2["runde"] == 2
+        and ablage2["titel"] == f"Spec {SPEC} bereit zur Abnahme (Runde 2) — alles zum Durchschauen"
+    )
+
+    mail2 = _lauf("abschluss_paket.py", "nachsehen", str(SPEC), "--repo", str(repo), env=env)
+    assert mail2.returncode == 0, mail2.stdout + mail2.stderr
+    assert not postfach.exists()
+
     stand = _lauf("abschluss_paket.py", "stand", str(SPEC), "--repo", str(repo), "--json", env=env)
     assert stand.returncode == 0, stand.stdout + stand.stderr
     stand_daten = json.loads(stand.stdout)
