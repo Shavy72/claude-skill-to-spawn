@@ -90,10 +90,7 @@ def _manifest_schreiben(repo: Path, tickets: list[int]) -> None:
     datei.parent.mkdir(parents=True, exist_ok=True)
     daten = {
         "spec": SPEC,
-        "tickets": {
-            str(n): {"schaetzung_k": 15, "umfang": f"Ticket #{n}"}
-            for n in tickets
-        },
+        "tickets": {str(n): {"schaetzung_k": 15, "umfang": f"Ticket #{n}"} for n in tickets},
     }
     datei.write_text(json.dumps(daten, ensure_ascii=False), encoding="utf-8")
 
@@ -187,6 +184,7 @@ def test_aufseher_stand_erfasst_manifest_folge_ticket_ohne_sub_issue(
     q = replace(
         aufseher_stand.echte_quellen(test_repo["haupt"], "o/r"),
         tmux=_fake_tmux(FOLGE_TICKET, JETZT - 10 * MINUTE),
+        pc_still=None,
         jetzt=lambda: JETZT,
     )
 
@@ -236,6 +234,7 @@ def test_leiter_plant_folge_handoff_fuer_manifest_folge_ticket_ohne_sub_issue(
     q = replace(
         aufseher_stand.echte_quellen(test_repo["haupt"], "o/r"),
         tmux=_fake_tmux(FOLGE_TICKET, JETZT - 10 * MINUTE),
+        pc_still=None,
         jetzt=lambda: JETZT,
     )
     umwelt = leiter._EchteUmwelt(test_repo["haupt"], q)
@@ -301,6 +300,7 @@ def test_unbekanntes_ticket_weder_sub_issue_noch_manifest_bricht_ab(
     q = replace(
         aufseher_stand.echte_quellen(test_repo["haupt"], "o/r"),
         tmux=_fake_tmux(UNBEKANNT, JETZT - 10 * MINUTE),
+        pc_still=None,
         jetzt=lambda: JETZT,
     )
     umwelt = leiter._EchteUmwelt(test_repo["haupt"], q)
