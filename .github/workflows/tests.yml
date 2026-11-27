@@ -55,6 +55,10 @@ jobs:
           git config --global init.defaultBranch main
 
       - name: pytest
+        env:
+          # #872: Gate-Schalter aktiv — fehlendes Ziel-Repo scheitert laut statt stillem Skip.
+          TO_SPAWN_HAUPT_REPO_PFLICHT: "1"
+          TO_SPAWN_HAUPT_REPO_TEST: ${{ github.workspace }}/tests/hilfen/haupt_repo_attrappe
         run: |
           set +e
           # Auslassungen nur aus auslassungen.txt; veraltete IDs machen den Schritt rot.

@@ -1280,6 +1280,37 @@ def test_872_gate_schalter_laesst_fehlendes_haupt_repo_laut_scheitern() -> None:
         pruefe(None, pflicht=False)
 
 
+def test_872_ci_workflow_aktiviert_gate_schalter_und_attrappe() -> None:
+    """#872: Das CI-Gate aktiviert ``TO_SPAWN_HAUPT_REPO_PFLICHT=1`` mit der repo-neutralen Attrappe."""
+    workflow = SKILL / ".github" / "workflows" / "tests.yml"
+    text = workflow.read_text(encoding="utf-8")
+    assert re.search(r'(?m)^\s+TO_SPAWN_HAUPT_REPO_PFLICHT:\s*["\']?(?:1|true|yes|ja)["\']?\s*$', text), (
+        "TO_SPAWN_HAUPT_REPO_PFLICHT fehlt in .github/workflows/tests.yml"
+    )
+    assert re.search(
+        r'(?m)^\s+TO_SPAWN_HAUPT_REPO_TEST:\s*["\']?(?:\$\{\{\s*github\.workspace\s*\}\}/)?tests/hilfen/haupt_repo_attrappe["\']?\s*$',
+        text,
+    ), "TO_SPAWN_HAUPT_REPO_TEST zeigt in .github/workflows/tests.yml nicht auf tests/hilfen/haupt_repo_attrappe"
+
+    try:
+        import yaml  # type: ignore[import-untyped]
+    except ImportError:
+        yaml = None
+    if yaml is not None:
+        daten = yaml.safe_load(text)
+        schritte = daten["jobs"]["pytest"]["steps"]
+        pytest_schritt = next((s for s in schritte if isinstance(s, dict) and s.get("name") == "pytest"), None)
+        assert pytest_schritt is not None, "pytest-Schritt in .github/workflows/tests.yml fehlt"
+        umgebung = pytest_schritt.get("env") or {}
+        assert str(umgebung.get("TO_SPAWN_HAUPT_REPO_PFLICHT", "")).strip().lower() in ("1", "true", "yes", "ja")
+        ziel = str(umgebung.get("TO_SPAWN_HAUPT_REPO_TEST", "")).strip()
+        assert ziel.endswith("tests/hilfen/haupt_repo_attrappe"), ziel
+
+    attrappe_scripts = SKILL / "tests" / "hilfen" / "haupt_repo_attrappe" / "scripts"
+    fehlt = [d for d in _DECKUNG_DATEIEN if not (attrappe_scripts / d).is_file()]
+    assert not fehlt, f"Attrappe unter {attrappe_scripts} unvollständig, fehlt: {fehlt}"
+
+
 def _vps_deckung(
     welt: dict[str, Path],
     monkeypatch: pytest.MonkeyPatch,
