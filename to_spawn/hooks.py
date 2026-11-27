@@ -29,7 +29,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, TextIO
 
-from . import bau_log, befund, config
+from . import bau_log, befund, config, schliess_pruefer
 
 log = logging.getLogger("to_spawn.hooks")
 
@@ -712,8 +712,8 @@ _ZUWEISUNG = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _SHELLS = {"bash", "sh", "zsh", "dash"}
 #: Shell-Schalter mit eigenem Wert (``bash -o pipefail -c …``) — der Wert ist nie der ``-c``-Text.
 _SHELL_MIT_WERT = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}
-#: Namen, die :func:`geschlossene_nummern` selbst auswertet.
-_ZIELE = {"gh", "eval", *_SHELLS}
+#: Namen, die :func:`geschlossene_nummern` und :func:`push_pruef_ziele` selbst auswerten.
+_ZIELE = {"gh", "git", "eval", *_SHELLS}
 #: Schalter von ``gh`` (global, ``issue close``/``edit``, ``api``), die einen Wert nehmen —
 #: der Wert ist nie Unterbefehl oder Nummer. Als ein Text, weil der Prüf-Test
 #: ``test_aufseher_kommentar_1522`` jedes einzelne Kommentar-Schalter-Literal als
@@ -950,6 +950,146 @@ def hook_spec_sperre(strom: TextIO | None = None, fehler: TextIO | None = None) 
         f"Stattdessen `python {SKILL_CLI} spec-schliessen {s}`: prüft die Folge-Tickets "
         "und schließt nur, wenn alle gebaut, geschlossen oder gebündelt sind.\n"
     )
+    return 2
+
+
+# --- Push-Prüfer-Hook (#865 / App #1396): Schließ-Prüfer vor git push auf ticket/* ---------------
+
+#: Globale ``git``-Schalter vor dem Unterbefehl, die einen eigenen Wert erwarten.
+_GIT_GLOBAL_MIT_WERT = frozenset(
+    {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env"}
+)
+#: ``git push``-Schalter mit eigenem Wert (der Wert ist kein Remote und keine Refspec).
+_GIT_PUSH_MIT_WERT = frozenset({"-o", "--push-option", "--repo", "--receive-pack", "--exec"})
+#: Ticket-Zweig ``ticket/<N>…``: erste Zahlengruppe ist die Ticketnummer.
+_TICKET_ZWEIG = re.compile(r"^ticket/(\d+)(?:\D|$)")
+
+
+def _aktueller_zweig(repo: Path) -> str | None:
+    """Aktueller Zweigname von ``repo`` (``git symbolic-ref --short HEAD``) oder ``None``."""
+    code, name = schliess_pruefer._git(repo, "symbolic-ref", "--short", "HEAD")
+    return name.strip() if code == 0 and name.strip() else None
+
+
+def _git_push_ziele(woerter: list[str], cwd: Path) -> list[tuple[Path, str, str]]:
+    """Liefert ``(arbeits_cwd, ziel_zweig, quelle_ref)`` für ``git push`` auf ``ticket/*``."""
+    ziel_cwd, i = cwd, 1
+    while i < len(woerter) and woerter[i].startswith("-"):
+        arg, i = woerter[i], i + 1
+        if arg == "-C" and i < len(woerter):
+            ziel_cwd, i = (ziel_cwd / woerter[i]).resolve(), i + 1
+        elif arg.startswith("-C") and len(arg) > 2:
+            ziel_cwd = (ziel_cwd / arg[2:]).resolve()
+        elif arg in _GIT_GLOBAL_MIT_WERT and i < len(woerter):
+            i += 1
+    if i >= len(woerter) or woerter[i] != "push":
+        return []
+    pos: list[str] = []
+    ende_schalter = sammel = ueberspringen = False
+    for arg in woerter[i + 1 :]:
+        if ueberspringen:
+            ueberspringen = False
+        elif ende_schalter:
+            pos.append(arg)
+        elif arg == "--":
+            ende_schalter = True
+        elif arg in ("--delete", "--dry-run") or (
+            arg.startswith("-") and not arg.startswith("--") and ("d" in arg[1:] or "n" in arg[1:])
+        ):
+            return []
+        elif arg in ("--all", "--mirror", "--tags"):
+            sammel = True
+        elif arg in _GIT_PUSH_MIT_WERT:
+            ueberspringen = True
+        elif not arg.startswith("-"):
+            pos.append(arg)
+    treffer: list[tuple[Path, str, str]] = []
+    if len(pos) >= 2:
+        for refspec in pos[1:]:
+            roh = refspec.lstrip("+")
+            if not roh or roh.startswith(":"):
+                continue
+            quelle, ziel = roh.split(":", 1) if ":" in roh else (roh, roh)
+            ziel_kurz = ziel.removeprefix("refs/heads/")
+            if ziel_kurz == "HEAD":
+                ziel_kurz = _aktueller_zweig(ziel_cwd) or ""
+            if ziel_kurz.startswith("ticket/"):
+                quelle_ref = (
+                    quelle.removeprefix("refs/heads/") if quelle.startswith("refs/heads/") else (quelle or "HEAD")
+                )
+                treffer.append((ziel_cwd, ziel_kurz, quelle_ref))
+    elif not sammel:
+        aktuell = _aktueller_zweig(ziel_cwd)
+        if aktuell and aktuell.startswith("ticket/"):
+            treffer.append((ziel_cwd, aktuell, "HEAD"))
+    return treffer
+
+
+def push_pruef_ziele(befehl: str, cwd: Path) -> list[tuple[Path, str, str]]:
+    """Alle ``git push``-Ziele auf ``ticket/*`` in ``befehl`` (inkl. ``cd``, ``eval``, ``bash -c``)."""
+    ziele: list[tuple[Path, str, str]] = []
+    aktuell_cwd = cwd
+    for woerter in _einfache_befehle(befehl):
+        name = _name(woerter[0])
+        if name == "cd":
+            ziel = woerter[2] if len(woerter) >= 3 and woerter[1] == "--" else (woerter[1] if len(woerter) >= 2 else "")
+            if not ziel:
+                aktuell_cwd = Path.home()
+            elif not ziel.startswith("-"):
+                aktuell_cwd = (aktuell_cwd / ziel).resolve()
+        elif name == "eval":
+            ziele += push_pruef_ziele(" ".join(woerter[1:]), aktuell_cwd)
+        elif name in _SHELLS and (text := _shell_text(woerter[1:])) is not None:
+            ziele += push_pruef_ziele(text, aktuell_cwd)
+        elif name == "git":
+            ziele += _git_push_ziele(woerter, aktuell_cwd)
+    return ziele
+
+
+def hook_push_pruefer(strom: TextIO | None = None, fehler: TextIO | None = None) -> int:
+    """PreToolUse-Hook (Bash) der Bau-Session: Schließ-Prüfer vor ``git push`` auf ``ticket/*`` (#865).
+
+    Delegiert ausschließlich an :func:`schliess_pruefer.pruefe` (#864) mit ``gruen_pruefen=False``
+    (vor dem Push kann der Commit noch nicht grün auf dem Hauptzweig sein). Bei Ablehnung: Exit 2
+    und konkrete Gründe auf stderr; bei anderen Befehlen, anderen Zweigen oder Hook-Fehlern: Exit 0.
+    """
+    try:
+        daten = _eingabe(strom or sys.stdin)
+        werkzeug = daten.get("tool_name")
+        if isinstance(werkzeug, str) and werkzeug != "Bash":
+            return 0
+        roh = daten.get("tool_input")
+        befehl = roh.get("command") if isinstance(roh, dict) else None
+        if not isinstance(befehl, str):
+            return 0
+        start = daten.get("cwd")
+        basis = Path(start) if isinstance(start, str) and start else Path.cwd()
+        ziele = push_pruef_ziele(befehl, basis)
+        if not ziele:
+            return 0
+        maengel: list[tuple[str, int, list[schliess_pruefer.Grund]]] = []
+        for arbeits_cwd, zweig, quelle_ref in ziele:
+            treffer = _TICKET_ZWEIG.match(zweig)
+            env_ticket = os.environ.get("TO_SPAWN_TICKET", "")
+            ticket = int(treffer.group(1)) if treffer else (int(env_ticket) if env_ticket.isdigit() else None)
+            if ticket is None:
+                continue
+            repo = config.repo_wurzel(arbeits_cwd)
+            ergebnis = schliess_pruefer.pruefe(
+                schliess_pruefer.Stand(repo=repo, ticket=ticket, ref=quelle_ref, gruen_pruefen=False)
+            )
+            if not ergebnis.ok:
+                maengel.append((zweig, ticket, ergebnis.gruende))
+    except Exception:  # der Hook darf die Bau-Session nie hängen lassen (#204)
+        log.exception("Push-Prüfer-Hook fehlgeschlagen — Befehl wird nicht blockiert.")
+        return 0
+    if not maengel:
+        return 0
+    aus = fehler or sys.stderr
+    for zweig, ticket, gruende in maengel:
+        aus.write(f"Push auf {zweig} (#{ticket}) vom Schließ-Prüfer abgelehnt:\n")
+        for grund in gruende:
+            aus.write(f"- {grund.regel}: {grund.text}\n")
     return 2
 
 

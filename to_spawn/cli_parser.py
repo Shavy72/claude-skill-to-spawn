@@ -334,6 +334,7 @@ def baue_parser() -> _Parser:
     unter.add_parser("hook-stop", help="Stop-Hook (JSON auf stdin)")
     unter.add_parser("hook-subagent-stop", help="SubagentStop-Hook (JSON auf stdin)")
     unter.add_parser("hook-spec-sperre", help="PreToolUse-Hook: rohes `gh issue close <Spec>` sperren (E2-4)")
+    unter.add_parser("hook-push-pruefer", help="PreToolUse-Hook: Schließ-Prüfer vor `git push` auf ticket/* (#865)")
     unter.add_parser("hook-ja-sperre", help="PreToolUse-Hook: Ja-Befehle aus Werkzeug-Aufrufen sperren (#531)")
     p_schliessen = unter.add_parser(
         "spec-schliessen", help="Spec schließen, nur wenn alle Folge-Tickets erledigt sind (E2-4)"
