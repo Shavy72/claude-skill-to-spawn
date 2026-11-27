@@ -1090,6 +1090,121 @@ def uebersicht(repo: Path, spec: int, tickets: list[int], *, hinweis: str = "") 
     return datei
 
 
+#: Höchstzahl Punkte je Abschnitt im Morgen-Bericht — er soll in 5 Minuten lesbar sein (#885).
+BERICHT_MAX = 12
+BERICHT_ZEILE = 220
+
+
+def morgen_bericht_datei(repo: Path, spec: int) -> Path:
+    """``<pfade.agenten>/morgen_bericht_<S>.md`` (Vorgabe ``docs/agents``, #885)."""
+    return config.pfad(config.lade(repo), "agenten") / f"morgen_bericht_{spec}.md"
+
+
+def _umweg(z: dict[str, Any]) -> str | None:
+    """Kurztext einer Bau-Log-Zeile, die einen Umweg zeigt; ``None`` = kein Umweg."""
+    typ = z.get("typ")
+    if typ == "vorfall":
+        return " → ".join(t for t in (_kurz(z.get("symptom")), _kurz(z.get("loesung"))) if t) or None
+    if ist_gate_rot(z):
+        return f"Gate rot: {_kurz(z.get('grund') or z.get('ergebnis') or z.get('phase'))}"
+    if typ == "blockiert":
+        return f"blockiert: {_kurz(z.get('grund'))}"
+    if typ == "ruecknahme":
+        return f"Fehl-Reopen zurückgenommen: {_kurz(z.get('text'))}"
+    return None
+
+
+def _abschnitt(titel: str, punkte: list[str], leer: str) -> list[str]:
+    zeilen = ["", f"## {titel}", ""]
+    if not punkte:
+        return [*zeilen, f"_{leer}_"]
+    zeilen += [f"- {_kurz(p, BERICHT_ZEILE)}" for p in punkte[:BERICHT_MAX]]
+    if len(punkte) > BERICHT_MAX:
+        zeilen.append(f"- … und {len(punkte) - BERICHT_MAX} weitere (Bau-Log docs/agents/bau_log/)")
+    return zeilen
+
+
+def morgen_bericht(
+    repo: Path,
+    ref: str | None,
+    spec: int,
+    liste: list[dict[str, Any]],
+    *,
+    checkpoint: str = "checkpoint:human",
+) -> tuple[Path, str]:
+    """Schreibt ``morgen_bericht_<S>.md`` mit 4 Teilen und Deckel (#885) und gibt ``(Pfad, Text)``.
+
+    Fertig · Entscheidungen zum Kippen · Umwege · Wartet auf den Nutzer — aus den Unter-Tickets
+    und den Bau-Logs auf ``ref``. Je Teil höchstens :data:`BERICHT_MAX` Punkte; am Ende steht
+    einmal die Liste der Kritisch-Ausnahmen (:func:`melder.kritisch_liste`).
+    """
+    fertig: list[str] = []
+    kippen: list[str] = []
+    umwege: list[str] = []
+    wartet: list[str] = []
+    for issue in sorted(liste, key=lambda i: int(i["number"])):
+        n = int(issue["number"])
+        titel = _kurz(issue.get("title"), 90)
+        stufe = ticket_zustand.stufe(issue)
+        if stufe in ("zu", "verworfen"):
+            fertig.append(f"#{n} {titel}" + (" (nicht geplant)" if stufe == "verworfen" else ""))
+        else:
+            art = "Checkpoint" if checkpoint in label_namen(issue) else "noch offen"
+            wartet.append(f"#{n} {art}: {titel}")
+        for z in log_vom_ref(repo, ref, n) if ref else []:
+            zeit = _zeit(z.get("ts"))
+            wann = zeit.astimezone().strftime("%d.%m. %H:%M") if zeit else "-"
+            if z.get("typ") == "entscheidung":
+                frage, wahl, grund = entscheidung_teile(z)
+                kippen.append(f"#{n} {wann}: {frage} → {wahl or '?'}" + (f" — {grund}" if grund else ""))
+            elif (umweg := _umweg(z)) is not None:
+                umwege.append(f"#{n} {wann}: {umweg}")
+    for eintrag in mensch_noetig.eintraege_fuer_spec(spec, set()):
+        wartet.append(f"#{eintrag.get('ticket') or spec} Mensch nötig: {mensch_noetig_was(eintrag)}")
+    wartet.append("Spec abnehmen und Live freigeben — Live-Deploy wartet auf Freigabe des Nutzers.")
+    kritisch_text = ", ".join(melder.kritisch_liste())
+    zeilen = [
+        f"# Morgen-Bericht Spec #{spec}",
+        "",
+        f"Stand {datetime.now().astimezone():%d.%m.%Y %H:%M} · Quelle: Unter-Tickets (GitHub) und "
+        f"Bau-Logs auf {ref or '-'} (to-spawn capo). Alle Entscheidungen: docs/agents/entscheidungen_{spec}.md",
+        *_abschnitt("Fertig", fertig, "Noch kein Ticket zu."),
+        *_abschnitt("Entscheidungen zum Kippen", kippen, "Keine Entscheidungen im Bau-Log."),
+        *_abschnitt("Umwege", umwege, "Keine Umwege im Bau-Log."),
+        *_abschnitt("Wartet auf den Nutzer", wartet, "Nichts."),
+        "",
+        f"Sofort-Mails (Kritisch-Ausnahmen tagsüber; nachts nur server_tot): {kritisch_text}",
+    ]
+    text = "\n".join(zeilen) + "\n"
+    datei = morgen_bericht_datei(repo, spec)
+    datei.parent.mkdir(parents=True, exist_ok=True)
+    datei.write_text(text, encoding="utf-8")
+    return datei, text
+
+
+def morgen_bericht_verschicken(
+    repo: Path,
+    spec: int,
+    text: str,
+    *,
+    konfig: dict[str, Any] | None = None,
+    gh_repo: str = "",
+    schluessel: str | None = None,
+    jetzt: datetime | None = None,
+) -> bool:
+    """Genau 1 Morgen-Bericht als Mail (Art ``morgen_bericht``, nachts stumm, Doppel-Schutz, #885)."""
+    return melder.melden(
+        repo,
+        "morgen_bericht",
+        f"Morgen-Bericht Spec #{spec}",
+        text,
+        schluessel or f"morgen_bericht|{spec}",
+        konfig=konfig,
+        gh_repo=gh_repo,
+        jetzt=jetzt,
+    )
+
+
 # --- GitHub ---------------------------------------------------------------------
 
 
@@ -2667,9 +2782,11 @@ def _tick(
             erg.zeilen.append(f"SPEC FERTIG — alle {len(liste)} Tickets zu, keine Verstöße{alt_hinweis}. [Probe]")
         else:
             pfad = uebersicht(repo, spec, [int(i["number"]) for i in liste])
+            bericht_pfad, _bericht = morgen_bericht(repo, ref, spec, liste, checkpoint=checkpoint)
             erg.zeilen.append(
                 f"SPEC FERTIG — alle {len(liste)} Tickets zu, keine Verstöße{alt_hinweis}. Übersicht: {pfad}"
             )
+            erg.zeilen.append(f"Morgen-Bericht: {bericht_pfad}")
         if not dry_run and not zustand.get("spec_fertig_seit"):
             zustand["spec_fertig_seit"] = jetzt.astimezone().isoformat(timespec="seconds")
         if not zustand.get("staging_schalter_erledigt"):
