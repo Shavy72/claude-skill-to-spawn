@@ -30,6 +30,7 @@ import fnmatch
 import json
 import logging
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -58,6 +59,304 @@ KONFIG_GEAENDERT = "Konfig geändert (.to-spawn/config.json)"
 _KONFIG_PFADE = frozenset({config.KONFIG_PFAD.as_posix().casefold(), config.KONFIG_PFAD.parent.as_posix().casefold()})
 #: git-Modus eines Symlinks.
 _SYMLINK_MODUS = "120000"
+
+# --- Schlüssel-/Secret-Sperre für den Beleg-Ordner (#863, aus App #503 / #426) -----------------
+
+#: Vorgabe-Ordner für Belege, wenn ``regularien.belege_ordner`` nicht gesetzt ist.
+BELEGE_ORDNER_VORGABE = str(config.DEFAULTS["regularien"]["belege_ordner"])
+_BINAER_PROBE_BYTES = 8192
+_PLATZHALTER_WOERTER = (
+    "REDACTED",
+    "PLACEHOLDER",
+    "CHANGEME",
+    "EXAMPLE",
+    "YOUR_TOKEN",
+    "YOUR_API",
+    "YOUR_SECRET",
+    "DUMMY",
+    "FAKE_TOKEN",
+    "MUSTER",
+    "GESCHWAERZT",
+)
+
+
+@dataclass(frozen=True)
+class SchluesselMuster:
+    """Einzelnes Secret-/Schlüssel-Muster für den Beleg-Ordner (ohne Klartext-Ausgabe)."""
+
+    name: str
+    muster: re.Pattern[str]
+    beschreibung: str
+    wert_gruppe: int = 0
+
+
+#: Zentrale Musterliste aus App #426 (Live-API-Bearer-Tokens, Secrets, private Schlüssel).
+BELEG_SCHLUESSEL_MUSTER: tuple[SchluesselMuster, ...] = (
+    SchluesselMuster(
+        "private_key_pem",
+        re.compile(r"-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----"),
+        "Privater Schlüssel (PEM-Kopf)",
+    ),
+    SchluesselMuster(
+        "bearer_token",
+        re.compile(r"\bBearer\s+([A-Za-z0-9._~+/=-]{16,})\b"),
+        "Live-API-Bearer-Token",
+        wert_gruppe=1,
+    ),
+    SchluesselMuster(
+        "github_token",
+        re.compile(r"\b((?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{22,})\b"),
+        "GitHub-Zugriffstoken",
+        wert_gruppe=1,
+    ),
+    SchluesselMuster(
+        "provider_api_key",
+        re.compile(
+            r"\b(sk-(?:proj-|ant-api\d+-|live_|test_)?[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{35}|xox[baprs]-[0-9A-Za-z-]{10,})\b"
+        ),
+        "API-Schlüssel (Provider-Präfix)",
+        wert_gruppe=1,
+    ),
+    SchluesselMuster(
+        "aws_access_key",
+        re.compile(r"\b((?:AKIA|ASIA)[0-9A-Z]{16})\b"),
+        "AWS-Zugriffsschlüssel",
+        wert_gruppe=1,
+    ),
+    SchluesselMuster(
+        "jwt_token",
+        re.compile(r"\b(eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b"),
+        "JWT-Token",
+        wert_gruppe=1,
+    ),
+    SchluesselMuster(
+        "secret_zuweisung",
+        re.compile(
+            r"(?i)\b(?:[a-z0-9_]*?(?:api[_-]?key|api[_-]?secret|api[_-]?token|access[_-]?token|auth[_-]?token|"
+            r"bearer[_-]?token|client[_-]?secret|secret[_-]?key|private[_-]?key))\b"
+            r"""\s*[:=]\s*["']?([A-Za-z0-9._~+/=-]{16,})["']?"""
+        ),
+        "Secret-/API-Token-Zuweisung",
+        wert_gruppe=1,
+    ),
+)
+
+
+@dataclass(frozen=True)
+class SchluesselFund:
+    """Einzelner Schlüssel-/Secret-Fund im Beleg-Ordner (ohne Klartext-Wert)."""
+
+    datei: str
+    zeile: int
+    muster: str
+    beschreibung: str
+
+    def als_dict(self) -> dict[str, Any]:
+        return {
+            "datei": self.datei,
+            "zeile": self.zeile,
+            "muster": self.muster,
+            "beschreibung": self.beschreibung,
+        }
+
+    def kurz(self) -> str:
+        return f"{self.datei}:{self.zeile} [{self.muster}] {self.beschreibung}"
+
+
+@dataclass(frozen=True)
+class BelegSchluesselErgebnis:
+    """Ergebnis der Schlüssel-/Secret-Prüfung über den Beleg-Ordner (E40: ohne Mail-Alarm)."""
+
+    ok: bool
+    ordner: tuple[str, ...]
+    dateien_geprueft: int
+    funde: tuple[SchluesselFund, ...]
+
+    def als_dict(self) -> dict[str, Any]:
+        return {
+            "ok": self.ok,
+            "ordner": list(self.ordner),
+            "dateien_geprueft": self.dateien_geprueft,
+            "funde": [f.als_dict() for f in self.funde],
+        }
+
+    def bericht(self) -> str:
+        if self.ok:
+            return f"Beleg-Schlüssel-Sperre grün ({self.dateien_geprueft} Belegdatei(en) geprüft)."
+        zeilen = [
+            f"ROT: Schlüssel-/Secret-Sperre im Beleg-Ordner ausgelöst ({len(self.funde)} Fund(e), kein Klartext ausgegeben):",
+            *(f"- {fund.kurz()}" for fund in self.funde),
+            "Behebung: Geheimnis aus dem Beleg-Ordner entfernen/schwärzen und danach erneut prüfen bzw. committen.",
+        ]
+        return "\n".join(zeilen)
+
+
+def _normalisiere_pfad(pfad: str) -> str:
+    """Normiert Repo-relative Pfade plattformübergreifend (Windows ``\\`` → POSIX ``/``)."""
+    text = pfad.replace("\\", "/")
+    while text.startswith("./"):
+        text = text[2:]
+    return text.lstrip("/")
+
+
+def _ordner_aus_konfig(daten: dict[str, Any] | None) -> str:
+    if not isinstance(daten, dict):
+        return ""
+    regularien = daten.get("regularien")
+    if not isinstance(regularien, dict):
+        return ""
+    roh = str(regularien.get("belege_ordner") or "").replace("\\", "/").strip("/")
+    return roh
+
+
+def belege_ordner_liste(repo: Path, basis: str | None = None) -> tuple[str, ...]:
+    """Konfigurierte Beleg-Ordner (``regularien.belege_ordner``, Vorgabe ``docs/verify-hard``).
+
+    Mit ``basis`` werden Basis- und Arbeitsbaum-Konfig berücksichtigt (fail-closed: ein Commit
+    kann den Beleg-Ordner nicht durch Umbenennen der Konfig aus der Prüfung herausnehmen).
+    """
+    ordner: list[str] = []
+    if basis is not None:
+        aus_basis = _ordner_aus_konfig(_konfig_aus_basis(repo, basis))
+        if aus_basis and aus_basis not in ordner:
+            ordner.append(aus_basis)
+    aus_baum = _ordner_aus_konfig(config.lade(repo))
+    if aus_baum and aus_baum not in ordner:
+        ordner.append(aus_baum)
+    if not ordner:
+        ordner.append(BELEGE_ORDNER_VORGABE)
+    return tuple(ordner)
+
+
+def ist_im_beleg_ordner(pfad: str, ordner: Sequence[str]) -> bool:
+    """True, wenn ``pfad`` unter einem der genannten Beleg-Ordner liegt."""
+    norm = _normalisiere_pfad(pfad)
+    if not norm:
+        return False
+    return any(norm == ziel or norm.startswith(f"{ziel}/") for ziel in ordner if ziel)
+
+
+def _ist_platzhalter(wert: str) -> bool:
+    """Erkennt offensichtliche Platzhalter/Schwärzungen, damit keine Fehlalarme entstehen."""
+    bereinigt = wert.strip()
+    if not bereinigt:
+        return True
+    if len(set(bereinigt.lower())) <= 2:
+        return True
+    gross = bereinigt.upper()
+    return any(wort in gross for wort in _PLATZHALTER_WOERTER)
+
+
+def pruefe_beleg_text(pfad: str, text: str) -> list[SchluesselFund]:
+    """Prüft den Text einer Beleg-Datei zeilenweise gegen ``BELEG_SCHLUESSEL_MUSTER``."""
+    norm = _normalisiere_pfad(pfad)
+    funde: list[SchluesselFund] = []
+    for nr, zeile in enumerate(text.splitlines(), start=1):
+        for regel in BELEG_SCHLUESSEL_MUSTER:
+            treffer = regel.muster.search(zeile)
+            if treffer is None:
+                continue
+            if regel.wert_gruppe > 0 and _ist_platzhalter(treffer.group(regel.wert_gruppe)):
+                continue
+            funde.append(SchluesselFund(norm, nr, regel.name, regel.beschreibung))
+            break
+    return funde
+
+
+def _lese_textdatei(datei: Path) -> str | None:
+    """Liest eine Textdatei; Binärdateien (NUL-Byte) oder fehlende Dateien ergeben ``None``."""
+    try:
+        daten = datei.read_bytes()
+    except OSError:
+        return None
+    if b"\x00" in daten[:_BINAER_PROBE_BYTES]:
+        return None
+    return daten.decode("utf-8", errors="replace")
+
+
+def _git_datei_text(repo: Path, ref_pfad: str) -> str | None:
+    """Liest einen Git-Blob (z. B. ``HEAD:pfad`` oder ``:pfad``) als Text; binär/fehlend = ``None``."""
+    try:
+        erg = subprocess.run(
+            ["git", "show", ref_pfad],
+            cwd=repo,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            check=False,
+            **prozessbaum.fensterlos(),
+        )
+    except OSError:
+        return None
+    if erg.returncode != 0 or b"\x00" in erg.stdout[:_BINAER_PROBE_BYTES]:
+        return None
+    return erg.stdout.decode("utf-8", errors="replace")
+
+
+def pruefe_beleg_dateien(
+    repo: Path,
+    pfade: Sequence[str],
+    *,
+    ordner: Sequence[str] | None = None,
+    inhalte: dict[str, str] | None = None,
+) -> BelegSchluesselErgebnis:
+    """Prüft die angegebenen Repo-Pfade, soweit sie im Beleg-Ordner liegen."""
+    ziel_ordner = tuple(ordner) if ordner is not None else belege_ordner_liste(repo)
+    norm_inhalte = {_normalisiere_pfad(k): v for k, v in inhalte.items()} if inhalte is not None else None
+    geprueft = 0
+    funde: list[SchluesselFund] = []
+    gesehen: set[str] = set()
+    for roh in pfade:
+        norm = _normalisiere_pfad(roh)
+        if norm in gesehen or not ist_im_beleg_ordner(norm, ziel_ordner):
+            continue
+        gesehen.add(norm)
+        if norm_inhalte is not None and norm in norm_inhalte:
+            text: str | None = norm_inhalte[norm]
+        else:
+            text = _lese_textdatei(repo / norm)
+        if text is None:
+            continue
+        geprueft += 1
+        funde.extend(pruefe_beleg_text(norm, text))
+    return BelegSchluesselErgebnis(
+        ok=not funde,
+        ordner=ziel_ordner,
+        dateien_geprueft=geprueft,
+        funde=tuple(funde),
+    )
+
+
+def pruefe_beleg_ordner(repo: Path, *, ordner: Sequence[str] | None = None) -> BelegSchluesselErgebnis:
+    """Prüft alle vorhandenen Dateien in den konfigurierten Beleg-Ordnern von ``repo``."""
+    ziel_ordner = tuple(ordner) if ordner is not None else belege_ordner_liste(repo)
+    pfade: list[str] = []
+    for eintrag in ziel_ordner:
+        basis_dir = repo / eintrag
+        if not basis_dir.is_dir():
+            continue
+        for datei in sorted(basis_dir.rglob("*")):
+            if datei.is_file() and ".git" not in datei.parts:
+                pfade.append(datei.relative_to(repo).as_posix())
+    return pruefe_beleg_dateien(repo, pfade, ordner=ziel_ordner)
+
+
+def pruefe_beleg_diff(repo: Path, basis: str, ziel: str | None = None) -> BelegSchluesselErgebnis:
+    """Prüft geänderte Beleg-Dateien zwischen ``basis`` und ``ziel`` (``None`` = Arbeitsbaum)."""
+    ziel_ordner = belege_ordner_liste(repo, basis)
+    pfade = geaendert_zwischen(repo, basis, ziel)
+    if not pfade:
+        return BelegSchluesselErgebnis(ok=True, ordner=ziel_ordner, dateien_geprueft=0, funde=())
+    beleg_pfade = [p for p in pfade if ist_im_beleg_ordner(p, ziel_ordner)]
+    if not beleg_pfade:
+        return BelegSchluesselErgebnis(ok=True, ordner=ziel_ordner, dateien_geprueft=0, funde=())
+    if ziel is None:
+        return pruefe_beleg_dateien(repo, beleg_pfade, ordner=ziel_ordner)
+    inhalte: dict[str, str] = {}
+    for pfad in beleg_pfade:
+        text = _git_datei_text(repo, f"{ziel}:{pfad}")
+        if text is not None:
+            inhalte[pfad] = text
+    return pruefe_beleg_dateien(repo, list(inhalte), ordner=ziel_ordner, inhalte=inhalte)
 
 
 @dataclass(frozen=True)
@@ -415,6 +714,27 @@ def stufen(repo: Path, basis: str) -> tuple[list[leiter.Stufe], str]:
             liste.append(_lint(repo, linter, dateien))
     if not liste:
         liste.append(_ausgelassen("sofort", "", "keine Code-Datei geändert"))
+    beleg_ordner = belege_ordner_liste(repo, basis)
+    beleg_pfade = [pfad for pfad in pfade if ist_im_beleg_ordner(pfad, beleg_ordner)]
+    if beleg_pfade:
+        beleg_start = time.monotonic()
+        beleg_erg = pruefe_beleg_dateien(repo, beleg_pfade, ordner=beleg_ordner)
+        beleg_dauer = round(time.monotonic() - beleg_start, 2)
+        liste.append(
+            leiter.Stufe(
+                "beleg_schluessel",
+                "",
+                True,
+                f"{beleg_erg.dateien_geprueft} Belegdatei(en) sauber"
+                if beleg_erg.ok
+                else f"{len(beleg_erg.funde)} Schlüssel-/Secret-Fund(e) im Beleg-Ordner",
+                beleg_dauer,
+                "to_spawn.pruef.sofort.pruefe_beleg_dateien",
+                "beleg_schluessel",
+                leiter.GRUEN if beleg_erg.ok else leiter.ROT,
+                "" if beleg_erg.ok else beleg_erg.bericht(),
+            )
+        )
     if any(stufe.ergebnis == leiter.ROT for stufe in liste):
         return [*liste, _ausgelassen("doku", "", ROT_HALT)], ROT_HALT
     doku_start = time.monotonic()
@@ -451,6 +771,7 @@ class Stufe0Ergebnis:
     fehler_kurz: str
     dauer_s: float
     test_schutz: test_schutz.Ergebnis | None = None
+    beleg_schluessel: BelegSchluesselErgebnis | None = None
 
     def als_dict(self) -> dict[str, Any]:
         return {
@@ -472,6 +793,7 @@ class Stufe0Ergebnis:
                 for s in self.stufen
             ],
             "test_schutz": self.test_schutz.als_dict() if self.test_schutz is not None else None,
+            "beleg_schluessel": self.beleg_schluessel.als_dict() if self.beleg_schluessel is not None else None,
         }
 
     def bericht(self) -> str:
@@ -688,6 +1010,44 @@ def _test_schutz_stufe0(
     )
 
 
+def _beleg_schluessel_stufe0(repo: Path, basis: str, ziel: str | None) -> tuple[leiter.Stufe, BelegSchluesselErgebnis]:
+    start = time.monotonic()
+    erg = pruefe_beleg_diff(repo, basis, ziel)
+    dauer = round(time.monotonic() - start, 2)
+    befehl = f"to_spawn.pruef.sofort.pruefe_beleg_diff --basis {basis}" + (f" --ziel {ziel}" if ziel else "")
+    if erg.dateien_geprueft == 0 and erg.ok:
+        return _ausgelassen("beleg_schluessel", "", "keine Belegdatei geändert", "beleg_schluessel"), erg
+    if erg.ok:
+        return (
+            leiter.Stufe(
+                "beleg_schluessel",
+                "",
+                True,
+                f"{erg.dateien_geprueft} Belegdatei(en) sauber",
+                dauer,
+                befehl,
+                "beleg_schluessel",
+                leiter.GRUEN,
+                "",
+            ),
+            erg,
+        )
+    return (
+        leiter.Stufe(
+            "beleg_schluessel",
+            "",
+            True,
+            f"{len(erg.funde)} Schlüssel-/Secret-Fund(e) im Beleg-Ordner",
+            dauer,
+            befehl,
+            "beleg_schluessel",
+            leiter.ROT,
+            erg.bericht(),
+        ),
+        erg,
+    )
+
+
 def stufe0(
     repo: Path,
     basis: str = "HEAD",
@@ -697,7 +1057,7 @@ def stufe0(
     typ_befehl: str | None = None,
     test_schutz_aktiv: bool | None = None,
 ) -> Stufe0Ergebnis:
-    """Einheitlicher Stufe-0-Ablauf (vor dem Push und in der CI): ruff, Typ-Prüfung, Test-Schutz."""
+    """Einheitlicher Stufe-0-Ablauf (vor dem Push und in der CI): ruff, Typ-Prüfung, Test-Schutz, Beleg-Sperre."""
     start = time.monotonic()
     wurzel = config.repo_wurzel(repo)
     cfg = _stufe0_konfig_sicher(
@@ -713,8 +1073,11 @@ def stufe0(
     else:
         typ_stufe = _ausgelassen("typ_pruefung", "", "Typ-Prüfung nicht konfiguriert (pruefung.typ_pruefung)")
     schutz_stufe, schutz_erg = _test_schutz_stufe0(wurzel, basis, ziel, aktiv=cfg.test_schutz)
+    beleg_stufe, beleg_erg = _beleg_schluessel_stufe0(wurzel, basis, ziel)
 
     liste = [ruff_stufe, typ_stufe, schutz_stufe]
+    if beleg_erg.dateien_geprueft > 0 or not beleg_erg.ok:
+        liste.append(beleg_stufe)
     exit_code, fehler_kurz = leiter.ergebnis(liste)
     return Stufe0Ergebnis(
         ok=exit_code == leiter.GRUEN,
@@ -723,6 +1086,7 @@ def stufe0(
         fehler_kurz=fehler_kurz,
         dauer_s=round(time.monotonic() - start, 2),
         test_schutz=schutz_erg,
+        beleg_schluessel=beleg_erg,
     )
 
 
