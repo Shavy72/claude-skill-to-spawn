@@ -166,6 +166,8 @@ STUPSER_FENSTER_S = 24 * 3600
 #: Limit-Probe (#1453, #892) höchstens einmal je so viele Sekunden je (Programm, Modell);
 #: der Zeitstempel liegt in ``stand.json`` und überlebt so den 15-min-Cron-Neustart.
 LIMIT_PROBE_ABSTAND_S = 30 * 60
+#: Takt (Sekunden) für die Auslastungszeile im Ereignis-Protokoll (#904 / App #1399).
+AUSLASTUNG_TAKT_S = 15 * 60
 
 
 def _als_zahl(wert: Any) -> float | None:
@@ -4327,6 +4329,48 @@ class Aufpasser:
                 " (trocken)" if self.e.trocken else "",
             )
 
+    def _auslastung_protokollieren(self, repos: Iterable[Path]) -> None:
+        """Schreibt im 15-Minuten-Takt eine ticketfreie Auslastungszeile ins Ereignis-Protokoll (#904)."""
+        if self.e.trocken:
+            return
+        ziele: list[Path] = []
+        gesehen_pfade: set[Path] = set()
+        kandidaten = list(repos)
+        if not kandidaten and self.e.repo is not None:
+            kandidaten = [self.e.repo]
+        for pfad in kandidaten:
+            if pfad.is_dir():
+                aufgeloest = pfad.resolve()
+                if aufgeloest not in gesehen_pfade:
+                    gesehen_pfade.add(aufgeloest)
+                    ziele.append(aufgeloest)
+        if not ziele:
+            return
+        try:
+            werte = speicher.auslastung_messen()
+        except Exception:  # Messung darf den Aufpasser-Lauf nie kippen
+            log.warning("Auslastung nicht messbar — Protokollzeile übersprungen.", exc_info=True)
+            return
+        takt_slot = int(self.jetzt // AUSLASTUNG_TAKT_S)
+        zeit_iso = datetime.fromtimestamp(self.jetzt, tz=UTC).isoformat(timespec="seconds")
+        idem = f"auslastung:aufpasser:{takt_slot}"
+        for repo in ziele:
+            try:
+                bau_log.auslastung_schreiben(
+                    repo,
+                    platte_frei_prozent=werte["platte_frei_prozent"],
+                    speicher_frei_mib=werte["speicher_frei_mib"],
+                    speicher_gesamt_mib=werte["speicher_gesamt_mib"],
+                    sessions=werte["sessions"],
+                    sessions_gesamt=werte["sessions_gesamt"],
+                    wer="aufpasser",
+                    grund="15-Minuten-Takt",
+                    zeit=zeit_iso,
+                    idempotenz_schluessel=idem,
+                )
+            except (OSError, ValueError, TimeoutError) as fehler:
+                log.warning("Auslastungszeile für %s nicht geschrieben: %s", repo, fehler)
+
     def _deploy_wache(self, repos: Iterable[Path]) -> list[str]:
         """Setzt das Deploy-Muster für diese Repos und liefert die laufenden Deploy-/Gate-Prozesse."""
         self.muster = self.deploy_muster_fuer(repos)
@@ -4364,6 +4408,7 @@ class Aufpasser:
         # eigenen Sperren je Ordner (laufender Prozess im Ordner, offenes Ticket, 24 h).
         self._hausmeister_lauf()
         self._wecker_lauf()
+        self._auslastung_protokollieren([repo for _, _, _, repo in gesehen])
         # Vor sitzung_pruefen: frisch gestartete oder angestupste Sessions sehen so
         # gleich den neuen Stand samt Hooks; die Deploy/Gate-Sperre oben gilt schon.
         self.klone_nachziehen()
