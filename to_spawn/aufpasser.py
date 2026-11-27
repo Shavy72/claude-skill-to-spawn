@@ -80,6 +80,7 @@ import argparse
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import shlex
@@ -151,9 +152,23 @@ STUPSER_FENSTER_S = 24 * 3600
 LIMIT_PROBE_ABSTAND_S = 30 * 60
 
 
+def _als_zahl(wert: Any) -> float | None:
+    """Konvertiert ``wert`` in eine endliche Gleitkommazahl (``bool`` zählt nicht)."""
+    if isinstance(wert, bool):
+        return None
+    try:
+        zahl = float(wert)
+    except (TypeError, ValueError):
+        return None
+    return zahl if math.isfinite(zahl) else None
+
+
 def _probe_gueltig(eintrag: dict[str, Any], jetzt: float) -> bool:
     """Probe-Eintrag zählt nur mit Alter in [0, Abstand) — Zukunftszeit = unbekannt."""
-    return 0 <= jetzt - float(eintrag.get("zeit", 0)) < LIMIT_PROBE_ABSTAND_S
+    zeit = _als_zahl(eintrag.get("zeit", 0))
+    if zeit is None:
+        return False
+    return 0 <= jetzt - zeit < LIMIT_PROBE_ABSTAND_S
 
 
 #: Meldungen ohne Eingriff kommen je Fenster/Ereignis nur einmal am Tag ins Issue;
@@ -1780,16 +1795,83 @@ class Aufpasser:
             roh = json.loads(datei.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return Stand()
-        try:
-            platz_zuletzt = float(roh.get("platz_zuletzt") or 0.0)
-        except (TypeError, ValueError):
+        if not isinstance(roh, dict):
+            log.warning("stand.json: Wurzelobjekt ist kein Dict (%s) — starte leer", datei)
+            return Stand()
+        verworfen = 0
+
+        platz_roh = roh.get("platz_zuletzt")
+        if platz_roh is None:
             platz_zuletzt = 0.0
+        else:
+            zahl = _als_zahl(platz_roh)
+            if zahl is None:
+                platz_zuletzt = 0.0
+                verworfen += 1
+            else:
+                platz_zuletzt = zahl
+
+        fenster: dict[str, dict[str, Any]] = {}
+        fenster_roh = roh.get("fenster")
+        if isinstance(fenster_roh, dict):
+            for k, v in fenster_roh.items():
+                if isinstance(k, str) and isinstance(v, dict):
+                    fenster[k] = v
+                else:
+                    verworfen += 1
+        elif fenster_roh is not None:
+            verworfen += 1
+
+        meldungen: dict[str, float] = {}
+        meldungen_roh = roh.get("meldungen")
+        if isinstance(meldungen_roh, dict):
+            for k, v in meldungen_roh.items():
+                zahl = _als_zahl(v)
+                if isinstance(k, str) and zahl is not None:
+                    meldungen[k] = zahl
+                else:
+                    verworfen += 1
+        elif meldungen_roh is not None:
+            verworfen += 1
+
+        starts: dict[str, list[float]] = {}
+        starts_roh = roh.get("starts")
+        if isinstance(starts_roh, dict):
+            for k, v in starts_roh.items():
+                if not isinstance(k, str) or not isinstance(v, list):
+                    verworfen += 1
+                    continue
+                zeiten: list[float] = []
+                for t in v:
+                    zahl = _als_zahl(t)
+                    if zahl is None:
+                        verworfen += 1
+                    else:
+                        zeiten.append(zahl)
+                if zeiten:
+                    starts[k] = zeiten
+        elif starts_roh is not None:
+            verworfen += 1
+
+        limit_proben: dict[str, dict[str, Any]] = {}
+        proben_roh = roh.get("limit_proben")
+        if isinstance(proben_roh, dict):
+            for k, v in proben_roh.items():
+                if isinstance(k, str) and isinstance(v, dict) and _als_zahl(v.get("zeit")) is not None:
+                    limit_proben[k] = v
+                else:
+                    verworfen += 1
+        elif proben_roh is not None:
+            verworfen += 1
+
+        if verworfen:
+            log.warning("stand.json: %d beschädigte Einträge verworfen (%s)", verworfen, datei)
         return Stand(
-            fenster=dict(roh.get("fenster") or {}),
-            meldungen=dict(roh.get("meldungen") or {}),
-            starts={k: [float(t) for t in v] for k, v in (roh.get("starts") or {}).items()},
+            fenster=fenster,
+            meldungen=meldungen,
+            starts=starts,
             platz_zuletzt=platz_zuletzt,
-            limit_proben=dict(roh.get("limit_proben") or {}),
+            limit_proben=limit_proben,
         )
 
     def _stand_schreiben(self) -> None:
