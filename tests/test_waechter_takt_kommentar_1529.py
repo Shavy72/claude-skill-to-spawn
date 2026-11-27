@@ -20,6 +20,7 @@ def _cli(argv: list[str]) -> int:
     ap = cli_parser.baue_parser()
     return cli_befehle.verteilen(ap, ap.parse_args(argv))
 
+
 GH_REPO = "test/wegwerf"
 
 
@@ -67,9 +68,7 @@ def test_cli_kommentiere_laeuft_durch_befund_kommentiere_mit_kuerzung(
     assert "#42 kommentiert" in capsys.readouterr().out
 
 
-def test_cli_kommentiere_mit_reopen_kuerzt_ebenfalls(
-    fake_gh: FakeGh, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cli_kommentiere_mit_reopen_kuerzt_ebenfalls(fake_gh: FakeGh, capsys: pytest.CaptureFixture[str]) -> None:
     text = "Aufseher: Beleg fehlt\nDetail 2\nDetail 3"
     code = _cli(["kommentiere", "42", text, "--reopen", "--gh-repo", GH_REPO])
     assert code == 0
