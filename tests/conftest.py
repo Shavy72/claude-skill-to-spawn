@@ -822,14 +822,25 @@ def test_heim(
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
 
     echte_claude_json = (_ECHTES_HEIM / ".claude.json").resolve()
+    echte_agy_settings = (_ECHTES_HEIM / vertrauen.AGY_SETTINGS_REL).resolve()
     echt_sicherstellen = vertrauen.sicherstellen
 
     @functools.wraps(echt_sicherstellen)
-    def _sicherstellen_ohne_echtes_heim(*pfade: Path, claude_json: Path | None = None) -> list[str]:
-        ziel = (claude_json or vertrauen.claude_json_pfad()).expanduser().resolve()
-        if ziel == echte_claude_json:
-            raise PermissionError(f"Test darf die echte Nutzer-Konfiguration nicht beschreiben: {ziel} (#232)")
-        return echt_sicherstellen(*pfade, claude_json=claude_json)
+    def _sicherstellen_ohne_echtes_heim(
+        *pfade: Path,
+        claude_json: Path | None = None,
+        runner: str = "claude",
+        settings_json: Path | None = None,
+    ) -> list[str]:
+        if runner == "agy":
+            ziel = (settings_json or vertrauen.agy_settings_pfad()).expanduser().resolve()
+            if ziel == echte_agy_settings:
+                raise PermissionError(f"Test darf die echte Nutzer-Konfiguration nicht beschreiben: {ziel} (#232)")
+        else:
+            ziel = (claude_json or vertrauen.claude_json_pfad()).expanduser().resolve()
+            if ziel == echte_claude_json:
+                raise PermissionError(f"Test darf die echte Nutzer-Konfiguration nicht beschreiben: {ziel} (#232)")
+        return echt_sicherstellen(*pfade, claude_json=claude_json, runner=runner, settings_json=settings_json)
 
     monkeypatch.setattr(vertrauen, "sicherstellen", _sicherstellen_ohne_echtes_heim)
     return heim

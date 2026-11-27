@@ -202,10 +202,17 @@ def _issue_aus_stand(stand: dict[str, Any], nummer: int) -> dict[str, Any]:
     return next(i for i in stand["issues"] if int(i["number"]) == nummer)
 
 
-def _installiere_test_bau(repo: Path, weck_protokoll: Path, *, halte_sekunden: float = 0.0) -> None:
+def _installiere_test_bau(
+    repo: Path,
+    weck_protokoll: Path,
+    *,
+    halte_sekunden: float = 0.0,
+    stop_datei: Path | None = None,
+) -> None:
     """Legt eine ``scripts/bau.py``-Test-Attrappe im Repo an, die durch ``startstelle.betreten`` geht."""
     skript = repo / "scripts" / "bau.py"
     skript.parent.mkdir(parents=True, exist_ok=True)
+    stop_pfad = str(stop_datei) if stop_datei is not None else ""
     skript.write_text(
         f"""from __future__ import annotations
 import json, os, sys, time
@@ -220,7 +227,12 @@ if not entsch.erlaubt:
     sys.exit(entsch.exit_code)
 with Path({str(weck_protokoll)!r}).open("a", encoding="utf-8") as fh:
     fh.write(json.dumps({{"ticket": ticket, "auftrag": os.environ.get("BAU_AUFTRAG", "")}}) + "\\n")
-if {halte_sekunden!r} > 0:
+stop_pfad = {stop_pfad!r}
+if stop_pfad:
+    frist = time.monotonic() + max({halte_sekunden!r}, 20.0)
+    while not Path(stop_pfad).exists() and time.monotonic() < frist:
+        time.sleep(0.05)
+elif {halte_sekunden!r} > 0:
     time.sleep({halte_sekunden!r})
 """,
         encoding="utf-8",
@@ -381,38 +393,42 @@ def test_wiedereroeffnetes_ticket_weckt_einmal_ueber_startstelle_auch_gleichzeit
     welt["zustand"].write_text(json.dumps(stand, ensure_ascii=False, indent=2), encoding="utf-8")
 
     weck_log = tmp_path / "geweckt.jsonl"
-    _installiere_test_bau(welt["repo"], weck_log, halte_sekunden=2.5)
+    stop_datei = tmp_path / "stop_bau"
+    _installiere_test_bau(welt["repo"], weck_log, halte_sekunden=20.0, stop_datei=stop_datei)
     # Ohne tmux starten, damit direkt scripts/bau.py über startstelle läuft (im Test-Attrappen-Ordner)
     welt["env"]["TO_SPAWN_TMUX"] = str(tmp_path / "kein-tmux-vorhanden")
     welt["env"]["TO_SPAWN_TEST_BIN"] = str(welt["repo"] / "scripts")
 
-    # Zwei gleichzeitige Taktgeber-Prozesse laufen parallel gegen dasselbe wiedereröffnete Ticket
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-        f1 = pool.submit(_taktgeber_cli, welt)
-        f2 = pool.submit(_taktgeber_cli, welt)
-        r1, r2 = f1.result(), f2.result()
+    try:
+        # Zwei gleichzeitige Taktgeber-Prozesse laufen parallel gegen dasselbe wiedereröffnete Ticket
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            f1 = pool.submit(_taktgeber_cli, welt)
+            f2 = pool.submit(_taktgeber_cli, welt)
+            r1, r2 = f1.result(), f2.result()
 
-    assert r1.returncode == 0, r1.stdout + r1.stderr
-    assert r2.returncode == 0, r2.stdout + r2.stderr
+        assert r1.returncode == 0, r1.stdout + r1.stderr
+        assert r2.returncode == 0, r2.stdout + r2.stderr
 
-    # Kurz warten, bis das gestartete bau.py seinen Eintrag geschrieben hat
-    for _ in range(40):
-        if weck_log.is_file() and weck_log.read_text(encoding="utf-8").strip():
-            break
-        time.sleep(0.1)
+        # Kurz warten, bis das gestartete bau.py seinen Eintrag geschrieben hat
+        for _ in range(80):
+            if weck_log.is_file() and weck_log.read_text(encoding="utf-8").strip():
+                break
+            time.sleep(0.1)
 
-    # Ticket blieb offen (nicht durch alten Grün-Kommentar geschlossen) und genau 1 Weck-Aufruf!
-    nachher = _gh_stand(welt)
-    assert _issue_aus_stand(nachher, 530)["state"] == "open"
-    weck_eintraege = [json.loads(z) for z in weck_log.read_text(encoding="utf-8").splitlines() if z.strip()]
-    assert len(weck_eintraege) == 1, weck_eintraege
-    assert weck_eintraege[0]["ticket"] == "530"
+        # Ticket blieb offen (nicht durch alten Grün-Kommentar geschlossen) und genau 1 Weck-Aufruf!
+        nachher = _gh_stand(welt)
+        assert _issue_aus_stand(nachher, 530)["state"] == "open"
+        weck_eintraege = [json.loads(z) for z in weck_log.read_text(encoding="utf-8").splitlines() if z.strip()]
+        assert len(weck_eintraege) == 1, weck_eintraege
+        assert weck_eintraege[0]["ticket"] == "530"
 
-    # Auch ein sofortiger Folgelauf während bau.py noch läuft weckt nicht erneut (Start-Sperre aktiv)
-    r3 = _taktgeber_cli(welt)
-    assert r3.returncode == 0, r3.stdout + r3.stderr
-    weck_eintraege_nach3 = [json.loads(z) for z in weck_log.read_text(encoding="utf-8").splitlines() if z.strip()]
-    assert len(weck_eintraege_nach3) == 1, weck_eintraege_nach3
+        # Auch ein sofortiger Folgelauf während bau.py noch läuft weckt nicht erneut (Start-Sperre aktiv)
+        r3 = _taktgeber_cli(welt)
+        assert r3.returncode == 0, r3.stdout + r3.stderr
+        weck_eintraege_nach3 = [json.loads(z) for z in weck_log.read_text(encoding="utf-8").splitlines() if z.strip()]
+        assert len(weck_eintraege_nach3) == 1, weck_eintraege_nach3
+    finally:
+        stop_datei.write_text("stop\n", encoding="utf-8")
 
     # Handlung steht über bau_log.schreibe() im Protokoll
     zeilen = bau_log.lese(welt["repo"], 530)
@@ -530,6 +546,48 @@ def test_windows_prozess_optionen_ohne_detached_process(monkeypatch: pytest.Monk
     assert flags & 0x08000000
     assert flags & 0x00000200
     assert not (flags & 0x00000008), "DETACHED_PROCESS ist unter Windows verboten"
+
+
+def test_windows_wecke_ticket_startet_bau_direkt_fensterlos_ohne_wt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unter Windows startet ``wecke_ticket`` fensterlos direkt ``bau.py`` (kein ``wt``-Fenster, Fix-Runde 2)."""
+    from to_spawn import starter, taktgeber
+
+    repo = tmp_path / "repo"
+    skript = repo / "scripts" / "bau.py"
+    skript.parent.mkdir(parents=True)
+    skript.write_text("# test-bau\n", encoding="utf-8")
+
+    monkeypatch.setenv("TO_SPAWN_START_SPERREN", str(tmp_path / "sperren"))
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False)
+    monkeypatch.setattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200, raising=False)
+
+    gestartet_cmds: list[tuple[list[str], dict[str, Any]]] = []
+
+    class _FakeProc:
+        def poll(self) -> int:
+            return 0
+
+    def _fake_starte(cmd: list[str], **kwargs: Any) -> _FakeProc:
+        gestartet_cmds.append((list(cmd), dict(kwargs)))
+        return _FakeProc()
+
+    monkeypatch.setattr(starter, "starte", _fake_starte)
+
+    ok, _meldung = taktgeber.wecke_ticket(repo, 293, 530, "test-org/beispiel-app", "Beleg fehlt")
+    assert ok is True
+    assert len(gestartet_cmds) == 1
+    cmd, kwargs = gestartet_cmds[0]
+    assert cmd[0] == sys.executable, f"Windows-Wecken muss direkt Python/bau.py starten, nicht {cmd[0]!r}"
+    assert Path(cmd[1]) == skript
+    assert cmd[2:] == ["530", "--sofort"]
+    assert "wt" not in Path(cmd[0]).name.lower()
+    flags = int(kwargs.get("creationflags") or 0)
+    assert flags & 0x08000000
+    assert flags & 0x00000200
+    assert not (flags & 0x00000008)
 
 
 # --- AC 9 & 10: Aufseher-Anleitung (Wache-SOP) & ADR-0008-Nachtrag ---

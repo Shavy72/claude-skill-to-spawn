@@ -46,7 +46,6 @@ from . import (
     gh,
     manifest,
     prozessbaum,
-    spawn,
     sperre,
     starter,
     startstelle,
@@ -377,7 +376,7 @@ def wecke_ticket(
         return True, f"#{ticket} [Probe] würde Bau-Session über Start-Stelle wecken"
 
     if sys.platform == "win32":
-        befehl = spawn.wt_tab_befehl(repo, ticket, auftrag)
+        befehl = capo.folge_befehl(repo, spec, ticket, None, auftrag)
         umgebung = capo.folge_umgebung(auftrag)
         ueber_tmux = False
     else:

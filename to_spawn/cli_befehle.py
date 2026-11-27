@@ -357,6 +357,26 @@ def _befund(args: argparse.Namespace) -> int:
     return 0 if ergebnis.ok else 1
 
 
+def _kommentiere(args: argparse.Namespace) -> int:
+    """Unterbefehl ``kommentiere`` (#899): Aufseher-Kommentar zwingend durch ``befund.kommentiere``."""
+    repo = config.repo_wurzel(_repo_aus_umgebung())
+    gh_repo = args.gh_repo or gh.repo_aus_origin(repo)
+    if not gh_repo:
+        print("FEHLER: kein GitHub-Repo erkannt (origin fehlt oder zeigt nicht auf github.com)", file=sys.stderr)
+        return 2
+    ok = (
+        befund.kommentiere(args.ticket, gh_repo, args.text, befehl="reopen")
+        if args.reopen
+        else befund.kommentiere(args.ticket, gh_repo, args.text)
+    )
+    if not ok:
+        print(f"FEHLER: Kommentar auf #{args.ticket} gescheitert", file=sys.stderr)
+        return 1
+    aktion = "wieder geöffnet + kommentiert" if args.reopen else "kommentiert"
+    print(f"#{args.ticket} {aktion}")
+    return 0
+
+
 def _spec_schliessen(args: argparse.Namespace) -> int:
     """Unterbefehl ``spec-schliessen`` (E2-4): schließt die Spec nur ohne offene Folge-Tickets."""
     repo = config.repo_wurzel(_repo_aus_umgebung())
@@ -592,6 +612,8 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         return _eintrag(args)
     if args.befehl == "befund":
         return _befund(args)
+    if args.befehl == "kommentiere":
+        return _kommentiere(args)
     if args.befehl == "spec-schliessen":
         return _spec_schliessen(args)
     if args.befehl == "spec-pruefen":

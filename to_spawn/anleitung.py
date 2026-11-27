@@ -186,8 +186,8 @@ ABSCHLUSS_ANWEISUNG = (
     "Exit 0 → live; Exit 1 → kein Live, Grund aus der Zeile beheben und erneut rufen; "
     "Exit 2 → `live.befehl` fehlt, Komplett-Prüfung grün, Live-Schritt nach Repo-Ablauf von Hand. "
     "Ohne ausdrückliches Wort des Nutzers geht nichts live. "
-    "Meldet der Nutzer nach dem Abnahme-Paket Nachbesserungen (Kommentar im Spec-Issue), je Punkt ein Folge-Ticket an derselben Spec über "
-    '`python {SKILL}/skripte/abschluss_paket.py nachbesserung {S} --punkt "<Punkt>"` anlegen (Manifest ergänzt, Kette baut weiter); '
+    "Meldet der Nutzer nach dem Abnahme-Paket Nachbesserungen (Kommentar im Spec-Issue), je Punkt ein Folge-Ticket an derselben Spec ausschließlich über "
+    '`python {SKILL}/skripte/abschluss_paket.py nachbesserung {S} --punkt "<Punkt>"` anlegen (nie über `befund --stufe gelb`; Manifest ergänzt, Kette baut weiter); '
     "sind die Folge-Tickets fertig, läuft der Abnahme-Abschluss erneut (neue Rundschau, neue Selbstprüfung, `thermo_lauf.py live-bereit plan {S} --neu`, "
     "`abschluss_paket.py ablegen {S} --stand abnahme …` → Paket trägt „Runde 2“ im Titel; keine zweite Mail). "
     "Nach dem Live-Deploy dasselbe einmal mit `--stand live` (`abschluss_paket.py ablegen {S} --stand live …` + `abschluss_paket.py nachsehen {S} --stand live`); "
