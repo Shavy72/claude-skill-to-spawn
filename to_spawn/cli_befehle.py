@@ -608,6 +608,8 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         return hooks.hook_subagent_stop()
     if args.befehl == "hook-spec-sperre":
         return hooks.hook_spec_sperre()
+    if args.befehl == "hook-push-pruefer":
+        return hooks.hook_push_pruefer()
     if args.befehl == "hook-ja-sperre":
         return hooks.hook_ja_sperre()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
