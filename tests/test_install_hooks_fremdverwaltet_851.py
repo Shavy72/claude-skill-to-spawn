@@ -75,14 +75,12 @@ def _ausfuehrbar(pfad: Path, inhalt: str) -> None:
     pfad.chmod(pfad.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
-def test_review_hook_ohne_hook_installiert_nur_werkzeug(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_review_hook_ohne_hook_installiert_nur_werkzeug(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``--ohne-hook`` lässt ``~/.claude/hooks/review`` unberührt und spielt nur ``~/.claude/review`` ein."""
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     hooks = tmp_path / ".claude" / "hooks"
     hooks.mkdir(parents=True)
-    (hooks / "bestehend.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+    (hooks / "bestehend.sh").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
 
     code = review_hook.main(["--klon", str(SKILL), "--ohne-hook"])
     assert code == 0
@@ -97,7 +95,7 @@ def test_root_verwalteter_hooks_ordner_mit_dienst_wird_uebersprungen(tmp_path: P
     hooks = tmp_path / ".claude" / "hooks"
     hooks.mkdir(parents=True)
     bestehend = hooks / "fremd.sh"
-    bestehend.write_text("#!/bin/sh\n# von claude-config\n", encoding="utf-8")
+    bestehend.write_text("#!/usr/bin/env bash\n# von claude-config\n", encoding="utf-8")
 
     dienst = tmp_path / "claude-config-hooks.service"
     dienst.write_text(
@@ -136,7 +134,7 @@ exec "{echtes_stat}" "$@"
     assert (tmp_path / ".claude" / "CLAUDE.md").is_file()
     assert (tmp_path / ".claude" / "review" / "rot_probe.py").is_file()
     assert not (hooks / "review").exists()
-    assert bestehend.read_text(encoding="utf-8") == "#!/bin/sh\n# von claude-config\n"
+    assert bestehend.read_text(encoding="utf-8") == "#!/usr/bin/env bash\n# von claude-config\n"
 
 
 @NUR_UNIX
