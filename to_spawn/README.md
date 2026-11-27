@@ -269,8 +269,13 @@ von `max_sessions`, #284), insgesamt (still + arbeitend) 24 je 16 GB. Ohne Sitzu
 (20 s Pause zwischen zwei Fenster-Starts, `to_spawn.py speicher --staffel`). Messung
 nicht verfügbar oder `/proc` unlesbar = kein Urteil = frei. Test-Tür: `TO_SPAWN_SPEICHER_MEMINFO` /
 `TO_SPAWN_SPEICHER_PROC` zeigen auf Attrappen (die Suite setzt sie in `conftest.py` auf
-„immer frei“). Das Nest legt dazu Swap in RAM-Größe (mind. 8 GiB) und den tmux-Server als
-`tmux-bau.service` (OOMScoreAdjust=-900, `exit-empty off`) an — Abschnitt 5b in `nest_server.sh`.
+„immer frei“). Das Nest legt dazu Swap (4 GiB, Lehre #887 / App #1184), `tmux-bau.service`
+und `ssh.service` mit `OOMScoreAdjust=-900`, getrennte cgroup-Slices (`bau-sessions.slice`
+mit `MemoryHigh=10G`/`MemoryMax=12G` + `systemd-oomd` vs. `bau-gate.slice` mit `MemoryMax=6G`)
+sowie `bau-wiederaufnahme.service` (`to_spawn/wiederaufnahme.py`) an — Abschnitt 5b in
+`nest_server.sh` (Details & Abnahme-Messprotokoll: `docs/BAU_SERVER_SPEICHERSCHUTZ.md`).
+Bau-Sessions laufen auf Linux über `speicher.slice_praefix` in `bau-sessions.slice` mit
+`choom -n 300` (einmaliger Rückfall ohne Slice bei sofortigem Fehlstart).
 
 ## Test
 

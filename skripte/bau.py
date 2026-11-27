@@ -132,6 +132,9 @@ FRAGE_SPERRE_BEFEHL = "node ~/.claude/hooks/smart-zone/staffel/frage-sperre.mjs"
 #: CLI des Skills (Bau-Log-Hooks #204, Umzug-Anfrage #212) — dieselbe Skill-Wurzel wie oben in sys.path.
 TO_SPAWN_CLI = Path(_SKILL) / "to_spawn.py"
 STAFFEL_MAX_DEFAULT = 8
+#: Endet ein Start in der Bau-Slice schneller mit Exit ≠ 0, gilt der Slice-Start als
+#: gescheitert (#887 / App #1184) — dann genau einmal ohne Slice-Präfix.
+SLICE_FEHLSTART_S = 5.0
 #: Werkzeug-Rechte der Probesitz-Wegwerf-Session (#214): nur git, Ordner anlegen, Dateien.
 PROBESITZ_RECHTE = ("Bash(git *)", "Bash(mkdir *)", "Write", "Edit", "Read")
 #: Auftrag einer Runde (#285) ist ein Aufseher-Kommentar, kein Dokument.
@@ -1323,7 +1326,14 @@ def main() -> int:
             werkzeug.prompt_setzen(cmd, runner, aktueller_prompt, hat_prompt=mit_prompt, interaktiv=not args.probesitz)
             mit_prompt = True
         (out / f"prompt-runde{runde}.txt").write_text(aktueller_prompt, encoding="utf-8")
-        code, umzug_daten = starte_session(cmd, umzug_datei)
+        slice_woerter = speicher.slice_praefix(konfig, f"bau-{ticket}")
+        beginn = time.monotonic()
+        code, umzug_daten = starte_session(slice_woerter + cmd, umzug_datei)
+        # ponytail: „sofort gescheitert“ = Exit ≠ 0 binnen SLICE_FEHLSTART_S; Upgrade-Pfad:
+        # systemd-run-Fehler gezielt am stderr erkennen.
+        if slice_woerter and umzug_daten is None and code != 0 and time.monotonic() - beginn < SLICE_FEHLSTART_S:
+            log.warning("Start in der Bau-Slice scheiterte sofort (Exit %s) — einmal ohne Slice.", code)
+            code, umzug_daten = starte_session(cmd, umzug_datei)
         if umzug_daten is not None:
             # Kein Staffel-Neustart: die Session läuft jetzt auf dem Server weiter.
             staffel_datei.unlink(missing_ok=True)

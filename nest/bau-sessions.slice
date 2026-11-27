@@ -1,0 +1,17 @@
+# Gemeinsamer cgroup-Speicherdeckel für alle Bau-Sessions (#887 / App #1184).
+# Ziel: Die Summe aller Bau-Sessions und ihrer Testläufe darf sshd, tmux, Aufseher
+# und Deploy-Gate nie einfrieren. Bei Speicherdruck greift systemd-oomd gezielt
+# nur in dieser Slice (MemoryHigh=10G als Früh-Bremse, MemoryMax=12G als Deckel).
+# Einrichten (automatisch über nest/nest_server.sh Abschnitt 5b oder von Hand):
+#   mkdir -p ~/.config/systemd/user
+#   cp nest/bau-sessions.slice ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+[Unit]
+Description=to-spawn: Bau-Sessions-Slice mit Speicherdeckel (#887)
+
+[Slice]
+MemoryAccounting=yes
+MemoryHigh=10G
+MemoryMax=12G
+ManagedOOMMemoryPressure=kill
+ManagedOOMMemoryPressureLimit=60%

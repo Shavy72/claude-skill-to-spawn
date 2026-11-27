@@ -85,7 +85,7 @@ Schritte:
    3. Node 22
    4. GitHub CLI (gh)
    5. tmux.conf + .bashrc (REPO=$ZIEL, BAU_WT_DIR=$WT_DIR, bau/aufseher/wache/sessions)
-  5b. Swap (RAM-Größe, mind. 8 GiB) + tmux-Server als tmux-bau.service (OOMScoreAdjust=-900)
+  5b. Swap (4 GiB), tmux-bau.service + ssh OOMScoreAdjust=-900, cgroup-Slices (bau-sessions.slice vs. bau-gate.slice) + systemd-oomd + bau-wiederaufnahme.service
    6. Zugangsdaten aus $STAGE (Claude, gh, bws-Token)
    7. ~/.claude aus $STAGE ergänzen (ohne Löschen), Skill to-spawn nach $SKILL_NUTZER
    8. Claude Code + uv
@@ -257,20 +257,26 @@ fi
 chown "$NUTZER:$NUTZER" "$NUTZER_HOME/.bashrc"
 ok "tmux.conf + .bashrc (bau/aufseher/wache/sessions, cd ins Repo)"
 
-# ---------------------------------------------------------------- 5b. Swap + tmux als System-Dienst
-# Lehre aus dem OOM-Absturz 21.09. (#257 Paket B): 16 GB ohne Swap, 12 Claude-Sessions,
-# der Kernel schoss den tmux-Server ab und alle Sessions waren weg. Darum:
-# (a) Swap in RAM-Größe (mindestens 8 GiB), (b) der tmux-Server läuft als
-# systemd-Dienst mit OOMScoreAdjust=-900 — der Kernel nimmt ihn als Letztes.
-# OOM-Absturz 26.09.: ein pytest-Kind wurde gekillt, und systemd stoppte mit dem
-# Standard OOMPolicy=stop den ganzen Dienst samt aller Sessions. Darum
-# OOMPolicy=continue: nur der Übeltäter stirbt.
-# Idempotent: vorhandener Swap bleibt, vorhandene Unit wird nur nachgezogen.
+# ---------------------------------------------------------------- 5b. Swap + OOM-/cgroup-Schutz + Wiederaufnahme
+# Lehre aus den OOM-Abstürzen 21.09., 26.09. (#257) und 11.11. (#887 / App #1184):
+# (a) Swap fest auf 4 GiB statt 16 GiB (16 GiB Swap führt bei Überlast zu minutenlangem
+#     Thrashing, in dem weder SSH noch Staging antworten; 4 GiB puffert kurz und löst schnell).
+# (b) Der tmux-Server läuft als tmux-bau.service mit OOMScoreAdjust=-900 und OOMPolicy=continue,
+#     und ssh.service erhält ebenfalls OOMScoreAdjust=-900 — beides stirbt als Letztes.
+# (c) cgroup-Delegation + systemd-oomd + getrennte User-Slices: bau-sessions.slice (10G/12G,
+#     ManagedOOMMemoryPressure=kill) vs. bau-gate.slice (6G).
+# (d) bau-wiederaufnahme.service + loginctl enable-linger starten offene Specs nach Neustart.
+# Idempotent: vorhandener Swap bleibt (Hinweis bei > 4 GiB), Units werden nachgezogen.
 
 # (a) Swap: /proc/swaps hat nur die Kopfzeile → kein Swap aktiv.
+SWAP_GIB=4
 swap_aktiv="$(awk 'NR>1' /proc/swaps 2>/dev/null || true)"
 if [ -n "$swap_aktiv" ]; then
-  ok "Swap vorhanden: $(awk 'NR>1 {print $1}' /proc/swaps | tr '\n' ' ')"
+  swap_kib="$(awk 'NR>1 {s+=$3} END {print s+0}' /proc/swaps 2>/dev/null || echo 0)"
+  ok "Swap vorhanden: $(awk 'NR>1 {print $1}' /proc/swaps | tr '\n' ' ')($(( swap_kib / 1024 )) MiB)"
+  if [ "$swap_kib" -gt $(( (SWAP_GIB + 1) * 1048576 )) ]; then
+    info "Hinweis: aktiver Swap ist größer als ${SWAP_GIB} GiB — sichere Verkleinerung auf ${SWAP_GIB} GiB siehe docs/BAU_SERVER_SPEICHERSCHUTZ.md"
+  fi
 elif [ -f /swapfile ]; then
   # Datei da, aber nicht aktiv (z. B. Neustart ohne fstab-Zeile): nur einschalten.
   if swapon /swapfile 2>/dev/null; then
@@ -279,12 +285,9 @@ elif [ -f /swapfile ]; then
     warn "swapon /swapfile fehlgeschlagen"
   fi
 else
-  ram_kib="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)"
-  swap_gib=$(( (ram_kib + 1048575) / 1048576 ))   # aufgerundet auf ganze GiB
-  if [ "$swap_gib" -lt 8 ]; then swap_gib=8; fi
-  info "Swap anlegen: /swapfile mit ${swap_gib} GiB (RAM $(( ram_kib / 1024 )) MiB)"
-  if fallocate -l "${swap_gib}G" /swapfile && chmod 600 /swapfile && mkswap -q /swapfile && swapon /swapfile; then
-    ok "Swap /swapfile (${swap_gib} GiB) aktiv"
+  info "Swap anlegen: /swapfile mit ${SWAP_GIB} GiB (Lehre #887: kurz puffern statt Thrashing)"
+  if fallocate -l "${SWAP_GIB}G" /swapfile && chmod 600 /swapfile && mkswap -q /swapfile && swapon /swapfile; then
+    ok "Swap /swapfile (${SWAP_GIB} GiB) aktiv"
   else
     warn "Swap /swapfile konnte nicht angelegt werden (fallocate/mkswap/swapon)"
     rm -f /swapfile
@@ -362,6 +365,62 @@ if command -v systemctl >/dev/null 2>&1; then
   fi
 else
   warn "systemctl fehlt — tmux-bau.service nur geschrieben ($TMUX_UNIT)"
+fi
+
+# (d) SSH-OOM-Schutz (#887 / App #1184): sshd stirbt als Letztes.
+install -d -m 755 /etc/systemd/system/ssh.service.d
+cat > /etc/systemd/system/ssh.service.d/oom.conf <<'EOF'
+[Service]
+OOMScoreAdjust=-900
+EOF
+ok "ssh.service: OOMScoreAdjust=-900 gesetzt (/etc/systemd/system/ssh.service.d/oom.conf)"
+
+# (e) cgroup-Delegation + Bau-/Gate-Slices + systemd-oomd + bau-wiederaufnahme.service (#887)
+install -d -m 755 /etc/systemd/system/user@.service.d
+cat > /etc/systemd/system/user@.service.d/delegate.conf <<'EOF'
+[Service]
+Delegate=cpu cpuset io memory pids
+EOF
+install -d -m 755 /etc/systemd/oomd.conf.d
+cat > /etc/systemd/oomd.conf.d/bau.conf <<'EOF'
+[OOM]
+DefaultMemoryPressureDurationSec=20s
+EOF
+if ! dpkg -s systemd-oomd >/dev/null 2>&1; then
+  apt-get install -y -qq systemd-oomd >/dev/null 2>&1 \
+    || warn "systemd-oomd konnte nicht per apt installiert werden"
+fi
+USER_SYSTEMD="$NUTZER_HOME/.config/systemd/user"
+install -d -m 755 "$USER_SYSTEMD" "$USER_SYSTEMD/default.target.wants"
+for unit_datei in bau-sessions.slice bau-gate.slice bau-wiederaufnahme.service; do
+  if [ -f "$SKILL_DIR/nest/$unit_datei" ]; then
+    install -m 644 "$SKILL_DIR/nest/$unit_datei" "$USER_SYSTEMD/$unit_datei"
+  else
+    warn "Nest-Unit fehlt: $SKILL_DIR/nest/$unit_datei"
+  fi
+done
+if [ -f "$USER_SYSTEMD/bau-wiederaufnahme.service" ]; then
+  ln -sfn "../bau-wiederaufnahme.service" "$USER_SYSTEMD/default.target.wants/bau-wiederaufnahme.service"
+fi
+chown -R "$NUTZER:$NUTZER" "$NUTZER_HOME/.config/systemd"
+if command -v loginctl >/dev/null 2>&1; then
+  loginctl enable-linger "$NUTZER" >/dev/null 2>&1 \
+    || warn "loginctl enable-linger $NUTZER fehlgeschlagen"
+fi
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  if systemctl list-unit-files systemd-oomd.service >/dev/null 2>&1; then
+    systemctl enable --now systemd-oomd.service >/dev/null 2>&1 \
+      && ok "systemd-oomd aktiv (bau-sessions.slice vs. bau-gate.slice)" \
+      || warn "systemd-oomd.service konnte nicht aktiviert werden"
+  fi
+  NUTZER_UID="$(id -u "$NUTZER")"
+  if [ -S "/run/user/$NUTZER_UID/bus" ]; then
+    asnutzer "XDG_RUNTIME_DIR=/run/user/$NUTZER_UID DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$NUTZER_UID/bus systemctl --user daemon-reload" >/dev/null 2>&1 || true
+  fi
+  ok "User-Units installiert: bau-sessions.slice, bau-gate.slice, bau-wiederaufnahme.service (enable-linger)"
+else
+  warn "systemctl fehlt — cgroup-Slices, systemd-oomd und bau-wiederaufnahme.service nur geschrieben"
 fi
 
 # ---------------------------------------------------------------- 6. Zugangsdaten aus der Staging-Kiste
