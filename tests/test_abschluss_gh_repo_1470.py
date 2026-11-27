@@ -75,9 +75,7 @@ def test_tick_im_hauptrepo_sperrt_abschluss_aus_worktree(
     _commit(welt["repo"], "feat: A (#901)", _beleg("901"))
     capo.tick(welt["repo"], int(SPEC_213), "test/wegwerf", {}, wt_basis=str(welt["wt"]))
     baum = welt["repo"].parent / "baum_1470"
-    subprocess.run(
-        ["git", "worktree", "add", "--detach", str(baum)], cwd=welt["repo"], check=True, capture_output=True
-    )
+    subprocess.run(["git", "worktree", "add", "--detach", str(baum)], cwd=welt["repo"], check=True, capture_output=True)
     luecke = capo.fertig_luecke(baum, int(SPEC_213))
     assert luecke is not None, "Sperre verfehlt capos Zustand beim Aufruf aus einem Worktree"
 
