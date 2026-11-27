@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 from typing import Any, Sequence, TextIO
 
-from . import auswahl, capo, config, manifest, probesitz, spawn_exit, stand, starter, tmux_aufruf, umzug
+from . import auswahl, capo, config, manifest, probesitz, sitzung_env, spawn_exit, stand, starter, tmux_aufruf, umzug
 
 log = logging.getLogger("to_spawn.spawn")
 
@@ -234,6 +234,9 @@ def wt_tab_befehl(repo: Path, ticket: int, auftrag: str, *schalter: str) -> list
         innen += " " + " ".join(schalter)
     # Kein ';' im -Command-Text (wt trennt Tabs an ';'); wie spawn_local.ps1 (#282/#782).
     innen += " && & { if ($LASTEXITCODE -eq 0) { exit 0 } }"
+    vorspann = sitzung_env.pwsh_vorspann(repo)
+    if vorspann:
+        innen = f"{vorspann} && {innen}"
     return [
         "wt",
         "-w",

@@ -107,6 +107,7 @@ from to_spawn import (
     manifest,
     prozessbaum,
     sessions_datei,
+    sitzung_env,
     spawn_exit,
     speicher,
     starter,
@@ -2179,17 +2180,18 @@ class Aufpasser:
         log_pfad = wache_log(repo, spec)
         log_q = shlex.quote(str(log_pfad))
         ordner_q = shlex.quote(str(log_pfad.parent))
-        warte_q = shlex.quote(str(spawn_exit.warte_datei(repo, spec)))
+        vorspann = sitzung_env.shell_vorspann(
+            repo,
+            skill_home=skill.as_posix(),
+            warte_datei=spawn_exit.warte_datei(repo, spec),
+        )
         tee = f"exec 3>&2 2> >(tee -a {log_q} >&3); tee_pid=$!"
         spur = (
             f'rc=$?; exec 2>&3 3>&-; [ "$rc" -eq 0 ] || {{ '
             f'timeout 3 tail -s 0.1 --pid="$tee_pid" -f /dev/null 2>/dev/null; '
             f'echo "$(date -Is) wache.py #{spec} Exit $rc" >> {log_q}; }}; exit "$rc"'
         )
-        return (
-            f"export {config.SKILL_HOME_ENV}={skill_q} {spawn_exit.WARTE_ENV}={warte_q}; "
-            f"mkdir -p {ordner_q}; {tee}; {{ {kern}; }}; {spur}"
-        )
+        return f"{vorspann} mkdir -p {ordner_q}; {tee}; {{ {kern}; }}; {spur}"
 
     def resume_aus_datei(self, repo: Path, name: str) -> tuple[str, Path] | None:
         """Gesprächs-ID + cwd aus ``.to-spawn/sessions/<name>.json`` — nur wenn das
