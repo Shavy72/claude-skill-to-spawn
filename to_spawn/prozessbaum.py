@@ -1480,6 +1480,80 @@ def session_vorfahr(pid: int, *, grenze: int | None = None) -> int | None:
     return None
 
 
+def laufende(muster: str) -> list[int]:
+    """PIDs, deren Kommandozeile die Regex ``muster`` trifft — ohne den Fragenden selbst.
+
+    Ersatz für ``pgrep -f`` (#1456 / #870, Fehlerkatalog S16/P16): das Muster steht meist
+    auch in der eigenen Kommandozeile oder im Prompt der wartenden Claude-Session,
+    ``pgrep -f`` trifft dann sich selbst. Ausgenommen sind deshalb die eigene PID mit
+    allen Vorfahren, jede Claude-Session und jeder Shell-Wrapper (``bash -c '…'``) —
+    gezählt wird nur das Programm, das tatsächlich läuft.
+    """
+    # ponytail: nur Linux (/proc); Windows-Sessions bräuchten _prozesse_windows als Quelle.
+    if _WINDOWS:
+        raise RuntimeError("laufende/warte-lauf liest /proc — nur unter Linux (Windows: nicht unterstützt)")
+    regex = re.compile(muster)
+    eigene = {os.getpid(), *(pid for pid, _ in _vorfahren_linux(os.getpid()))}
+    raus = []
+    for eintrag in _PROC.iterdir():
+        if not eintrag.name.isdigit() or int(eintrag.name) in eigene:
+            continue
+        zeile = _cmdline_linux(int(eintrag.name)).strip()
+        if zeile and regex.search(zeile) and not ist_session_zeile(zeile) and not ist_wrapper_zeile(zeile):
+            raus.append(int(eintrag.name))
+    return sorted(raus)
+
+
+def warte_auf_lauf(
+    muster: str,
+    frist_s: float,
+    takt_s: float = 1.0,
+    schlafen: Callable[[float], None] = time.sleep,
+    pids: set[int] | None = None,
+) -> bool:
+    """Wartet, bis die jetzt laufenden Treffer von ``laufende(muster)`` beendet sind.
+
+    True = kein Lauf (mehr), False = nach ``frist_s`` (Uhrzeit, ``time.monotonic``)
+    lebt noch einer. Später gestartete Läufe zählen nicht — gewartet wird auf das, was
+    beim Aufruf lief (oder auf die übergebenen ``pids``). Ein beendeter, noch nicht
+    abgeholter Prozess (Zombie, leere Kommandozeile) gilt als fertig; eine
+    wiedervergebene PID zählt nur, wenn sie das Muster trifft.
+    """
+    ziel = set(laufende(muster)) if pids is None else set(pids)
+    ende = time.monotonic() + frist_s
+    while True:
+        if not ziel & set(laufende(muster)):
+            return True
+        rest = ende - time.monotonic()
+        if rest <= 0:
+            return False
+        schlafen(min(takt_s, rest))
+
+
+def warte_lauf_befehl(muster: str, frist_s: float) -> int:
+    """Befehl ``to_spawn.py warte-lauf``: gibt die Treffer-PIDs aus und wartet auf sie.
+
+    Exit 0 = kein Lauf (mehr), 1 = Frist abgelaufen (Lauf lebt noch), 2 = Fehler
+    (ungültige Regex oder kein /proc, z. B. Windows) — Meldung auf stderr. Die
+    Fehler werden nur hier gefangen, damit 1 nie einen Fehler bedeutet.
+    """
+    try:
+        pids = laufende(muster)
+    except re.error as exc:
+        print(f"warte-lauf: ungültige Regex {muster!r}: {exc}", file=sys.stderr)
+        return 2
+    except RuntimeError as exc:
+        print(f"warte-lauf: nicht unterstützt: {exc}", file=sys.stderr)
+        return 2
+    for pid in pids:
+        print(pid)
+    if warte_auf_lauf(muster, frist_s, pids=set(pids)):
+        log.info("warte-lauf: kein Lauf (mehr) für %r", muster)
+        return 0
+    log.info("warte-lauf: Frist %s s abgelaufen, läuft noch: %r", frist_s, muster)
+    return 1
+
+
 def session_beenden(pid: int, protokoll: Path | None = None) -> bool:
     """Beendet die Session ``pid``, ohne darauf zu warten. False = gar nicht angestoßen.
 

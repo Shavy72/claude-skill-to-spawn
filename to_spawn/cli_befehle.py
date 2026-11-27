@@ -38,6 +38,7 @@ from to_spawn import (
     manifest,
     nest,
     ort_wahl,
+    prozessbaum,
     regel_pruefung,
     respawn,
     spec_rand,
@@ -610,6 +611,8 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     if args.befehl == "eintrag":
         return _eintrag(args)
+    if args.befehl == "warte-lauf":
+        return prozessbaum.warte_lauf_befehl(args.muster, args.frist)
     if args.befehl == "befund":
         return _befund(args)
     if args.befehl == "kommentiere":

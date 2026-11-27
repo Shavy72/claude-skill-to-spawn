@@ -509,4 +509,16 @@ def baue_parser() -> _Parser:
     ort_wahl.richte_parser_ein(unter)
     # Regel-Prüfung (#584, E20/E21): doppelte to-spawn-Ablauf-Texte außerhalb des Skills.
     regel_pruefung.richte_parser_ein(unter)
+    # Warten auf fremden Lauf ohne Selbst-Treffer (#870 / #1456, Fehlerkatalog S16/P16).
+    p_warte = unter.add_parser(
+        "warte-lauf",
+        description=(
+            "Wartet, bis ein Lauf (Regex auf Kommandozeile) endet; schließt die eigene "
+            "Aufrufkette aus. Exit 0 = fertig, 1 = Frist abgelaufen, 2 = Fehler/nicht "
+            "unterstützt (ungültige Regex, Windows)."
+        ),
+        help="warten, bis ein Lauf (Regex auf Kommandozeile) endet; Exit 0 fertig, 1 Frist abgelaufen, 2 Fehler/nicht unterstützt",
+    )
+    p_warte.add_argument("muster", help="Regex auf die Kommandozeile des Laufs")
+    p_warte.add_argument("--frist", type=float, default=900, help="höchstens so viele Sekunden warten (Vorgabe 900)")
     return ap
