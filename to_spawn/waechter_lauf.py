@@ -82,6 +82,8 @@ RESET_PUFFER_S = 120.0
 #: Obergrenze der Pause. Darüber (z. B. Wochen-Limit) meldet der Aufseher wie bisher
 #: und bleibt stehen — lieber ein Mensch als eine Pause über Tage.
 MAX_WARTE_S = 6 * 3600.0
+#: Sekunden, nach denen eine hängende Limit-Probe als „zu“ gilt (#1449, #892).
+PROBE_TIMEOUT_S = 120.0
 #: So weit darf ein Reset zurückliegen und noch gelten. Weiter zurück heißt: die Zeile
 #: meint ein anderes Fenster — sonst startet der Aufseher im Takt des Puffers neu (F1).
 RESET_TOLERANZ_S = 120.0
@@ -182,15 +184,24 @@ def _texte(eintrag: dict[str, Any], werkzeug: bool = False) -> str:
     return ("\n" if werkzeug else " ").join(teile)
 
 
+def _ist_fehlerzeile(eintrag: dict[str, Any]) -> bool:
+    """Künstliche Assistent-Zeile von Claude Code (API-Fehler, 529, Credit, Limit …)."""
+    return eintrag.get("type") == "assistant" and (
+        bool(eintrag.get("isApiErrorMessage")) or (eintrag.get("message") or {}).get("model") == "<synthetic>"
+    )
+
+
 def ist_limit_zeile(eintrag: dict[str, Any]) -> bool:
     """Limit-Meldung von Claude Code (nicht: ein Zitat im Nutzer- oder Werkzeug-Text)."""
-    if eintrag.get("type") != "assistant":
-        return False
-    fehler = bool(eintrag.get("isApiErrorMessage")) or (eintrag.get("message") or {}).get("model") == "<synthetic>"
-    if not fehler:
+    if not _ist_fehlerzeile(eintrag):
         return False
     # ``error == "rate_limit"`` allein reicht nicht: auch kurze API-Drosselungen tragen es.
     return bool(_LIMIT_TEXT.search(_texte(eintrag)))
+
+
+def ist_echte_antwort(eintrag: dict[str, Any]) -> bool:
+    """Echte Modellantwort — künstliche Fehler-/Limit-Zeilen zählen nicht (#1449, #892)."""
+    return eintrag.get("type") == "assistant" and not _ist_fehlerzeile(eintrag)
 
 
 def _zone(name: str | None, rueckfall: tzinfo | None) -> tzinfo | None:
@@ -285,6 +296,35 @@ def warte_sekunden(
         )
         return None
     return sekunden
+
+
+def limit_offen(claude: str, modell: str, cwd: Path) -> bool:
+    """Probe (#1449, #892): ist das Nutzungs-Limit von ``modell`` wieder offen?
+
+    Ein kurzes ``claude -p`` ohne gespeicherte Session über dasselbe Programm und Abo;
+    ``ANTHROPIC_API_KEY`` fliegt aus der Umgebung, die Probe rechnet nie über den
+    API-Key ab. Offen = Exit 0 und kein Limit-Text. Jeder Fehler zählt als „zu“.
+    """
+    env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+    try:
+        lauf = starter.starte(
+            [claude, "-p", "--model", modell, "--no-session-persistence", "Antworte nur: ok"],
+            cwd=cwd,
+            warten=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=PROBE_TIMEOUT_S,
+            env=env,
+        )
+    except (OSError, subprocess.SubprocessError, starter.StartGesperrt) as fehler:
+        log.info("Limit-Probe %s gescheitert (%s) — gilt als zu.", modell, fehler)
+        return False
+    antwort = f"{lauf.stdout or ''}\n{lauf.stderr or ''}"
+    offen = lauf.returncode == 0 and not _LIMIT_TEXT.search(antwort)
+    log.info("Limit-Probe %s: %s (Exit %s)", modell, "offen" if offen else "zu", lauf.returncode)
+    return offen
 
 
 def _warten(sekunden: float, takt: float, abbruch: Callable[[], bool] | None) -> bool:
