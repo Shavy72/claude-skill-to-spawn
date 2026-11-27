@@ -72,7 +72,9 @@ def _fundstellen(root: Path = REPO) -> list[str]:
 
 
 def test_kein_rohes_pgrep_f_in_skripten_und_vorlagen() -> None:
-    assert "to_spawn.py" in {d.name for d in _dateien(REPO)}, "Prüf-Check hat nichts geprüft (to_spawn.py fehlt in der Dateiliste)"
+    assert "to_spawn.py" in {d.name for d in _dateien(REPO)}, (
+        "Prüf-Check hat nichts geprüft (to_spawn.py fehlt in der Dateiliste)"
+    )
     funde = _fundstellen()
     assert funde == [], (
         "Rohes `pgrep -f` findet die eigene Session (S16/P16) — stattdessen "

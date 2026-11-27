@@ -32,7 +32,9 @@ def test_ungueltiges_regex_ist_exit_2_ohne_traceback() -> None:
     assert "Regex" in erg.stderr
 
 
-def test_windows_ist_exit_2_mit_klarer_meldung(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_windows_ist_exit_2_mit_klarer_meldung(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     monkeypatch.setattr(prozessbaum, "_WINDOWS", True)
     assert prozessbaum.warte_lauf_befehl("x", 0) == 2
     err = capsys.readouterr().err
@@ -50,7 +52,9 @@ def test_hilfe_nennt_exit_codes() -> None:
     assert "Exit" in hilfe and "2" in hilfe
 
 
-def test_pids_ausgabe_und_wartemenge_aus_einer_abfrage(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_pids_ausgabe_und_wartemenge_aus_einer_abfrage(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     aufrufe: list[int] = []
 
     def fake(muster: str) -> list[int]:
