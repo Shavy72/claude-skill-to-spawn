@@ -542,10 +542,7 @@ def build_prompt(
     ziel_gh = gh_repo if gh_repo is not None else GH_REPO
     konfig = konfig if konfig is not None else config.lade(ziel_repo)
     label = str((konfig.get("regularien") or {}).get("checkpoint_label") or "checkpoint:human")
-    master_rot = str(
-        (konfig.get("regularien") or {}).get("master_rot_kennzeichen")
-        or anleitung.MASTER_ROT_KENNZEICHEN
-    )
+    master_rot = str((konfig.get("regularien") or {}).get("master_rot_kennzeichen") or anleitung.MASTER_ROT_KENNZEICHEN)
     haupt = gh.hauptzweig(ziel_repo)
     werte = {
         "{WT}": config.worktree_pfad(ticket, ziel_repo) if repo is not None else worktree_pfad(ticket),

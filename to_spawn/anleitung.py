@@ -36,6 +36,7 @@ def master_rot_regel(hauptzweig: str = "", kennzeichen: str = MASTER_ROT_KENNZEI
         f"Reparaturen eines roten {zweig}, nie für normale Tickets."
     )
 
+
 #: Mindset (E10, E41, E40, E42): steht wortgleich im Aufseher-Prompt, in jedem
 #: Anstupser und in der Bau-Prompt-Vorlage.
 MINDSET = (
