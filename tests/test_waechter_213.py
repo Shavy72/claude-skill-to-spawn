@@ -244,6 +244,19 @@ def test_commit_ohne_nummer_oeffnet_wieder(welt: dict[str, Path]) -> None:
     assert "commit_ohne_nummer" in ergebnis.stdout
 
 
+def test_folge_runde_startet_neue_tmux_session_ohne_server(welt: dict[str, Path]) -> None:
+    """#1412/#868 Lücke 6: ohne tmux-Session (Linux ohne Server) muss capo ``new-session`` nehmen;
+    ``new-window`` scheitert dort echt. Das Protokoll des tmux-Ersatzes belegt den Weg."""
+    _commit(welt["repo"], "feat: Bauteil ohne Nummer", _beleg())
+    ergebnis = _capo(welt)
+    assert ergebnis.returncode == 0, _text(ergebnis)
+    protokoll = welt["tmp"] / "tmux_aufrufe.jsonl"
+    aufrufe = [json.loads(z) for z in protokoll.read_text(encoding="utf-8").splitlines() if z.strip()]
+    starts = [a for a in aufrufe if a[:1] in (["new-window"], ["new-session"])]
+    assert [a[:1] for a in starts] == [["new-session"]], aufrufe
+    assert "bau 901" in starts[0]
+
+
 def test_sauberes_ticket_bleibt_zu(welt: dict[str, Path]) -> None:
     _commit(welt["repo"], "feat: Bauteil (#901) [skip ci]", _beleg())
     ergebnis = _capo(welt)
