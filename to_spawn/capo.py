@@ -2624,9 +2624,29 @@ def _tick(
     # #853: Abnahme-Tickets (checkpoint:human) warten auf den Menschen und zählen für
     # Moment.ALLE_AUF_STAGING nicht als Bau-Tickets mit.
     bau_tickets = [i for i in liste if checkpoint not in label_namen(i)]
+    abnahme_tickets = [i for i in liste if checkpoint in label_namen(i)]
     komplett_haelt = False
     if not teilauswahl and bau_tickets and all(ticket_zustand.fertig_gebaut(i) for i in bau_tickets):
         komplett_haelt = _komplett_alle_auf_staging(repo, spec, konfig, aktionen, dry_run)
+        if (
+            abnahme_tickets
+            and not erg.verstoesse
+            and not regeln_aus
+            and not vps_fehlt
+            and not staging_stand.unlesbar
+            and not komplett_haelt
+            and _live_nach_abnahme_passt(
+                repo,
+                spec,
+                gh_repo,
+                konfig,
+                abnahme_tickets,
+                erledigt,
+                aktionen,
+                dry_run=dry_run,
+            )
+        ):
+            sichern()
 
     # #1407: unlesbares Staging ist kein „fehlt“, aber auch kein Beleg „liegt drauf“ — Abschluss zurückhalten.
     unlesbar_takte = int(zustand.get("staging_unlesbar_takte") or 0) + 1 if staging_stand.unlesbar else 0
@@ -2785,6 +2805,122 @@ def _spec_fenster_wegraeumen(repo: Path, spec: int) -> None:
     except Exception as fehler:  # der Takt endet nie rot am Aufräumen
         log.exception("Fenster der Spec #%s nicht geschlossen", spec)
         _werkzeug_fehler("capo.spec_fenster", "Spec-Fenster schließen: unerwarteter Fehler", fehler, spec=spec)
+
+
+#: Ganzes Wort „passt“ (Groß/klein egal) — Abnahme-Freigabe des Menschen (#924).
+_ABNAHME_PASST_WORT = re.compile(r"\bpasst\b", re.IGNORECASE)
+#: Verneinung, Einschränkung oder Nachbesserung: dann ist ein Kommentar mit „passt“ keine Freigabe (#924).
+_ABNAHME_EINWAND = re.compile(
+    r"\b(?:nicht|kein\w*|aber|jedoch|allerdings|sonst|nachbesser\w*|kritik|"
+    r"änder\w*|aender\w*|korrigier\w*|fehl\w*|mangel|mängel|falsch|anders|statt|noch)\b",
+    re.IGNORECASE,
+)
+
+
+def ist_abnahme_passt(text: str) -> bool:
+    """True, wenn ein Mensch-Kommentar am Abnahme-Ticket eine klare „passt“-Freigabe ist (#924).
+
+    Zitierte Zeilen (``> …``) werden ausgeblendet. Verneinungen oder Nachbesserungs-Wünsche
+    (z. B. „passt nicht“, „Sonst passt alles. Bitte nachbessern…“) gelten nie als Freigabe.
+    """
+    ohne_zitat = "\n".join(zeile for zeile in text.splitlines() if not zeile.lstrip().startswith(">")).strip()
+    if not ohne_zitat:
+        return False
+    return bool(_ABNAHME_PASST_WORT.search(ohne_zitat)) and not _ABNAHME_EINWAND.search(ohne_zitat)
+
+
+def abnahme_passt_kommentar(kommentare: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Jüngster Mensch-Kommentar nach dem letzten eigenen Kommentar, wenn er eine „passt“-Freigabe ist (#924).
+
+    ``kommentare`` stammt aus :func:`issue_kommentare` (nur Repo-Beteiligte). Kommentare mit
+    Aufseher-, Aufpasser- oder Session-Marke zählen nie als Freigabe des Menschen — auch eine
+    automatische Aufseher-Annahme nach Frist löst kein Live aus. Folgt auf ein „passt“ später
+    noch ein anderer Mensch-Kommentar (z. B. Stopp/Kritik), gilt nur der jüngste Mensch-Kommentar.
+    """
+    sortiert = sorted(
+        kommentare,
+        key=lambda e: (_kommentar_teile(e)[2] or datetime.min.replace(tzinfo=timezone.utc), int(e.get("id") or 0)),
+    )
+    letzter_eigen = -1
+    for i, eintrag in enumerate(sortiert):
+        text = _kommentar_teile(eintrag)[1].lstrip()
+        if text.startswith(EIGENE_KOEPFE) or _ist_session_kommentar(text):
+            letzter_eigen = i
+    mensch_danach = [
+        eintrag
+        for eintrag in sortiert[letzter_eigen + 1 :]
+        if not (
+            _kommentar_teile(eintrag)[1].lstrip().startswith(EIGENE_KOEPFE)
+            or _ist_session_kommentar(_kommentar_teile(eintrag)[1])
+        )
+    ]
+    if not mensch_danach:
+        return None
+    juengster = mensch_danach[-1]
+    return juengster if ist_abnahme_passt(_kommentar_teile(juengster)[1]) else None
+
+
+def _live_nach_abnahme_passt(
+    repo: Path,
+    spec: int,
+    gh_repo: str,
+    konfig: dict[str, Any],
+    abnahme_tickets: list[dict[str, Any]],
+    erledigt: set[str],
+    zeilen: list[str],
+    *,
+    dry_run: bool = False,
+) -> bool:
+    """Abnahme-Kommentar „passt“ startet den Live-Schritt direkt ohne Briefkasten-Frage (#924).
+
+    Läuft nur, wenn alle Bau-Tickets fertig sind, noch kein Live-Merker liegt und das Repo nicht
+    bewusst ohne Live arbeitet (``live.ohne: true``). Fehlt sowohl ``live.befehl`` als auch
+    ``pruefung.komplett`` (nicht eingerichtetes Repo), bleibt der Takt still. Rückgabe ``True``,
+    wenn ``erledigt`` ergänzt wurde (Aufrufer sichert).
+    """
+    if config.live_bewusst_ohne(konfig) or live_gelaufen(repo, spec, gh_repo):
+        return False
+    if not config.live_schritt(konfig)["befehl"] and not config.pruef_befehl(konfig, "komplett"):
+        return False
+    treffer: tuple[int, dict[str, Any]] | None = None
+    for issue in abnahme_tickets:
+        n = int(issue["number"])
+        kommentare = issue_kommentare(gh_repo, n)
+        if kommentare is None:
+            continue
+        kommentar = abnahme_passt_kommentar(kommentare)
+        if kommentar is not None:
+            treffer = (n, kommentar)
+            break
+    if treffer is None:
+        return False
+    n, kommentar = treffer
+    if dry_run:
+        zeilen.append(f"#{n} [Probe] Abnahme „passt“ — würde Live-Schritt starten (to_spawn.py live {spec}).")
+        return False
+    from to_spawn import live_tuer  # spät: live_tuer importiert capo
+
+    try:
+        code, live_zeilen = live_tuer.starte(repo, spec, konfig, gh_repo=gh_repo)
+    except Exception as fehler:  # der Tick (sichern) bricht nie ab
+        log.exception("Live-Schritt nach Abnahme #%s (Spec #%s): unerwarteter Fehler", n, spec)
+        _werkzeug_fehler("capo.abnahme_live", "Live-Schritt nach Abnahme: unerwarteter Fehler", fehler, spec=spec)
+        zeilen.append(
+            f"FEHLER: #{n} Live-Schritt nach Abnahme — unerwarteter Fehler ({type(fehler).__name__}: {fehler})."
+        )
+        return False
+    if code == 0:
+        zeilen.append(f"#{n} Abnahme „passt“ — Live-Schritt gestartet ({'; '.join(live_zeilen)}).")
+        return False
+    if code == 2:
+        schluessel = f"abnahme_live_hand|{spec}|{n}|{kommentar.get('id', '')}"
+        if schluessel not in erledigt:
+            erledigt.add(schluessel)
+            zeilen.append(f"#{n} Abnahme „passt“ — {'; '.join(live_zeilen)}")
+            return True
+        return False
+    zeilen.append(f"FEHLER: #{n} Abnahme „passt“ — {'; '.join(live_zeilen)}")
+    return False
 
 
 def _komplett_alle_auf_staging(
