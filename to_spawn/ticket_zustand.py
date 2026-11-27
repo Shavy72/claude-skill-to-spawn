@@ -29,6 +29,8 @@ from typing import Any, Literal
 
 #: Label der Deploy-Schlange (#1527): Ticket liegt grün auf Staging, wartet nur noch auf Live.
 STAGING_FERTIG_LABEL = "staging:fertig"
+#: Vorgabe-Label für Abnahme-Tickets (überschreibbar über ``regularien.checkpoint_label``, #854).
+CHECKPOINT_LABEL = "checkpoint:human"
 
 Stufe = Literal["offen", "fertig_gebaut", "zu", "verworfen"]
 #: Alle Anzeige-Stufen; ``verworfen`` = geschlossen als „nicht geplant“ oder Duplikat (nie gebaut).
@@ -64,6 +66,44 @@ _FELDER_CLAIM = _FELDER + ",assignees"
 def fertig_gebaut(ticket: Mapping[str, Any] | None) -> bool:
     """Zu ODER grün auf Staging: hier baut niemand mehr."""
     return stufe(ticket) != "offen"
+
+
+def abnahme_label(repo: Path | None = None) -> str:
+    """Abnahme-Label aus ``regularien.checkpoint_label`` der Repo-Konfig, sonst :data:`CHECKPOINT_LABEL`."""
+    if repo is None:
+        return CHECKPOINT_LABEL
+    from to_spawn import config, manifest
+
+    return manifest.checkpoint_label(config.lade(repo))
+
+
+def ist_abnahme(
+    ticket: Mapping[str, Any] | None,
+    *,
+    checkpoint_label: str | None = None,
+    repo: Path | None = None,
+) -> bool:
+    """Trägt das Ticket das Abnahme-Label (``checkpoint:human`` / ``regularien.checkpoint_label``)? (#854)
+
+    Gilt unabhängig von weiteren Labels (auch bei gleichzeitigem ``ready-for-agent``): ein
+    Abnahme-Ticket wartet auf den Nutzer und startet nie als Bau-Session.
+    """
+    label = checkpoint_label if checkpoint_label is not None else abnahme_label(repo)
+    return bool(label) and label in label_namen(ticket)
+
+
+def bau_startbar(
+    ticket: Mapping[str, Any] | None,
+    *,
+    checkpoint_label: str | None = None,
+    repo: Path | None = None,
+) -> bool:
+    """Die eine Auswahl-Regel für startbare Bau-Tickets (#854).
+
+    Offen (nicht :func:`fertig_gebaut`) UND kein Abnahme-Ticket (:func:`ist_abnahme`),
+    unabhängig von weiteren Labels wie ``ready-for-agent``.
+    """
+    return not fertig_gebaut(ticket) and not ist_abnahme(ticket, checkpoint_label=checkpoint_label, repo=repo)
 
 
 def endgueltig_zu(ticket: Mapping[str, Any] | None) -> bool:

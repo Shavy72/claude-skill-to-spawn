@@ -2036,10 +2036,11 @@ class Aufpasser:
             raise RuntimeError(f"#{ticket}: Ticket-Zustand nicht lesbar (gh)")
         return {**daten, "labels": ticket_zustand.label_namen(daten)}
 
-    def zu_bauen(self, offen: dict[int, dict]) -> set[int]:
-        """Die offenen Tickets, die noch nicht fertig gebaut sind — nur dort baut noch
-        jemand (#279, Fall 03:05). Urteil aus den Listen-Daten, kein weiterer Aufruf."""
-        return {n for n, t in offen.items() if not ticket_zustand.fertig_gebaut(t)}
+    def zu_bauen(self, offen: dict[int, dict], *, repo: Path | None = None) -> set[int]:
+        """Die offenen Tickets, die noch als Bau-Session starten dürfen (#279, #854).
+        Urteil aus den Listen-Daten über :func:`ticket_zustand.bau_startbar`, kein weiterer Aufruf."""
+        label = ticket_zustand.abnahme_label(repo)
+        return {n for n, t in offen.items() if ticket_zustand.bau_startbar(t, checkpoint_label=label)}
 
     def pane_text(self, ziel: str) -> str:
         return self.tmux("capture-pane", "-p", "-t", ziel)
@@ -3021,7 +3022,7 @@ class Aufpasser:
                 except (RuntimeError, ValueError) as fehler:
                     log.error("%s: GitHub nicht lesbar: %s", sitzung, fehler)
                     continue
-                offen = self.zu_bauen(offen_roh)
+                offen = self.zu_bauen(offen_roh, repo=repo)
                 if any(isinstance(fb, Fenster) and (fb.ist_leitstand or fb.ist_wache) for fb in fenster):
                     self._platz_spec_grund[sitzung] = self._spec_abgeschlossen_grund(spec, repo, offen_roh, fenster)
                 for f in fenster:
@@ -3474,12 +3475,13 @@ class Aufpasser:
             except RuntimeError as fehler:
                 log.error("#%s: Ticket nicht lesbar, kein Start: %s", ticket, fehler)
                 return False
-            if ticket_zustand.fertig_gebaut(daten):
-                log.info(
-                    "#%s: %s — kein Start",
-                    ticket,
-                    ticket_zustand.wortlaut(daten),
+            if not ticket_zustand.bau_startbar(daten, repo=repo):
+                grund = (
+                    f"Abnahme-Ticket ({ticket_zustand.abnahme_label(repo)})"
+                    if ticket_zustand.ist_abnahme(daten, repo=repo)
+                    else ticket_zustand.wortlaut(daten)
                 )
+                log.info("#%s: %s — kein Start", ticket, grund)
                 return False
             gesperrt = daten["labels"] & STOPP_LABELS
             if gesperrt:
@@ -3626,7 +3628,7 @@ class Aufpasser:
                 self.fehlendes_fenster(sitzung, spec, repo, None)
         # Bau-Fenster nur für „noch nicht fertig gebaut“ (#279) innerhalb der Auswahl (#271);
         # der Aufseher oben bleibt, bis alle gewählten Tickets endgültig zu sind.
-        bauen = self.zu_bauen(offen_hier)
+        bauen = self.zu_bauen(offen_hier, repo=repo)
         fehlend = [t for t in sorted(bauen) if f"bau {t}" not in vorhanden]
         # Läuft das Ticket schon in einer Fenster-Kette (oder folgt dort noch),
         # kein eigenes Fenster — sonst zwei Sessions auf einem Ticket (#598).
