@@ -80,6 +80,7 @@ import argparse
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import shlex
@@ -104,6 +105,7 @@ from to_spawn import (
     config,
     eigener_handoff,
     gh,
+    halt,
     manifest,
     prozessbaum,
     sessions_datei,
@@ -150,9 +152,23 @@ STUPSER_FENSTER_S = 24 * 3600
 LIMIT_PROBE_ABSTAND_S = 30 * 60
 
 
+def _als_zahl(wert: Any) -> float | None:
+    """Konvertiert ``wert`` in eine endliche Gleitkommazahl (``bool`` zählt nicht)."""
+    if isinstance(wert, bool):
+        return None
+    try:
+        zahl = float(wert)
+    except (TypeError, ValueError):
+        return None
+    return zahl if math.isfinite(zahl) else None
+
+
 def _probe_gueltig(eintrag: dict[str, Any], jetzt: float) -> bool:
     """Probe-Eintrag zählt nur mit Alter in [0, Abstand) — Zukunftszeit = unbekannt."""
-    return 0 <= jetzt - float(eintrag.get("zeit", 0)) < LIMIT_PROBE_ABSTAND_S
+    zeit = _als_zahl(eintrag.get("zeit", 0))
+    if zeit is None:
+        return False
+    return 0 <= jetzt - zeit < LIMIT_PROBE_ABSTAND_S
 
 
 #: Meldungen ohne Eingriff kommen je Fenster/Ereignis nur einmal am Tag ins Issue;
@@ -1779,16 +1795,83 @@ class Aufpasser:
             roh = json.loads(datei.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return Stand()
-        try:
-            platz_zuletzt = float(roh.get("platz_zuletzt") or 0.0)
-        except (TypeError, ValueError):
+        if not isinstance(roh, dict):
+            log.warning("stand.json: Wurzelobjekt ist kein Dict (%s) — starte leer", datei)
+            return Stand()
+        verworfen = 0
+
+        platz_roh = roh.get("platz_zuletzt")
+        if platz_roh is None:
             platz_zuletzt = 0.0
+        else:
+            zahl = _als_zahl(platz_roh)
+            if zahl is None:
+                platz_zuletzt = 0.0
+                verworfen += 1
+            else:
+                platz_zuletzt = zahl
+
+        fenster: dict[str, dict[str, Any]] = {}
+        fenster_roh = roh.get("fenster")
+        if isinstance(fenster_roh, dict):
+            for k, v in fenster_roh.items():
+                if isinstance(k, str) and isinstance(v, dict):
+                    fenster[k] = v
+                else:
+                    verworfen += 1
+        elif fenster_roh is not None:
+            verworfen += 1
+
+        meldungen: dict[str, float] = {}
+        meldungen_roh = roh.get("meldungen")
+        if isinstance(meldungen_roh, dict):
+            for k, v in meldungen_roh.items():
+                zahl = _als_zahl(v)
+                if isinstance(k, str) and zahl is not None:
+                    meldungen[k] = zahl
+                else:
+                    verworfen += 1
+        elif meldungen_roh is not None:
+            verworfen += 1
+
+        starts: dict[str, list[float]] = {}
+        starts_roh = roh.get("starts")
+        if isinstance(starts_roh, dict):
+            for k, v in starts_roh.items():
+                if not isinstance(k, str) or not isinstance(v, list):
+                    verworfen += 1
+                    continue
+                zeiten: list[float] = []
+                for t in v:
+                    zahl = _als_zahl(t)
+                    if zahl is None:
+                        verworfen += 1
+                    else:
+                        zeiten.append(zahl)
+                if zeiten:
+                    starts[k] = zeiten
+        elif starts_roh is not None:
+            verworfen += 1
+
+        limit_proben: dict[str, dict[str, Any]] = {}
+        proben_roh = roh.get("limit_proben")
+        if isinstance(proben_roh, dict):
+            for k, v in proben_roh.items():
+                if isinstance(k, str) and isinstance(v, dict) and _als_zahl(v.get("zeit")) is not None:
+                    limit_proben[k] = v
+                else:
+                    verworfen += 1
+        elif proben_roh is not None:
+            verworfen += 1
+
+        if verworfen:
+            log.warning("stand.json: %d beschädigte Einträge verworfen (%s)", verworfen, datei)
         return Stand(
-            fenster=dict(roh.get("fenster") or {}),
-            meldungen=dict(roh.get("meldungen") or {}),
-            starts={k: [float(t) for t in v] for k, v in (roh.get("starts") or {}).items()},
+            fenster=fenster,
+            meldungen=meldungen,
+            starts=starts,
             platz_zuletzt=platz_zuletzt,
-            limit_proben=dict(roh.get("limit_proben") or {}),
+            limit_proben=limit_proben,
         )
 
     def _stand_schreiben(self) -> None:
@@ -2085,10 +2168,11 @@ class Aufpasser:
         return basis
 
     def offene_tickets(self, spec: str, repo: Path) -> dict[int, dict]:
-        """Unter-Tickets, die nicht :func:`ticket_zustand.endgueltig_zu` sind, je Nummer
-        mit ``state``/``labels`` — aus EINEM Listen-Aufruf, kein ``issue view`` je Ticket
-        (#279: ein hängendes ``gh`` hielt sonst den ganzen Takt auf). Unlesbar ⇒
-        ``RuntimeError``."""
+        """Unter-Tickets (Sub-Issues und zusätzliche Manifest-Tickets #867), die nicht
+        :func:`ticket_zustand.endgueltig_zu` sind, je Nummer mit ``state``/``labels`` —
+        Sub-Issues aus EINEM Listen-Aufruf (#279: ein hängendes ``gh`` hielt sonst den
+        ganzen Takt auf), fehlende Manifest-Folge-Tickets einzeln über :meth:`ticket_lesen`.
+        Unlesbar ⇒ ``RuntimeError``."""
         raus = self.sh(
             "gh",
             "api",
@@ -2102,9 +2186,17 @@ class Aufpasser:
             tickets = [json.loads(z) for z in raus.splitlines() if z.strip()]
             if not all(isinstance(t, dict) for t in tickets):
                 raise TypeError("Zeile ist kein JSON-Objekt")
-            return {int(t["number"]): t for t in tickets if not ticket_zustand.endgueltig_zu(t)}
+            bekannt = {int(t["number"]) for t in tickets}
+            offen = {int(t["number"]): t for t in tickets if not ticket_zustand.endgueltig_zu(t)}
         except (json.JSONDecodeError, KeyError, TypeError) as fehler:
             raise RuntimeError(f"sub_issues {spec}: unlesbar ({fehler})") from None
+        for nummer in manifest.ticket_nummern(repo, spec):
+            if nummer in bekannt:
+                continue
+            daten = self.ticket_lesen(nummer, repo)
+            if not ticket_zustand.endgueltig_zu(daten):
+                offen[nummer] = {"number": nummer, **daten}
+        return offen
 
     def ticket_lesen(self, ticket: int, repo: Path) -> dict:
         """Ticket über :func:`ticket_zustand.lesen` — alle Felder des Bausteins, ``labels``
@@ -3576,12 +3668,29 @@ class Aufpasser:
 
     # -- Ein Lauf ----------------------------------------------------------------
 
-    def start_erlaubt(self, spec: str, repo: Path, ticket: int | None, *, sitzung: str = "") -> bool:
-        """Regel 1: kein Start außerhalb der gespeicherten Teil-Start-Auswahl (#271), bei
-        Stopp-Label oder wenn das Fenster in 6 h schon ``START_MAX``-mal gestartet wurde.
+    def halt_der_spec(self, repo: Path) -> halt.Halt | None:
+        """Halt der Spec (#1444); im Trockenlauf wird nichts aufgehoben."""
+        return halt.pruefen(repo, aufheben=not self.e.trocken, wer="aufpasser")
+
+    def start_erlaubt(
+        self,
+        spec: str,
+        repo: Path,
+        ticket: int | None,
+        *,
+        sitzung: str = "",
+        halt_geprueft: bool = False,
+    ) -> bool:
+        """Regel 1: kein Start bei Halt der Spec, außerhalb der gespeicherten Teil-Start-Auswahl (#271),
+        bei Stopp-Label oder wenn das Fenster in 6 h schon ``START_MAX``-mal gestartet wurde.
         ``ticket`` None = Aufseher-Fenster (prüft Auswahl/``--ohne-wache``/Rechner,
-        Start-Gedächtnis ``wache-<S>``)."""
+        Start-Gedächtnis ``wache-<S>``).
+        ``halt_geprueft``: Aufrufer hat den Halt für diese Spec schon geprüft."""
         name = f"bau {ticket}" if ticket is not None else f"wache {spec}"
+        angehalten = None if halt_geprueft else self.halt_der_spec(repo)
+        if angehalten is not None:
+            log.info("%s: %s — kein Start", name, angehalten.text())
+            return False
         auswahl_stand = auswahl.lesen(repo, spec)
         if ticket is None:
             if not auswahl.wache_erlaubt(repo, spec, auswahl=auswahl_stand, gelesen=True):
@@ -3743,18 +3852,21 @@ class Aufpasser:
             sorted(offen_hier) or "-",
             f" ({auswahl.beschreibung(auswahl_stand)})" if auswahl_stand is not None else "",
         )
+        angehalten = self.halt_der_spec(repo)  # einmal je Spec (#1444)
+        if angehalten is not None:
+            log.info("%s: %s — kein Start", sitzung, angehalten.text())
         # Aufseher-Fenster fehlt (R2): zuerst nachstarten (#418), solange die Spec (hier)
         # offene Tickets hat und die Auswahl einen Aufseher auf diesem Rechner erlaubt (#271).
         # Gehört die Auswahl einem anderen Rechner oder gilt --ohne-wache, keinen zweiten
         # Start versuchen und das in einer Zeile melden (#288).
-        if offen and f"wache {spec}" not in vorhanden:
+        if offen and angehalten is None and f"wache {spec}" not in vorhanden:
             if not auswahl.wache_erlaubt(repo, spec, auswahl=auswahl_stand, gelesen=True):
                 log.info(
                     "spec %s: Aufseher läuft laut Auswahl nicht auf diesem Rechner (%s) — kein zweiter Start",
                     spec,
                     auswahl.beschreibung(auswahl_stand),
                 )
-            elif offen_hier and self.start_erlaubt(spec, repo, None, sitzung=sitzung):
+            elif offen_hier and self.start_erlaubt(spec, repo, None, sitzung=sitzung, halt_geprueft=True):
                 self.fehlendes_fenster(sitzung, spec, repo, None)
         # Bau-Fenster nur für „noch nicht fertig gebaut“ (#279) innerhalb der Auswahl (#271);
         # der Aufseher oben bleibt, bis alle gewählten Tickets endgültig zu sind.
@@ -3762,9 +3874,9 @@ class Aufpasser:
         fehlend = [t for t in sorted(bauen) if f"bau {t}" not in vorhanden]
         # Läuft das Ticket schon in einer Fenster-Kette (oder folgt dort noch),
         # kein eigenes Fenster — sonst zwei Sessions auf einem Ticket (#598).
-        belegt = self.belegte_tickets() if fehlend else set()
-        gh_repo = gh.repo_aus_origin(repo) if fehlend else ""
-        for ticket in fehlend:
+        belegt = self.belegte_tickets() if fehlend and angehalten is None else set()
+        gh_repo = gh.repo_aus_origin(repo) if fehlend and angehalten is None else ""
+        for ticket in fehlend if angehalten is None else []:
             if ticket in belegt:
                 log.info("%s: #%d läuft in einer Fenster-Kette — kein Start", sitzung, ticket)
                 continue
@@ -3777,7 +3889,7 @@ class Aufpasser:
                     ", ".join(f"#{b}" for b in blocker),
                 )
                 continue
-            if not self.start_erlaubt(spec, repo, ticket, sitzung=sitzung):
+            if not self.start_erlaubt(spec, repo, ticket, sitzung=sitzung, halt_geprueft=True):
                 continue
             self.fehlendes_fenster(sitzung, spec, repo, ticket)
         for f in fenster:

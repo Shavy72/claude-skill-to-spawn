@@ -8,10 +8,12 @@ Grenz-Quelle baut (neuer Leser von ``grenze_k``) oder die Anleitung den klaren S
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
 from conftest import repo_dateien
+from to_spawn import anleitung
 
 WURZEL = Path(__file__).resolve().parent.parent
 
@@ -138,3 +140,53 @@ def test_konfig_vorgabe_erklaert_grenze_k() -> None:
     nr = next(i for i, z in enumerate(zeilen) if '"grenze_k"' in z)
     kommentar = " ".join(zeilen[max(nr - 4, 0) : nr])
     assert "Ticket-Schnitt" in kommentar and "smart-zone.json" in kommentar
+
+
+#: Feste k-Token-Zahlen wie ``130k``, ``150k``, ``210k``, ``300k`` dürfen nicht im Bau-Prompt
+#: oder in der Anleitung stehen — die Grenzen liegen allein in ``~/.claude/smart-zone.json`` (#874).
+FESTE_K_ZAHL = re.compile(r"\b\d+\s*k\b", re.IGNORECASE)
+SMART_ZONE_SSOT = "~/.claude/smart-zone.json"
+
+
+def _pruefe_smart_zone_text(text: str, quelle: str, *, verweis_pflicht: bool = True) -> list[str]:
+    """Prüft einen Smart-Zone-Text auf SSOT-Verweis und Verbot fester k-Zahlen (#874)."""
+    fehler: list[str] = []
+    if verweis_pflicht and SMART_ZONE_SSOT not in text:
+        fehler.append(f"{quelle}: Verweis auf {SMART_ZONE_SSOT} fehlt")
+    treffer = FESTE_K_ZAHL.findall(text)
+    if treffer:
+        fehler.append(f"{quelle}: feste k-Zahl(en) gefunden: {treffer}")
+    return fehler
+
+
+def test_smart_zone_pruefung_erkennt_feste_k_zahl() -> None:
+    """Rot-Beweis (#874): eingesetzte k-Zahlen und fehlender SSOT-Verweis werden erkannt."""
+    basis = f"Smart Zone: Grenzen laut {SMART_ZONE_SSOT} für dein Modell."
+    assert _pruefe_smart_zone_text(basis, "probe") == []
+    for zahl in ("130k", "150k", "210k", "300k"):
+        fehler = _pruefe_smart_zone_text(f"{basis} Grenze {zahl}.", "probe")
+        assert fehler and zahl in fehler[0], f"{zahl} nicht erkannt"
+    ohne_ssot = _pruefe_smart_zone_text("Smart Zone ohne Verweis.", "probe")
+    assert ohne_ssot and SMART_ZONE_SSOT in ohne_ssot[0]
+
+
+def test_default_json_smart_zone_ohne_feste_zahl() -> None:
+    """#874: ``repo-scripts/_default.json`` verweist auf SSOT und enthält keine festen k-Zahlen."""
+    daten = json.loads((WURZEL / "repo-scripts" / "_default.json").read_text(encoding="utf-8"))
+    vorlage = str(daten["prompt_template"])
+    assert "Smart Zone:" in vorlage
+    assert _pruefe_smart_zone_text(vorlage, "repo-scripts/_default.json") == []
+
+
+def test_anleitung_smart_zone_ohne_feste_zahl() -> None:
+    """#874: ``to_spawn/anleitung.py`` verweist auf SSOT und enthält keine festen k-Zahlen."""
+    assert "Smart Zone" in anleitung.ABLOESE_SOP
+    assert _pruefe_smart_zone_text(anleitung.ABLOESE_SOP, "to_spawn/anleitung.py:ABLOESE_SOP") == []
+    assert (
+        _pruefe_smart_zone_text(
+            anleitung.STOSS_SCHLUSS,
+            "to_spawn/anleitung.py:STOSS_SCHLUSS",
+            verweis_pflicht=False,
+        )
+        == []
+    )

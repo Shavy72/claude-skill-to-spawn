@@ -315,7 +315,7 @@ class TmuxWerkzeug:
         try:
             self._tmux("kill-window", "-t", ziel)
         except FensterWeg:
-            log.info("Fenster %s schon zu (Session hat sich selbst beendet)", ziel)
+            log.info("Fenster %s schon zu (bereits geschlossen)", ziel)
         except TmuxFehler as fehler:
             log.warning("Fenster %s ließ sich nicht schließen: %s", ziel, fehler)
 
@@ -669,7 +669,7 @@ def _ablauf(a: Auftrag, w: Werkzeug, stand: _Stand) -> Ergebnis:
     handoff, start = _dateien(wt, a.ticket, seit)
 
     # b) neues Fenster: bau.py wie spawn (cwd Hauptbaum, bau.py wechselt selbst in den Worktree)
-    stand.sessions = sessions_datei.Sicherung.merken(sessions_datei.pfad(a.repo, str(a.ticket)))
+    stand.sessions = sessions_datei.Sicherung.merken(a.repo, str(a.ticket))
     stand.neu = w.fenster_starten(sitzung, a.name_neu, str(a.repo), befehl)
     log.info("respawn #%s: neues Fenster %s gestartet.", a.ticket, stand.neu)
 

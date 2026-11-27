@@ -142,6 +142,12 @@ KEIN_START = frozenset(
         ("skripte/bau.py", "_gh_json"),  # gh
         ("skripte/leitstand.py", "starte"),  # Kind-Prozess mit gefangener Ausgabe
         ("skripte/spec_stand.py", "sh"),  # Lese-Befehle
+        ("tests/hilfen/claude_aufzeichnung_316.py", "main"),  # Attrappe ruft to_spawn.py takt → Tür
+        ("tests/hilfen/fake_claude.py", "_hooks_ausfuehren"),  # Hook-Befehle des Tests; Hooks starten über die Tür
+        (
+            "tests/hilfen/session_git_bash_kind_122.py",
+            "<modul>",
+        ),  # Test-Hilfe #122: startet Git-Bash-Kind (sleep) als Session-Ersatz
         ("to_spawn/aufpasser.py", "Aufpasser.sh"),  # Lese-Befehle (tmux list/capture); start=True → Tür
         ("to_spawn/aufseher_stand.py", "_tmux_echt"),  # tmux lesen
         # bash-Tür (#186): einzige subprocess-Stelle für bash; Aufrufer startklar._standard_laeufer
@@ -157,6 +163,7 @@ KEIN_START = frozenset(
         ("to_spawn/inventur.py", "_fuehre_aus"),  # Prüfbefehle
         ("to_spawn/melder.py", "melden"),  # Mail-Befehl
         ("to_spawn/nest.py", "_bws_geheimnisse"),  # Bitwarden lesen
+        ("to_spawn/nest.py", "git_hooks_einrichten"),  # sh <installer>: Git-Hooks einrichten, wartet, keine Session
         ("to_spawn/probesitz.py", "laeufer_standard"),  # Kind-Prozess ohne Terminal, Ausgabe gelesen
         ("to_spawn/staging_schalter.py", "schalte_an"),  # Repo-Skript
         ("to_spawn/stand.py", "_lauf"),  # Lese-Befehle
@@ -256,7 +263,27 @@ def _ist_start(aufruf: ast.Call, aliase: dict[str, str] | None = None) -> bool:
     werte = [*aufruf.args, *(k.value for k in aufruf.keywords if k.arg in ("args", "befehl"))]
     if any(k in _TMUX_START for a in werte for k in _konstanten(a)):
         return True
-    if ((traeger == "subprocess" and fn in _LAUF) or (traeger in _KONSOLE_MODUL and fn == "lauf_daten")) and werte:
+    if traeger == "starter" and fn == "starte":
+        return False  # die Tür selbst
+    ist_lauf = (traeger == "subprocess" and fn in _LAUF) or (traeger in _KONSOLE_MODUL and fn == "lauf_daten")
+    if werte and not ist_lauf and not fn.lstrip("_")[:1].isupper():
+        # Helfer wie ``self.sh("ssh", …)``/``lauf(["claude", …])``: Freigabe gilt je Funktion (#1412/#868).
+        # Befehl = Liste mit Programm vorn oder Programm vor weiteren Argumenten — so bleiben
+        # ``which("ssh")``, ``vps.get("ssh")``, ``startswith("claude")`` außen vor; Klassen
+        # (``_Terminal("wt", …)``) bauen nur Daten.
+        kopf = (
+            werte[0].elts[0]
+            if isinstance(werte[0], ast.List) and werte[0].elts
+            else werte[0]
+            if len(werte) > 1
+            else None
+        )
+        return (
+            isinstance(kopf, ast.Constant)
+            and isinstance(kopf.value, str)
+            and Path(kopf.value).name.lower() in _START_PROGRAMM | _FERN_PROGRAMM
+        )
+    if ist_lauf and werte:
         liste = werte[0]
         if (
             not isinstance(liste, (ast.List, ast.Tuple))
@@ -270,9 +297,16 @@ def _ist_start(aufruf: ast.Call, aliase: dict[str, str] | None = None) -> bool:
         name = Path(programm).name.lower()
         if name in _START_PROGRAMM or name in _FERN_PROGRAMM:
             return True
+        name = name.removesuffix(".exe")
+        if name in _SHELL | {"tmux"} and (
+            len(liste.elts) < 2
+            or any(isinstance(e, ast.Starred) for e in liste.elts)
+            or not isinstance(liste.elts[1], ast.Constant)
+        ):
+            return True  # Unterbefehl/Schalter dynamisch: ``["tmux", *x]``, ``["bash", *x]`` (#1412/#868)
         # Shell als Programm mit Befehlsschalter: ``bash -lc …``, ``powershell -c …``, ``cmd /c …``
         rest = [k.lower() for k in _konstanten(liste)[1:] if isinstance(k, str)]
-        return name.removesuffix(".exe") in _SHELL and any(k in _SHELL_BEFEHL for k in rest)
+        return name in _SHELL and any(k in _SHELL_BEFEHL for k in rest)
     return False
 
 
@@ -316,6 +350,8 @@ def _funde_in(quelle: str, rel: str) -> set[tuple[str, str]]:
 # die Tür ``to_spawn.starter`` dort nicht importieren (#447: enger auf parts[0] == "probe").
 _AUSSER = {".git", ".review", ".ruff_cache", "__pycache__", ".venv", "node_modules"}
 _AUSSER_OBEN = {"tests", "probe"}
+#: Attrappen-Ordner, den die Tür unter Test starten lässt — darum geprüft wie Skill-Code (#1412/#868).
+_HILFEN = starter._TEST_HILFEN.relative_to(starter._SKILL).parts
 
 
 def _start_stellen(wurzel: Path = SKILL) -> set[tuple[str, str]]:
@@ -323,7 +359,7 @@ def _start_stellen(wurzel: Path = SKILL) -> set[tuple[str, str]]:
     for datei in wurzel.rglob("*.py"):  # ganzes Repo außer Tests, Probe-Vorlagen und Werkzeug-Ordnern
         rel = datei.relative_to(wurzel).as_posix()
         teile = Path(rel).parts
-        if teile[0] in _AUSSER_OBEN or _AUSSER & set(teile):
+        if (teile[0] in _AUSSER_OBEN and teile[: len(_HILFEN)] != _HILFEN) or _AUSSER & set(teile):
             continue
         if rel != "to_spawn/starter.py":
             funde |= _funde_in(datei.read_text(encoding="utf-8"), rel)
@@ -373,6 +409,14 @@ def _start_stellen(wurzel: Path = SKILL) -> set[tuple[str, str]]:
         "from subprocess import getstatusoutput\ndef f(z):\n    getstatusoutput(z)",
         'import pty\ndef f():\n    pty.spawn(["bash"])',
         'from pty import spawn\ndef f():\n    spawn(["bash"])',
+        # #1412/#868 Lücke 1: tmux/Shell mit dynamischem Unterbefehl
+        'import subprocess\ndef f(x):\n    subprocess.run(["tmux", *x])',
+        'import subprocess\ndef f(u):\n    subprocess.run(["tmux", u, "-n", "x"])',
+        'import subprocess\ndef f(x):\n    subprocess.check_output(["bash", *x])',
+        # #1412/#868 Lücke 3: ssh/claude als Argument eines Helfers (Freigabe gilt je Funktion)
+        'def f(self, ziel):\n    self.sh("ssh", ziel, "bash x.sh")',
+        'from x import sh\ndef f(z):\n    sh("ssh", z, "true")',
+        'def f(h):\n    h.lauf(["claude", "-p", "x"])',
     ],
 )
 def test_pruef_test_meldet_versteckte_start(quelle: str) -> None:
@@ -385,6 +429,11 @@ def test_pruef_test_meldet_versteckte_start(quelle: str) -> None:
         'import subprocess\ndef f():\n    subprocess.run(["git", "status"])',
         'import subprocess as sp\ndef f():\n    sp.run(["tmux", "list-windows"])',
         'from subprocess import run\ndef f():\n    run(["gh", "issue", "view"])',
+        # #1412/#868: Programm suchen ist kein Start; start=True geht durch die Tür
+        'import shutil\ndef f():\n    shutil.which("ssh")',
+        'from to_spawn import starter\ndef f():\n    starter.finde("claude")',
+        'def f(self):\n    self.sh("ssh", "x", "true", start=True)',
+        'import subprocess\ndef f(z):\n    subprocess.run(["tmux", "capture-pane", "-t", z])',
     ],
 )
 def test_pruef_test_laesst_lese_befehle_durch(quelle: str) -> None:
@@ -407,6 +456,69 @@ def test_pruef_test_sucht_auch_in_unter_ordnern_namens_probe(tmp_path: Path) -> 
         datei.parent.mkdir(parents=True, exist_ok=True)
         datei.write_text('import subprocess\ndef f():\n    subprocess.Popen(["x"])\n', encoding="utf-8")
     assert _start_stellen(tmp_path) == {("to_spawn/probe/x.py", "f")}
+
+
+def test_pruef_test_sucht_in_test_hilfen(tmp_path: Path) -> None:
+    """#1412/#868 Lücke 2: ``tests/hilfen`` darf unter Test starten (``_TEST_HILFEN``) — also prüfen."""
+    datei = tmp_path / "tests" / "hilfen" / "probe.py"
+    datei.parent.mkdir(parents=True)
+    datei.write_text('import subprocess\ndef f():\n    subprocess.Popen(["x"])\n', encoding="utf-8")
+    assert _start_stellen(tmp_path) == {("tests/hilfen/probe.py", "f")}
+
+
+def test_cmd_ziel_mit_umbruch_meldet_klaren_grund() -> None:
+    """#1412/#868 Lücke 4: npm-Shim ``claude.cmd`` + mehrzeiliger Prompt (jeder Bau-Start) —
+    kein Start, aber eine Meldung mit Programm und Abhilfe statt eines rätselhaften Abbruchs."""
+    for prompt in ("zeile1\nzeile2", 'mit "Zitat"'):
+        with pytest.raises(ValueError, match=r"claude\.cmd.*claude\.exe"):
+            starter._cmd_zeile(["C:/npm/claude.cmd", "-p", prompt])
+
+
+def test_tmux_ersatz_new_window_ohne_session_scheitert(tmp_path: Path) -> None:
+    """#1412/#868 Lücke 6: echtes tmux scheitert bei ``new-window`` ohne Session (Exit 1);
+    der Ersatz meldete 0 und hätte einen falschen Fenster-Start durchgelassen."""
+    stub = SKILL / "tests" / "hilfen" / "tmux_stub_284.py"
+    env = {**os.environ, "FAKE_TMUX_FENSTER": str(tmp_path / "keine_session.txt")}
+    lauf = subprocess.run(
+        [sys.executable, str(stub), str(tmp_path / "p.jsonl"), "new-window", "-t", "=spec-1", "-n", "x"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert lauf.returncode == 1, lauf.stderr
+    neu = subprocess.run(
+        [sys.executable, str(stub), str(tmp_path / "p.jsonl"), "new-session", "-d", "-s", "spec-1"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert neu.returncode == 0, neu.stderr
+
+
+def test_umzug_ssh_ohne_attrappe_scheitert_laut(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#1412/#868 Lücke 5 (bewusst so): ``umzug._ssh`` fängt ``StartGesperrt`` nicht. Ein Test ohne
+    ssh-Attrappe (z. B. ``_bau`` in ``test_umzug_212``) soll laut scheitern, nie still ``None``
+    („Server nicht erreichbar“) bekommen und weiterlaufen."""
+    from to_spawn import umzug
+
+    monkeypatch.setenv("PATH", str(tmp_path))
+    with pytest.raises(starter.StartGesperrt):
+        umzug._ssh("bau-server", "true", 5)
+
+
+def test_sicherung_merken_kennt_den_pfad_selbst(tmp_path: Path) -> None:
+    """#1412/#868 Lücke 7: Aufrufer nennt Repo + Name, das Pfad-Wissen bleibt in ``sessions_datei``."""
+    from to_spawn import sessions_datei
+
+    datei = sessions_datei.pfad(tmp_path, "7")
+    datei.parent.mkdir(parents=True)
+    datei.write_bytes(b'{"session_id": "a"}')
+    sicherung = sessions_datei.Sicherung.merken(tmp_path, "7")
+    datei.write_bytes(b'{"session_id": "b"}')
+    assert sicherung.zuruecklegen()
+    assert datei.read_bytes() == b'{"session_id": "a"}'
 
 
 def test_keine_start_stelle_ausserhalb_der_tuer() -> None:

@@ -18,6 +18,25 @@ from .ticket_zustand import STAGING_FERTIG_LABEL
 #: Überschrift der Entscheidungs-Linie (#376).
 LINIE_KOPF = "Entscheidungs-Linie"
 
+#: Kennzeichen im Commit-Betreff an der Spitze für Fix-Commits auf einem roten Hauptzweig (#900).
+MASTER_ROT_KENNZEICHEN = "(master-rot)"
+
+
+def master_rot_regel(hauptzweig: str = "", kennzeichen: str = MASTER_ROT_KENNZEICHEN) -> str:
+    """Regel für Fix-Commits auf einem roten Hauptzweig (#900, aus App #1532).
+
+    Steht an genau einer Stelle im Skill und wird über ``{MASTER_ROT_REGEL}`` in
+    ``skripte/bau.py`` in den Start-Text jeder Bau-Session eingesetzt.
+    """
+    zweig = f"`origin/{hauptzweig}`" if hauptzweig else "dem Hauptzweig"
+    return (
+        f"Fix für roten Hauptzweig ({zweig}): Betreff des Spitzen-Commits trägt "
+        f"„{kennzeichen}“ (z. B. `fix: … {kennzeichen} (#<N>)`), damit die "
+        f"Warteschlange den Fix vor regulären Tickets durchlässt — nur für echte "
+        f"Reparaturen eines roten {zweig}, nie für normale Tickets."
+    )
+
+
 #: Mindset (E10, E41, E40, E42): steht wortgleich im Aufseher-Prompt, in jedem
 #: Anstupser und in der Bau-Prompt-Vorlage.
 MINDSET = (
@@ -73,7 +92,7 @@ ABLOESE_SOP = (
 1) Handoff: die volle Session schreibt ihren Handoff (Bau-Session `docs/handoffs/HANDOFF_<datum>_<N>.md` im Ticket-Worktree, Aufseher `docs/HANDOFF_<datum>_waechter_<S>.md`, ohne Ticket `.claude-handoff.md`), committet ihn mit Pathspec + [skip ci] und bringt ihn hoch (Bau-Session: pusht ihn auf den zuletzt gepushten `wip/<N>-<kurzname>`; Aufseher: `to_spawn.py einreichen <S>` — geht über `ticket/<S>-uebergabe` ohne Rückfrage auf den Hauptzweig, nie selbst auf den Hauptzweig pushen). Unter „Wartet auf den Menschen“ stehen in Übergaben nie Aufräumen, RAM, Platte oder Neustart.
 2) Startprompt: sie gibt einen fertigen Startprompt für die Folgesession aus und legt ihn als Datei ab (`docs/handoffs/START_<datum>_<N>.txt` bzw. `docs/handoffs/START_<datum>_waechter_<S>.txt`) — mit Pfad zur Handoff-Datei, Ticket-/Spec-Nummer und Branch; Handoff und Startprompt entstehen immer zusammen (ein Commit). Bau-Session: der Startprompt trägt den Abschnitt „"""
     + _BEFUGNIS_KOPF
-    + """ …“ aus dem eigenen Start-Auftrag wörtlich und vollständig, damit die Folgesession dieselbe Befugnis hat. Danach tut die alte Session nichts mehr (keine Zeile „Staffel: weiter“); eine Bau-Session hält dabei ihren Weckruf (ScheduleWakeup 600 s, noop: true), bis sie abgelöst ist — höchstens einmal, danach Loop mit stop: true beenden (Ablösung greift nicht: letzte Staffel-Runde, anderer Arbeitsordner, Sperre belegt). Bau-Session: Ablösung ab dem Ziel-Wert der Smart Zone (laufenden Schritt abschließen), spätestens an der Handoff-Grenze.
+    + """ …“ aus dem eigenen Start-Auftrag wörtlich und vollständig, damit die Folgesession dieselbe Befugnis hat. Danach tut die alte Session nichts mehr (keine Zeile „Staffel: weiter“); eine Bau-Session hält dabei ihren Weckruf (ScheduleWakeup 600 s, noop: true), bis sie abgelöst ist — höchstens einmal, danach Loop mit stop: true beenden (Ablösung greift nicht: letzte Staffel-Runde, anderer Arbeitsordner, Sperre belegt). Bau-Session: Ablösung ab dem Ziel-Wert der Smart Zone laut `~/.claude/smart-zone.json` (laufenden Schritt abschließen), spätestens an der Handoff-Grenze.
 3) Neue Session öffnen, Remote Control aktiv — Bau-Server: neues tmux-Fenster in `spec-<S>` (`bau <N> neu` mit `bau <N> --sofort --ohne-prompt`, darin `/remote-control`); PC (kein tmux, nichts tippbar): `to_spawn.py respawn <S> <N>` beendet die alte Session samt `bau.py` und Tab und öffnet einen neuen Windows-Terminal-Tab `bau <N>` mit `bau.py <N> --sofort --remote-control` und dem Handoff-Auftrag — Schritt 4 entfällt dort.
 4) Startprompt aus der Datei in die neue Session einfügen.
 5) Die neue Session schließt die alte — erst wenn sie übernommen hat (Startprompt angenommen, erste Antwortzeile da); vorher bleibt die alte stehen.
@@ -179,7 +198,9 @@ ABSCHLUSS_ANWEISUNG = (
     "Live-Schritt nur über `python {SKILL}/to_spawn.py live {S}` (die Tür prüft selbst vorher die Komplett-Prüfung, höchstens einmal je Spec): "
     "Exit 0 → live; Exit 1 → kein Live, Grund aus der Zeile beheben und erneut rufen; "
     "Exit 2 → `live.befehl` fehlt, Komplett-Prüfung grün, Live-Schritt nach Repo-Ablauf von Hand. "
-    "Ohne ausdrückliches Wort des Nutzers geht nichts live. "
+    "Ohne ausdrückliches Wort des Nutzers geht nichts live — der Abnahme-Kommentar „passt“ des Nutzers im Abnahme-Ticket "
+    "ist die Live-Freigabe für diese Spec (kein zweites Live-Ja, keine Briefkasten-Frage): direkt `python {SKILL}/to_spawn.py live {S}` "
+    "(startet ohne Staging vorher die Komplett-Prüfung), dann Aufräumen. "
     "Meldet der Nutzer nach dem Abnahme-Paket Nachbesserungen (Kommentar im Spec-Issue), je Punkt ein Folge-Ticket an derselben Spec ausschließlich über "
     '`python {SKILL}/skripte/abschluss_paket.py nachbesserung {S} --punkt "<Punkt>"` anlegen (nie über `befund --stufe gelb`; Manifest ergänzt, Kette baut weiter); '
     "sind die Folge-Tickets fertig, läuft der Abnahme-Abschluss erneut (neue Rundschau, neue Selbstprüfung, `thermo_lauf.py live-bereit plan {S} --neu`, "
