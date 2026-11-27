@@ -437,9 +437,9 @@ def baue_parser() -> _Parser:
         "aufraeumen",
         help="alten Arbeitsordner aufräumen (Vorgabe: Trockenlauf)",
         epilog=(
-            "Hinweis (#615): Kennt der installierte Skill (~/.claude/skills/to-spawn) "
-            "--helfer-altbestand noch nicht, Skill aus dem Repo aktualisieren "
-            "(Linux: ./install.sh, Windows: .\\install.ps1) oder to_spawn.py direkt aus dem Skill-Repo aufrufen."
+            "Hinweis (#615): Kennt der installierte Skill --helfer-altbestand noch nicht, "
+            "Skill aus dem Repo aktualisieren (Linux: ./install.sh, Windows: .\\install.ps1) "
+            "oder to_spawn.py direkt aus dem Skill-Repo aufrufen."
         ),
     )
     p_aufr.add_argument("ordner", type=Path, nargs="?")

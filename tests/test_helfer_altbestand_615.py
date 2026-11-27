@@ -342,6 +342,7 @@ def test_cli_hilfe_nennt_aktualisierung_und_zeitgrenze(capsys: pytest.CaptureFix
     assert "--helfer-altbestand" in hilfe
     assert "--zeitgrenze" in hilfe
     assert "install.sh" in hilfe
+    assert "~/.claude/skills/to-spawn" not in hilfe
 
     with pytest.raises(SystemExit) as err1:
         cli.main(["aufraeumen", "--helfer-altbestand", "--zeitgrenze", "0"])
