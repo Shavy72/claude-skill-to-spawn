@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeAlias
 
-from . import config, gh, manifest, spec_rand, ticket_zustand
+from . import bau_log, config, gh, manifest, spec_rand, ticket_zustand
 
 log = logging.getLogger("to_spawn.befund")
 
@@ -84,6 +84,14 @@ class GelbeFolge:
 GH_ZEITLIMIT_S = 30
 
 
+def _protokoll_schreiben(typ: str, *, repo: Path | None, **felder: Any) -> None:
+    """Pflicht-Ereignis des Aufsehers ins Ereignis-Protokoll schreiben — Fehler kippen nie den Aufruf (#903)."""
+    try:
+        bau_log.schreibe(typ, repo=repo, **felder)
+    except (OSError, ValueError, TimeoutError) as fehler:
+        log.warning("Ereignis-Protokoll (%s) nicht geschrieben: %s", typ, fehler)
+
+
 def melde(
     repo: Path,
     gh_repo: str,
@@ -104,7 +112,7 @@ def melde(
         raise ValueError(f"Stufe {stufe!r} unbekannt — erlaubt: {', '.join(STUFEN)}")
     n = int(ticket)
     if stufe == "rot":
-        return _oeffne(n, gh_repo, [(REGEL_ROT, text)], dry_run)
+        return _oeffne(n, gh_repo, [(REGEL_ROT, text)], dry_run, repo=repo)
     return _folge_ticket(repo, gh_repo, int(spec), n, text, dry_run)
 
 
@@ -164,13 +172,20 @@ _uhr: Callable[[], float] = time.monotonic
 _gesendet: dict[tuple[str, str, str, str], float] = {}
 
 
-def wieder_oeffnen(n: int, gh_repo: str, gruende: Sequence[tuple[str, str]], dry_run: bool) -> list[str]:
+def wieder_oeffnen(
+    n: int,
+    gh_repo: str,
+    gruende: Sequence[tuple[str, str]],
+    dry_run: bool,
+    *,
+    repo: Path | None = None,
+) -> list[str]:
     """Ticket einmal wieder öffnen; letzte Zeile ``#N wieder geöffnet`` = geklappt.
 
     ``gruende`` sind Paare (Regel, Text); Kommentar-Form siehe :func:`_gruende_text`. Zeilen-API
     für capo (prüft den Zeilentext); :func:`melde` nutzt dieselbe Regel mit ok-Flag.
     """
-    return _oeffne(n, gh_repo, gruende, dry_run).zeilen
+    return _oeffne(n, gh_repo, gruende, dry_run, repo=repo).zeilen
 
 
 def erneut_melden(n: int, gh_repo: str, gruende: Sequence[tuple[str, str]], dry_run: bool) -> list[str]:
@@ -203,16 +218,43 @@ def _gruende_text(gruende: Sequence[tuple[str, str]]) -> str:
     return f"{KOPF} {len(paare)} Verstöße: {regeln}\n{KOPF} {texte}"
 
 
-def _oeffne(n: int, gh_repo: str, gruende: Sequence[tuple[str, str]], dry_run: bool) -> Ergebnis:
+def _oeffne(
+    n: int,
+    gh_repo: str,
+    gruende: Sequence[tuple[str, str]],
+    dry_run: bool,
+    *,
+    repo: Path | None = None,
+) -> Ergebnis:
     if dry_run:
         return Ergebnis(ok=True, zeilen=[f"#{n} [Probe] würde wieder öffnen"])
     kommentar = _gruende_text(gruende)
     if kommentiere(n, gh_repo, kommentar, befehl="reopen"):
+        grund_text = "; ".join(f"{r}: {' '.join(str(t).split())}" for r, t in gruende) or kommentar
+        _protokoll_schreiben(
+            "wiedereroeffnen",
+            repo=repo,
+            ticket=n,
+            wer="aufseher",
+            was=f"Ticket #{n} wieder geöffnet",
+            session="aufseher",
+            commit=bau_log.git_kopf_kurz(repo, n),
+            grund=grund_text,
+            kontextstand=bau_log.kontextstand_aktuell(repo, n),
+            idempotenz_schluessel=f"wiedereroeffnen:{n}:{grund_text}",
+        )
         return Ergebnis(ok=True, zeilen=[f"#{n} wieder geöffnet"])
     return Ergebnis(ok=False, zeilen=[f"#{n} FEHLER: wieder öffnen gescheitert"])
 
 
-def zuruecknehmen(n: int, gh_repo: str, text: str, dry_run: bool) -> Ergebnis:
+def zuruecknehmen(
+    n: int,
+    gh_repo: str,
+    text: str,
+    dry_run: bool,
+    *,
+    repo: Path | None = None,
+) -> Ergebnis:
     """Eigenes Fehl-Reopen zurücknehmen: Ticket wieder schließen, mit Kommentar (#448).
 
     ``ok`` = Ticket wirklich geschlossen; sonst Probelauf oder gescheitert (``FEHLER``-Zeile,
@@ -223,6 +265,18 @@ def zuruecknehmen(n: int, gh_repo: str, text: str, dry_run: bool) -> Ergebnis:
         return Ergebnis(ok=False, zeilen=[f"#{n} [Probe] würde Fehl-Reopen zurücknehmen"])
     kommentar = f"{KOPF} Fehl-Reopen zurückgenommen — {text}"
     if kommentiere(n, gh_repo, kommentar, befehl="close"):
+        _protokoll_schreiben(
+            "schliessen",
+            repo=repo,
+            ticket=n,
+            wer="aufseher",
+            was=f"Fehl-Reopen #{n} zurückgenommen (geschlossen)",
+            session="aufseher",
+            commit=bau_log.git_kopf_kurz(repo, n),
+            grund=text,
+            kontextstand=bau_log.kontextstand_aktuell(repo, n),
+            idempotenz_schluessel=f"schliessen:ruecknahme:{n}:{text}",
+        )
         return Ergebnis(ok=True, zeilen=[f"#{n} Fehl-Reopen zurückgenommen"])
     log.warning("Fehl-Reopen #%s nicht zurückgenommen.", n)
     return Ergebnis(ok=False, zeilen=[f"#{n} FEHLER: Fehl-Reopen zurücknehmen gescheitert"])
@@ -500,5 +554,17 @@ def spec_schliessen(repo: Path, gh_repo: str, spec: int, abruf: Abruf | None = N
         )
     text = f"Spec geschlossen über `to_spawn.py spec-schliessen {spec}` — alle Folge-Tickets erledigt."
     if kommentiere(spec, gh_repo, text, befehl="close"):
+        _protokoll_schreiben(
+            "schliessen",
+            repo=repo,
+            ticket=spec,
+            wer="aufseher",
+            was=f"Spec #{spec} geschlossen",
+            session="aufseher",
+            commit=bau_log.git_kopf_kurz(repo),
+            grund="alle Folge-Tickets erledigt",
+            kontextstand=bau_log.kontextstand_aktuell(repo, spec),
+            idempotenz_schluessel=f"schliessen:spec:{spec}",
+        )
         return Ergebnis(ok=True, zeilen=[f"Spec #{spec} geschlossen"])
     return Ergebnis(ok=False, zeilen=[f"FEHLER: Spec #{spec} nicht geschlossen (gh issue close)"])

@@ -1,18 +1,21 @@
-"""Bau-Log und Ereignis-Protokoll (#902 / #1395).
+"""Bau-Log und Ereignis-Protokoll (#902 / #1395 / #903 / #1398).
 
-Neue Schreib-Tür ``schreibe(typ, **felder)`` für das gemeinsame Ereignis-Protokoll:
+Schreib-Tür ``schreibe(typ, **felder)`` für das gemeinsame Ereignis-Protokoll:
 - Prüft die Pflichtfelder (``zeit``, ``ticket``, ``wer``, ``was``, ``session``,
   ``commit``, ``grund``, ``kontextstand``).
 - Hält beim Schreiben eine lokale Datei-Sperre über :mod:`to_spawn.sperre`.
 - Puffert Zeilen unter ``~/.local/state/to-spawn/protokoll`` (nie im Worktree).
 - Schiebt den Puffer gebündelt per Git-Plumbing (ohne Arbeitsbaum-/Index-Eingriff)
   auf den verwaisten Zweig ``protokoll`` (``bau_log/<Ticket>.jsonl``), mit
-  Rebase/Retry bei Push-Konflikt und Offline-Puffer ohne Fehler an den Aufrufer.
+  Rebase/Retry bei Push-Konflikt, Idempotenz per ``idempotenz_schluessel`` und
+  Offline-Puffer ohne Fehler an den Aufrufer.
+- Leser (``lese``, ``zusammenfassung``, ``alle_tickets``, ``hat_log``,
+  ``letzter_session_start``, ``kontext_aktuell_k``) lesen primär aus
+  ``origin/protokoll`` und lokalem Puffer (#903).
 
-Übergangsweise (bis #903 alle Altaufrufer und Leser umstellt) bleibt der alte
-3-Argumente-Aufruf ``schreibe(repo, ticket, typ, **felder)`` für die lokale
-Laufdatei ``.to-spawn/bau_log/<N>.jsonl`` und ``eintrag_schreiben`` für
-``docs/agents/bau_log/<N>.jsonl`` erhalten.
+Alt-Kompatibilität für historische lokale Dateien/Aufrufer (Hooks, ``eintrag``,
+``vorfall`` und bestehende Tests) bleibt übergangsweise bestehen, bis alle
+Alt-Aufrufer und Alt-Tests umgestellt sind.
 """
 
 from __future__ import annotations
@@ -61,9 +64,10 @@ PFLICHTFELDER: tuple[str, ...] = (
     "kontextstand",
 )
 
-#: Verwaistes Git-Ziel des Ereignis-Protokolls (#902 / #1395).
+#: Verwaistes Git-Ziel des Ereignis-Protokolls (#902 / #1395 / #903).
 PROTOKOLL_ZWEIG = "protokoll"
 PROTOKOLL_REF = f"refs/heads/{PROTOKOLL_ZWEIG}"
+PROTOKOLL_REMOTE_REF = f"refs/remotes/origin/{PROTOKOLL_ZWEIG}"
 PROTOKOLL_BAUM_ORDNER = "bau_log"
 #: Env-Überschreibungen für Tests und Sonderläufe.
 PROTOKOLL_PUFFER_ENV = "TO_SPAWN_PROTOKOLL_PUFFER"
@@ -72,6 +76,10 @@ PROTOKOLL_BUENDEL_ENV = "TO_SPAWN_PROTOKOLL_BUENDEL_S"
 #: Wartezeit auf die lokale Datei-Sperre (s) und maximale Konflikt-Wiederholungen beim Push.
 SPERR_WARTE_S = 30.0
 MAX_PUSH_VERSUCHE = 12
+#: Mindestabstand (s) zwischen zwei Netz-Fetches auf ``origin/protokoll`` im selben Prozess.
+_PROTOKOLL_FETCH_TAKT_S = 5.0
+_letzter_protokoll_fetch: dict[Path, float] = {}
+_NETZ_URL_MUSTER = re.compile(r"^(?:https?://|ssh://|git://|[^/\s\\]+@[^/\s\\]+:)", re.IGNORECASE)
 _TICKET_MUSTER = re.compile(r"^[A-Za-z0-9._-]+$")
 _TEXT_PFLICHTFELDER: tuple[str, ...] = ("wer", "was", "session", "commit", "grund")
 
@@ -153,7 +161,7 @@ def lauf_pfad(repo: Path, ticket: str | int) -> Path:
 
 
 def hat_log(repo: Path, ticket: str | int) -> bool:
-    return log_pfad(repo, ticket).is_file() or lauf_pfad(repo, ticket).is_file()
+    return hat_protokoll(repo, ticket) or log_pfad(repo, ticket).is_file() or lauf_pfad(repo, ticket).is_file()
 
 
 def log_ort(ticket: str | int, worktree: Path, hauptbaum: Path) -> Path | None:
@@ -243,6 +251,8 @@ def hat_log_auf_origin(repo: Path, ticket: str | int, *, hauptzweig: str | None 
     """
     from . import gh  # spät: gh fragt config, aber nicht bau_log
 
+    if _git(repo, "cat-file", "-e", f"{PROTOKOLL_REMOTE_REF}:{protokoll_datei_im_zweig(ticket)}")[0] == 0:
+        return True
     pfad = log_im_repo(repo, ticket)
     if Path(pfad).is_absolute():
         return False
@@ -556,6 +566,235 @@ def _merke_push_zeit(puffer: Path) -> None:
         (puffer / ".letzter_push").write_text(f"{time.time():.6f}\n", encoding="utf-8", newline="\n")
 
 
+def _idempotenz_schluessel_von(roh: str) -> str:
+    """Liest ``idempotenz_schluessel`` aus einer JSONL-Rohzeile (leer, wenn nicht gesetzt)."""
+    try:
+        eintrag = json.loads(roh)
+    except ValueError:
+        return ""
+    if not isinstance(eintrag, dict):
+        return ""
+    wert = eintrag.get("idempotenz_schluessel")
+    return wert.strip() if isinstance(wert, str) else ""
+
+
+def _hat_idempotenz_schluessel(roh_liste: Iterable[str], schluessel: str) -> dict[str, Any] | None:
+    """Sucht den ersten Eintrag mit passendem ``idempotenz_schluessel`` in Rohzeilen."""
+    if not schluessel:
+        return None
+    for roh in roh_liste:
+        if _idempotenz_schluessel_von(roh) == schluessel:
+            try:
+                eintrag = json.loads(roh)
+            except ValueError:
+                continue
+            if isinstance(eintrag, dict):
+                return eintrag
+    return None
+
+
+def _fehlende_mit_idempotenz(fest: list[str], lauf: list[str]) -> list[str]:
+    """Wie :func:`_fehlende`, überspringt aber zusätzlich doppelte ``idempotenz_schluessel``."""
+    gesehene_schluessel = {s for roh in fest if (s := _idempotenz_schluessel_von(roh))}
+    vorrat = Counter(fest)
+    fehlend: list[str] = []
+    for roh in lauf:
+        if vorrat[roh] > 0:
+            vorrat[roh] -= 1
+            continue
+        schluessel = _idempotenz_schluessel_von(roh)
+        if schluessel:
+            if schluessel in gesehene_schluessel:
+                continue
+            gesehene_schluessel.add(schluessel)
+        fehlend.append(roh)
+    return fehlend
+
+
+def _origin_darf_netz(repo: Path) -> tuple[bool, bool]:
+    """Prüft, ob ``repo`` ein nutzbares ``origin`` hat: ``(nutzbar, ist_netz_url)``.
+
+    Unter Test (:func:`starter.unter_test`) werden echte Netz-URLs (``https://``,
+    ``ssh://``, ``git@…``) nie angefunkt, damit Unit-Tests mit Attrappen-Origins kein
+    Netz brauchen; lokale Bare-Repos laufen voll echt (#903).
+    """
+    from . import gh, starter  # spät: gh/starter importieren config, aber nicht bau_log
+
+    if not repo.is_dir():
+        return False, False
+    url = gh._origin_url(repo)
+    if not url:
+        return False, False
+    ist_netz = bool(_NETZ_URL_MUSTER.match(url))
+    if ist_netz and starter.unter_test():
+        return False, True
+    return True, ist_netz
+
+
+def protokoll_holen(repo: Path, *, erzwingen: bool = False) -> bool:
+    """Aktualisiert ``refs/remotes/origin/protokoll`` per Plumbing-Fetch (ohne Arbeitsbaum-Eingriff, #903).
+
+    Bei lokalen Bare-Repos immer frisch; bei Netz-URLs im Betrieb höchstens alle
+    :data:`_PROTOKOLL_FETCH_TAKT_S` Sekunden (außer ``erzwingen=True``). Fehler werden
+    nur geloggt, nie nach oben geworfen.
+    """
+    from . import gh
+
+    nutzbar, ist_netz = _origin_darf_netz(repo)
+    if not nutzbar:
+        return False
+    schluessel = repo.resolve()
+    jetzt_mono = time.monotonic()
+    if ist_netz and not erzwingen:
+        letzter = _letzter_protokoll_fetch.get(schluessel)
+        if letzter is not None and (jetzt_mono - letzter) < _PROTOKOLL_FETCH_TAKT_S:
+            return True
+    code, _out, err = gh._git_lauf(
+        ["fetch", "-q", "--no-tags", "origin", f"+{PROTOKOLL_REF}:{PROTOKOLL_REMOTE_REF}"],
+        repo,
+        timeout=gh.FETCH_ZEIT_S,
+    )
+    if ist_netz:
+        _letzter_protokoll_fetch[schluessel] = time.monotonic()
+    if code != 0:
+        log.debug(
+            "Ereignis-Protokoll: Fetch von origin/%s in %s ohne Treffer (%s).", PROTOKOLL_ZWEIG, repo, err.strip()
+        )
+        return False
+    return True
+
+
+def protokoll_ref(repo: Path) -> str | None:
+    """``refs/remotes/origin/protokoll``, wenn im Repo vorhanden; sonst ``None`` (#903)."""
+    if not repo.is_dir():
+        return None
+    if _git(repo, "rev-parse", "--verify", "-q", PROTOKOLL_REMOTE_REF)[0] == 0:
+        return PROTOKOLL_REMOTE_REF
+    return None
+
+
+def _protokoll_rohzeilen_vom_ref(repo: Path, ticket: str | int) -> list[str]:
+    if not repo.is_dir():
+        return []
+    ticket_text = str(ticket).strip()
+    if not ticket_text or ".." in ticket_text or not _TICKET_MUSTER.fullmatch(ticket_text):
+        return []
+    pfad = protokoll_datei_im_zweig(ticket_text)
+    code, text = _git(repo, "show", f"{PROTOKOLL_REMOTE_REF}:{pfad}")
+    if code != 0 or not text:
+        return []
+    return [z.strip() for z in text.splitlines() if z.strip()]
+
+
+def _puffer_rohzeilen(ticket: str | int, puffer_ordner: Path | None = None) -> list[str]:
+    ticket_text = str(ticket).strip()
+    if not ticket_text or ".." in ticket_text or not _TICKET_MUSTER.fullmatch(ticket_text):
+        return []
+    puffer = Path(puffer_ordner).expanduser() if puffer_ordner is not None else protokoll_puffer_ordner()
+    datei = puffer / f"{ticket_text}.jsonl"
+    try:
+        return rohzeilen(datei)
+    except OSError as fehler:
+        log.warning("Protokoll-Puffer %s nicht lesbar: %s", datei, fehler)
+        return []
+
+
+def hat_protokoll(
+    repo: Path,
+    ticket: str | int,
+    *,
+    holen: bool = True,
+    puffer_ordner: Path | None = None,
+) -> bool:
+    """Liegt für ``ticket`` ein Ereignis-Protokoll auf ``origin/protokoll`` oder im Puffer (#903)?"""
+    if not repo.is_dir():
+        return False
+    ticket_text = str(ticket).strip()
+    if not ticket_text or ".." in ticket_text or not _TICKET_MUSTER.fullmatch(ticket_text):
+        return False
+    if holen:
+        protokoll_holen(repo)
+    pfad = protokoll_datei_im_zweig(ticket_text)
+    if _git(repo, "cat-file", "-e", f"{PROTOKOLL_REMOTE_REF}:{pfad}")[0] == 0:
+        return True
+    return bool(_puffer_rohzeilen(ticket_text, puffer_ordner))
+
+
+def protokoll_zeilen(
+    repo: Path,
+    ticket: str | int,
+    *,
+    holen: bool = True,
+    puffer_ordner: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Liest alle Ereignis-Protokoll-Zeilen für ``ticket`` aus ``origin/protokoll`` und lokalem Puffer (#903)."""
+    if holen:
+        protokoll_holen(repo)
+    remote_roh = _protokoll_rohzeilen_vom_ref(repo, ticket)
+    puffer_roh = _puffer_rohzeilen(ticket, puffer_ordner)
+    kombiniert = [*remote_roh, *_fehlende_mit_idempotenz(remote_roh, puffer_roh)]
+    paare = _parse_rohzeilen(kombiniert, f"{PROTOKOLL_REMOTE_REF}:{protokoll_datei_im_zweig(ticket)}")
+    return sorted((eintrag for _, eintrag in paare), key=_sortier_zeit)
+
+
+def protokoll_tickets(
+    repo: Path,
+    *,
+    holen: bool = True,
+    puffer_ordner: Path | None = None,
+) -> list[str]:
+    """Alle Ticket-Nummern, die auf ``origin/protokoll`` oder im lokalen Puffer liegen (#903)."""
+    nummern: set[str] = set()
+    if repo.is_dir():
+        if holen:
+            protokoll_holen(repo)
+        code, ausgabe = _git(repo, "ls-tree", "--name-only", PROTOKOLL_REMOTE_REF, f"{PROTOKOLL_BAUM_ORDNER}/")
+        if code == 0 and ausgabe:
+            for pfad_str in ausgabe.splitlines():
+                name = Path(pfad_str.strip()).name
+                if name.endswith(".jsonl"):
+                    stamm = name[:-6]
+                    if stamm.isdigit():
+                        nummern.add(stamm)
+    puffer = Path(puffer_ordner).expanduser() if puffer_ordner is not None else protokoll_puffer_ordner()
+    if puffer.is_dir():
+        nummern.update(p.stem for p in puffer.glob("*.jsonl") if p.stem.isdigit())
+    return sorted(nummern, key=int)
+
+
+def git_kopf_kurz(repo: Path | None, ticket: str | int | None = None) -> str:
+    """Kurzer HEAD-Commit des Ticket-Worktrees oder Repos; ``"-"``, wenn kein Commit lesbar (#903)."""
+    kandidaten: list[Path] = []
+    if repo is not None:
+        if ticket is not None:
+            try:
+                wt = Path(config.worktree_pfad(ticket, repo)).expanduser()
+            except (OSError, ValueError):
+                wt = None
+            if wt is not None and wt.is_dir():
+                kandidaten.append(wt)
+        if repo.is_dir():
+            kandidaten.append(repo)
+    for pfad in kandidaten:
+        code, sha = _git(pfad, "rev-parse", "--short", "HEAD")
+        if code == 0 and sha.strip():
+            return sha.strip()
+    return "-"
+
+
+def kontextstand_aktuell(repo: Path | None, ticket: str | int | None = None) -> float | int:
+    """Aktueller Kontextstand (in k) für Pflicht-Ereignisse; ``0``, wenn keiner vorliegt (#903)."""
+    if repo is None or ticket is None or not repo.is_dir():
+        return 0
+    try:
+        wert = kontext_aktuell_k(repo, ticket)
+        if wert is not None:
+            return wert
+    except (OSError, ValueError, KeyError, TypeError):
+        return 0
+    return 0
+
+
 def _plumbing_push_einmal(repo: Path, wartend: dict[str, list[str]]) -> tuple[bool, bool, str]:
     """Ein atomarer Git-Plumbing-Push aller gepufferten Tickets auf ``refs/heads/protokoll`` (#902).
 
@@ -564,8 +803,9 @@ def _plumbing_push_einmal(repo: Path, wartend: dict[str, list[str]]) -> tuple[bo
     """
     from . import gh  # spät: gh fragt config, aber nicht bau_log
 
-    if not gh.hat_origin(repo):
-        return False, False, "kein origin konfiguriert"
+    nutzbar, _ist_netz = _origin_darf_netz(repo)
+    if not nutzbar:
+        return False, False, "kein erreichbares origin konfiguriert"
 
     ok_ref, remote_sha, fehler_ref = gh.remote_ref_sha(repo, PROTOKOLL_REF)
     if not ok_ref:
@@ -609,7 +849,7 @@ def _plumbing_push_einmal(repo: Path, wartend: dict[str, list[str]]) -> tuple[bo
                     remote_roh = [z.strip() for z in s_cat.splitlines() if z.strip()] if c_cat == 0 else []
                 else:
                     remote_roh = []
-                fehlend = _fehlende(remote_roh, lokal_roh)
+                fehlend = _fehlende_mit_idempotenz(remote_roh, lokal_roh)
                 if not fehlend:
                     continue
                 neue_gesamt += len(fehlend)
@@ -657,7 +897,7 @@ def _plumbing_push_einmal(repo: Path, wartend: dict[str, list[str]]) -> tuple[bo
 
         ok_push, konflikt, fehler_push = gh.remote_ref_cas_setzen(repo, PROTOKOLL_REF, commit_sha, parent_sha)
         if ok_push:
-            gh._git_lauf(["update-ref", f"refs/remotes/origin/{PROTOKOLL_ZWEIG}", commit_sha], repo)
+            gh._git_lauf(["update-ref", PROTOKOLL_REMOTE_REF, commit_sha], repo)
             return True, False, ""
         return False, konflikt, fehler_push
     finally:
@@ -779,22 +1019,39 @@ def schreibe(*args: Any, **felder: Any) -> dict[str, Any]:
     repo_vorgabe = felder.pop("repo", None) if isinstance(felder.get("repo"), (Path, os.PathLike)) else None
     puffer_vorgabe = felder.pop("puffer_ordner", None)
     sofort_push = felder.pop("sofort_push", None)
+    idem_roh = felder.pop("idempotenz_schluessel", None)
+    idem_schluessel = idem_roh.strip() if isinstance(idem_roh, str) else ""
+    if idem_schluessel:
+        felder["idempotenz_schluessel"] = idem_schluessel
 
     zeile = _pruefe_pflichtfelder(typ_wert, felder)
     puffer = Path(puffer_vorgabe).expanduser() if puffer_vorgabe is not None else protokoll_puffer_ordner()
     ziel_repo = _protokoll_repo(Path(repo_vorgabe) if repo_vorgabe is not None else None)
     _pruefe_puffer_ausserhalb(puffer, ziel_repo)
 
+    if idem_schluessel and ziel_repo is not None:
+        protokoll_holen(ziel_repo)
+        vorhanden = _hat_idempotenz_schluessel(
+            _protokoll_rohzeilen_vom_ref(ziel_repo, zeile["ticket"]), idem_schluessel
+        )
+        if vorhanden is not None:
+            return vorhanden
+
     roh = json.dumps(zeile, ensure_ascii=False)
     puffer_sperre = puffer / "puffer.lock"
+    ticket_datei = puffer / f"{zeile['ticket']}.jsonl"
+    doppelt: dict[str, Any] | None = None
     with sperre.halte(puffer_sperre, warten=SPERR_WARTE_S) as gehalten:
         if not gehalten:
             raise TimeoutError(f"Ereignis-Protokoll: Puffer-Sperre {puffer_sperre} nach {SPERR_WARTE_S:.1f} s belegt.")
-        _haenge_an(puffer / f"{zeile['ticket']}.jsonl", [roh])
+        if idem_schluessel:
+            doppelt = _hat_idempotenz_schluessel(rohzeilen(ticket_datei), idem_schluessel)
+        if doppelt is None:
+            _haenge_an(ticket_datei, [roh])
         darf_pushen = bool(sofort_push) if sofort_push is not None else _buendel_faellig(puffer, _buendel_intervall_s())
     if darf_pushen:
         _schiebe_puffer(puffer, ziel_repo)
-    return zeile
+    return doppelt if doppelt is not None else zeile
 
 
 def _laufzeilen(repo: Path, ticket: str | int, hauptbaum: Path | None) -> list[str]:
@@ -835,44 +1092,74 @@ def spiegel_in_laufdatei(repo: Path, ticket: str | int, zeile: dict[str, Any]) -
     _haenge_an(lauf, [roh])
 
 
-def _lese_datei(datei: Path) -> list[tuple[str, dict[str, Any]]]:
+def _parse_rohzeilen(roh_liste: Iterable[str], quelle: str) -> list[tuple[str, dict[str, Any]]]:
     paare: list[tuple[str, dict[str, Any]]] = []
-    for roh in rohzeilen(datei):
+    for roh in roh_liste:
         try:
             eintrag = json.loads(roh)
         except ValueError:
-            log.warning("Kaputte Log-Zeile in %s übersprungen.", datei)
+            log.warning("Kaputte Log-Zeile in %s übersprungen.", quelle)
             continue
         if isinstance(eintrag, dict):
             paare.append((roh, eintrag))
     return paare
 
 
+def _lese_datei(datei: Path) -> list[tuple[str, dict[str, Any]]]:
+    return _parse_rohzeilen(rohzeilen(datei), str(datei))
+
+
 def _sortier_zeit(zeile: dict[str, Any]) -> datetime:
     return _zeitpunkt(zeile.get("zeit") or zeile.get("ts")) or datetime.min.replace(tzinfo=UTC)
 
 
-def lese(repo: Path, ticket: str | int, *, hauptbaum: Path | None = None) -> list[dict[str, Any]]:
-    """Alle Zeilen eines Tickets: versioniert ∪ Laufdatei, nach ``ts`` sortiert.
+def lese(
+    repo: Path,
+    ticket: str | int,
+    *,
+    hauptbaum: Path | None = None,
+    holen: bool = True,
+    puffer_ordner: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Alle Zeilen eines Tickets: ``origin/protokoll`` ∪ Puffer ∪ Altbestand, nach ``zeit``/``ts`` sortiert (#903).
 
-    Zeilen, die exakt gleich in beiden Dateien stehen, zählen einmal. Kaputte Zeilen
-    werden übersprungen. ``hauptbaum`` nimmt die Rückfall-Laufdatei dort dazu (#257).
+    Liest primär aus ``origin/protokoll`` (``bau_log/<Ticket>.jsonl``) und noch nicht
+    gepushten Puffer-Zeilen. Historische lokale Dateien (versioniert und Laufdatei) werden
+    für Übergang und Alttests zusammengeführt; doppelte Zeilen und doppelte
+    ``idempotenz_schluessel`` zählen einmal.
     """
+    protokoll_roh: list[str] = []
+    if repo.is_dir():
+        if holen:
+            protokoll_holen(repo)
+        protokoll_roh = _protokoll_rohzeilen_vom_ref(repo, ticket)
+    if (
+        not protokoll_roh
+        and hauptbaum is not None
+        and hauptbaum.is_dir()
+        and (not repo.is_dir() or hauptbaum.resolve() != repo.resolve())
+    ):
+        if holen:
+            protokoll_holen(hauptbaum)
+        protokoll_roh = _protokoll_rohzeilen_vom_ref(hauptbaum, ticket)
+    puffer_roh = _puffer_rohzeilen(ticket, puffer_ordner)
+
+    basis_roh = [*protokoll_roh, *_fehlende_mit_idempotenz(protokoll_roh, puffer_roh)]
     fest = _lese_datei(log_pfad(repo, ticket))
     lauf = _lese_datei(lauf_pfad(repo, ticket))
     if hauptbaum is not None and hauptbaum.resolve() != repo.resolve():
         lauf += _lese_datei(lauf_pfad(hauptbaum, ticket))
-    fehlend = Counter(_fehlende([roh for roh, _ in fest], [roh for roh, _ in lauf]))
-    zeilen = [eintrag for _, eintrag in fest]
-    for roh, eintrag in lauf:
-        if fehlend[roh] > 0:
-            fehlend[roh] -= 1
-            zeilen.append(eintrag)
-    return sorted(zeilen, key=_sortier_zeit)  # stabil: gleiche Zeit behält Reihenfolge
+
+    fest_roh = [roh for roh, _ in fest]
+    lauf_roh = [roh for roh, _ in lauf]
+    lokal_roh = [*fest_roh, *_fehlende(fest_roh, lauf_roh)]
+    ergaenzt_roh = _fehlende_mit_idempotenz(basis_roh, lokal_roh)
+    paare = _parse_rohzeilen([*basis_roh, *ergaenzt_roh], f"bau_log #{ticket}")
+    return sorted((eintrag for _, eintrag in paare), key=_sortier_zeit)
 
 
 def alle_tickets(repo: Path) -> list[str]:
-    nummern: set[str] = set()
+    nummern: set[str] = set(protokoll_tickets(repo))
     for ordner in (log_ordner(repo), repo / LAUF_ORDNER):
         if ordner.is_dir():
             nummern.update(p.stem for p in ordner.glob("*.jsonl") if p.stem.isdigit())
@@ -940,6 +1227,28 @@ def _juengste_je_session(zeilen: Iterable[dict[str, Any]]) -> list[dict[str, Any
     return [*je_id.values(), *ohne_id]
 
 
+def _kontextstand_k(wert: Any) -> float | None:
+    """Kontextstand eines Ereignis-Protokoll-Eintrags in Tausend Token (k), ``None`` ohne Wert."""
+    if wert is None or isinstance(wert, bool):
+        return None
+    zahl: float
+    if isinstance(wert, (int, float)):
+        zahl = float(wert)
+    elif isinstance(wert, str):
+        sauber = wert.strip().rstrip("kK").replace(",", ".").strip()
+        if not sauber:
+            return None
+        try:
+            zahl = float(sauber)
+        except ValueError:
+            return None
+    else:
+        return None
+    if zahl <= 0:
+        return None
+    return round(zahl / 1000, 1) if zahl > 2000 else round(zahl, 1)
+
+
 def kontext_aktuell_k(
     repo: Path,
     ticket: str | int,
@@ -947,31 +1256,40 @@ def kontext_aktuell_k(
     hauptbaum: Path | None = None,
     nach: float | None = None,
 ) -> float | None:
-    """Spitzen-Kontext (k) der aktuellen Hauptsession — für die Eingriffs-Leiter (#432).
+    """Spitzen-Kontext (k) der aktuellen Hauptsession — für die Eingriffs-Leiter (#432, #903).
 
-    Zählt nur die jüngste ``session_ende``-Zeile (die Hooks schreiben kumulierte
-    Werte, die jüngste Zeile gehört also zur jüngsten Session). ``nach`` (Unix-Zeit,
-    z. B. der letzte Respawn) blendet ältere Zeilen aus. ``None`` = keine passende
-    Zeile oder kein Kontext-Wert — nie der Wert einer abgelösten Session.
+    Zählt primär die jüngste ``session_ende``-Zeile (kumulierte Hook-Werte); liegen nur
+    Ereignis-Protokoll-Zeilen vor, gilt der jüngste positive ``kontextstand``. ``nach``
+    (Unix-Zeit, z. B. der letzte Respawn) blendet ältere Zeilen aus.
     """
+    alle = lese(repo, ticket, hauptbaum=hauptbaum)
     enden = [
-        z
-        for z in lese(repo, ticket, hauptbaum=hauptbaum)
-        if z.get("typ") == "session_ende" and (nach is None or _sortier_zeit(z).timestamp() > nach)
+        z for z in alle if z.get("typ") == "session_ende" and (nach is None or _sortier_zeit(z).timestamp() > nach)
     ]
     spitzen = _spitzen(enden[-1:])
-    return _k(spitzen[0]) if spitzen else None
+    if spitzen:
+        return _k(spitzen[0])
+    if enden:
+        return None
+    proto_werte = [
+        k
+        for z in alle
+        if (nach is None or _sortier_zeit(z).timestamp() > nach)
+        and (k := _kontextstand_k(z.get("kontextstand"))) is not None
+    ]
+    return proto_werte[-1] if proto_werte else None
 
 
 def letzter_session_start(repo: Path, ticket: str | int, *, hauptbaum: Path | None = None) -> float | None:
-    """Unix-Zeit der jüngsten ``session_start``-Zeile — „Ticket beginnt neu“ (#432).
+    """Unix-Zeit der jüngsten ``session_start``- oder ``start``-Zeile — „Ticket beginnt neu“ (#432, #903).
 
-    Zählt Starter- und Hook-Zeilen gleich. ``None`` = keine Zeile mit lesbarer Zeit.
+    Zählt Starter-, Hook- und Protokoll-Zeilen gleich. ``None`` = keine Zeile mit lesbarer Zeit.
     """
     zeiten = [
         zeitpunkt.timestamp()
         for z in lese(repo, ticket, hauptbaum=hauptbaum)
-        if z.get("typ") == "session_start" and (zeitpunkt := _zeitpunkt(z.get("ts"))) is not None
+        if z.get("typ") in ("session_start", "start")
+        and (zeitpunkt := _zeitpunkt(z.get("zeit") or z.get("ts"))) is not None
     ]
     return max(zeiten) if zeiten else None
 
@@ -988,17 +1306,26 @@ def zusammenfassung(repo: Path, ticket: str | int, *, hauptbaum: Path | None = N
     zeilen = lese(repo, ticket, hauptbaum=hauptbaum)
     enden = _juengste_je_session(z for z in zeilen if z.get("typ") == "session_ende")
     subs = _juengste_je_session(z for z in zeilen if z.get("typ") == "subagent_ende")
-    starts = [z for z in zeilen if z.get("typ") == "session_start"]
+    starts = [z for z in zeilen if z.get("typ") in ("session_start", "start")]
     staffeln = [int(z.get("staffel") or 1) for z in zeilen if z.get("staffel") is not None]
     auftrag = next((z for z in zeilen if z.get("typ") == "auftrag"), {})
     dauer = sum(_dauer(z) for z in enden)
     kennungen = {
-        str(z["session_id"])
+        str(kennung)
         for z in zeilen
-        if z.get("typ") in ("session_start", "session_ende") and z.get("session_id")
+        if (
+            (z.get("typ") in ("session_start", "session_ende") and (kennung := z.get("session_id")))
+            or (
+                z.get("typ") in EREIGNIS_TYPEN
+                and (kennung := z.get("session"))
+                and str(kennung).strip() not in ("", "-")
+            )
+        )
     }
     enden_ohne_id = sum(1 for z in enden if not z.get("session_id"))
-    starts_ohne_id = sum(1 for z in starts if not z.get("session_id"))
+    starts_ohne_id = sum(
+        1 for z in starts if not z.get("session_id") and str(z.get("session") or "").strip() in ("", "-")
+    )
     # Der Starter (bau_loop) schreibt session_start ohne Kennung, die Hooks mit —
     # das Maximum zählt dieselbe Session nicht doppelt.
     sessions = max(len(kennungen) + enden_ohne_id, starts_ohne_id)
@@ -1006,6 +1333,16 @@ def zusammenfassung(repo: Path, ticket: str | int, *, hauptbaum: Path | None = N
     haupt_spitzen = _spitzen(enden)
     sub_spitzen = _spitzen(subs)
     vollstaendig = bool(haupt_spitzen) and len(haupt_spitzen) == len(enden)
+    if vollstaendig:
+        ist_k = _k(sum(haupt_spitzen))
+        spitze_k = _k(max(haupt_spitzen))
+    elif not enden:
+        proto_spitzen = [k for z in zeilen if (k := _kontextstand_k(z.get("kontextstand"))) is not None]
+        spitze_k = max(proto_spitzen) if proto_spitzen else None
+        ist_k = spitze_k
+    else:
+        ist_k = None
+        spitze_k = None
     return {
         "ticket": str(ticket),
         "schaetzung_k": auftrag.get("schaetzung_k"),
@@ -1018,15 +1355,15 @@ def zusammenfassung(repo: Path, ticket: str | int, *, hauptbaum: Path | None = N
         # der Spitzen je Session — das ist der Bedarf, den ``schaetzung_k`` schätzt.
         # Fehlt einer Session der Wert (Log vor #238, nicht umgerechnet), gibt es
         # kein ``ist_k`` — ein Teilwert würde die Lernschleife zu klein lernen lassen.
-        "ist_k": _k(sum(haupt_spitzen)) if vollstaendig else None,
-        "spitze_k": _k(max(haupt_spitzen)) if vollstaendig else None,
+        "ist_k": ist_k,
+        "spitze_k": spitze_k,
         "sub_spitze_k": _k(max(sub_spitzen)) if sub_spitzen else None,
         "aufrufe": _aufrufe(enden),
         "output_k": round(_summe(enden, "output") / 1000, 1),
         # Verbrauch inkl. Cache-Lesen über alle Aufrufe — nie als Kontext anzeigen.
         "verbrauch_k": round((_summe(enden) + _summe(subs)) / 1000, 1),
         "dauer_s": dauer,
-        "handoffs": sum(1 for z in zeilen if z.get("typ") == "handoff"),
+        "handoffs": sum(1 for z in zeilen if z.get("typ") in ("handoff", "uebergabe")),
         "entscheidungen": sum(1 for z in zeilen if z.get("typ") == "entscheidung"),
         # Klartext der jüngsten ``zusammenfassung``-Zeile (Fixrunde #204).
         "umfang_ist": klartext.get("umfang"),
@@ -1118,7 +1455,7 @@ def _zeitpunkt(text: Any) -> datetime | None:
 
 
 def _juengster(repo: Path, ticket: str) -> datetime:
-    zeiten = [z for z in (_zeitpunkt(r.get("ts")) for r in lese(repo, ticket)) if z]
+    zeiten = [z for z in (_zeitpunkt(r.get("zeit") or r.get("ts")) for r in lese(repo, ticket)) if z]
     return max(zeiten) if zeiten else datetime.min.replace(tzinfo=UTC)
 
 
