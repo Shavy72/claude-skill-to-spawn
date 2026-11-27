@@ -31,7 +31,8 @@ Stufen (feste Schwellen :data:`STUPS_MIN`, :data:`NACH_STUPS_MIN`,
 Eigener Handoff (#542): Hat die Session in Stufe 0/1 selbst einen Handoff committet und
 arbeitet seit :data:`eigener_handoff.STILL_MIN` Minuten nicht, startet die Leiter die
 Folge-Session ab diesem Handoff neu (Aktion ``folge_handoff``) — Regel und Start in
-:mod:`to_spawn.eigener_handoff`.
+:mod:`to_spawn.eigener_handoff`. Das gilt auch, wenn das Fenster weg ist, und in Stufe 2
+ohne START-Datei (#890) — Entscheidung nur in :func:`_folge_ab_handoff`.
 
 Frage im Fenster (#372, Lastenheft L9 A60): Zeigt das Fenster eine Rückfrage — oder ist es
 still (ab Mindest-Ruhe, Stufe 0/1, Ticket offen) und endet mit einer Frage an den Menschen
@@ -50,8 +51,8 @@ Am PC (Windows, #501) ist nichts tippbar: :func:`fuer_rechner` macht aus Stufe 1
 direkt Stufe 3 (Zeile „PC: Stufe 1 übersprungen“), aus ``/exit`` eine Meldung.
 
 In ein Fenster, das arbeitet oder eine Rückfrage zeigt, wird nie getippt. Steht eine
-Rückfrage ohne Briefkasten-Frage seit :data:`aufpasser.RUECKFRAGE_MIN` Minuten, meldet
-die Leiter (#890). Arbeitet
+Rückfrage seit :data:`aufpasser.RUECKFRAGE_MIN` Minuten (ohne Briefkasten-Frage oder
+unverändert nach Weitergabe), meldet die Leiter (#890). Arbeitet
 die Session nach einem Stupser (oder nach Stufe 5) wieder, fällt die Leiter auf
 Stufe 0 zurück. Erst wird die Stufe gemerkt, dann getippt — scheitert das Tippen,
 wird nicht nochmal getippt.
@@ -240,13 +241,20 @@ def entscheide(lage: Lage, gemerkt: Gemerkt, jetzt: float, handoff_k: float) -> 
         vor = _minuten(jetzt, gemerkt.seit)
         return Schritt("melden", f"respawn gescheitert vor {vor} min — Aufseher prüfen")
     if lage.fenster == aufseher_stand.RUECKFRAGE:
-        if lage.frage:
-            return _frage_schritt(lage.frage, gemerkt)
-        # Rechte-/Vertrauens-Dialog ohne Briefkasten-Frage: nie tippen, ab der Aufpasser-Grenze melden (#890).
         still = lage.still_min or 0
+        if lage.frage:
+            schritt = _frage_schritt(lage.frage, gemerkt)
+            if schritt.aktion != "nichts" or still < aufpasser.RUECKFRAGE_MIN:
+                return schritt
+        # Rechte-/Vertrauens-Dialog ohne Briefkasten-Frage oder unverändert nach Weitergabe:
+        # nie tippen, ab der Aufpasser-Grenze melden (#890).
         if still >= aufpasser.RUECKFRAGE_MIN:
             return Schritt("melden", f"Rückfrage seit {still} min — braucht den Menschen")
         return Schritt("nichts", "Rückfrage offen — Aufseher antwortet")
+    if lage.fenster == aufseher_stand.KEIN_FENSTER:
+        folge = _folge_ab_handoff(lage, gemerkt, jetzt)
+        if folge is not None:
+            return folge
     if lage.fenster != aufseher_stand.STILL:
         return Schritt("nichts", f"Fenster: {lage.fenster}")
     still = lage.still_min or 0
@@ -292,12 +300,9 @@ def entscheide(lage: Lage, gemerkt: Gemerkt, jetzt: float, handoff_k: float) -> 
     if ruhig and lage.frage and stufe in (0, 1):
         # Wartet auf eine Entscheidung statt zu hängen: Entscheider statt Stupser (#372).
         return _frage_schritt(lage.frage, gemerkt)
-    treffer = lage.eigener_handoff
-    if stufe in eigener_handoff.STUFEN and treffer is not None:
-        seit = treffer.still_min(jetzt)
-        if treffer.faellig(jetzt):
-            return Schritt("folge_handoff", f"eigener Handoff {treffer.datei}, seit {seit} min still")
-        return Schritt("nichts", f"eigener Handoff vor {seit} min < {eigener_handoff.STILL_MIN}")
+    folge = _folge_ab_handoff(lage, gemerkt, jetzt)
+    if folge is not None:
+        return folge
     if stufe == 2:
         if lage.prompt_datei:
             return Schritt("respawn", "Start-Prompt-Datei da")
@@ -316,6 +321,31 @@ def entscheide(lage: Lage, gemerkt: Gemerkt, jetzt: float, handoff_k: float) -> 
     if still >= STUPS_MIN:
         return Schritt("anstupsen", f"still {still} min")
     return Schritt("nichts", f"still {still} min < {STUPS_MIN}")
+
+
+def _folge_ab_handoff(lage: Lage, gemerkt: Gemerkt, jetzt: float) -> Schritt | None:
+    """Nachfolger ab eigenem Handoff? Einzige Stelle dieser Entscheidung in der Leiter.
+
+    Aufrufer garantieren: Fenster still oder weg (nie „arbeitet“/Rückfrage). Start nur
+    bei sicher offenem Ticket (``lage.stufe == "offen"``) — unbekannter Status (gh-Fehler)
+    heißt im Zweifel kein Start (#890). Greift in :data:`eigener_handoff.STUFEN` und in
+    Stufe 2 ohne START-Datei (#890: die alte Session schrieb nur den Handoff — ohne das
+    bliebe das Ticket nach :data:`WARTE_MAX_MIN` stehen); dort zählt nur ein Handoff, der
+    nach der Anforderung committet wurde. Mit START-Datei bleibt Stufe 2 beim respawn.
+    Doppelstart-Schutz: nach dem Start rückt :func:`eigener_handoff.grenze` vor,
+    derselbe Handoff ist danach kein Treffer mehr. ``None`` = nicht zuständig.
+    """
+    treffer = lage.eigener_handoff
+    if treffer is None or lage.stufe != "offen":
+        return None
+    stufe = gemerkt.stufe
+    nach_anforderung = treffer.commit_zeit > (gemerkt.seit or 0.0)
+    if stufe not in eigener_handoff.STUFEN and not (stufe == 2 and not lage.prompt_datei and nach_anforderung):
+        return None
+    seit = treffer.still_min(jetzt)
+    if treffer.faellig(jetzt):
+        return Schritt("folge_handoff", f"eigener Handoff {treffer.datei}, seit {seit} min still")
+    return Schritt("nichts", f"eigener Handoff vor {seit} min < {eigener_handoff.STILL_MIN}")
 
 
 #: Vermerk in der Zeile, wenn der PC-Weg das Tippen überspringt (#501 E10).
