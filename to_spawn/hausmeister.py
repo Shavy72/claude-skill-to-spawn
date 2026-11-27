@@ -652,8 +652,17 @@ def rundgang(*, loeschen: bool, jetzt: float | None = None, docker: bool = False
     return _rundgang_sicher(loeschen=loeschen, jetzt=jetzt, docker=docker)
 
 
+def _testlauf_ohne_freigabe() -> bool:
+    """``True`` unter Test (``PYTEST_CURRENT_TEST``/``TO_SPAWN_TESTLAUF``) ohne ausdrückliche
+    Test-Wurzel-Freigabe in ``TO_SPAWN_HAUSMEISTER_WURZELN`` (#873)."""
+    return starter.unter_test() and not os.environ.get("TO_SPAWN_HAUSMEISTER_WURZELN", "").strip()
+
+
 def _rundgang_sicher(*, loeschen: bool, jetzt: float | None, docker: bool) -> Rundgang:
     """Kern von :func:`rundgang`; ``docker=True`` nur aus :func:`aufraeumen_alles`."""
+    if loeschen and _testlauf_ohne_freigabe():
+        log.warning("Hausmeister: Löschlauf unter Test ohne TO_SPAWN_HAUSMEISTER_WURZELN blockiert")
+        return Rundgang(False, "Testlauf ohne Test-Wurzel-Freigabe (TO_SPAWN_HAUSMEISTER_WURZELN)")
     try:
         return _rundgang(loeschen=loeschen, jetzt=jetzt, docker=docker)
     except Exception as fehler:  # Vertrag: wirft nie
@@ -832,6 +841,9 @@ def _hintergrund_anstossen() -> bool:
 
 
 def _start_pruefen(loeschen: bool, nur_messen: bool = False, synchron_nur_bei_sperre: bool = False) -> tuple[bool, str]:
+    if loeschen and _testlauf_ohne_freigabe():
+        log.warning("Hausmeister: Start-Check-Löschlauf unter Test ohne TO_SPAWN_HAUSMEISTER_WURZELN blockiert")
+        nur_messen = True
     anteil = _frei_anteil()
     inodes = _temp_inode_anteil()
     zusatz = ""
@@ -2866,7 +2878,7 @@ def _aufpasser_log(satz: str) -> None:
 
 def _wurzeln() -> list[str]:
     roh = os.environ.get("TO_SPAWN_HAUSMEISTER_WURZELN")
-    if roh:
+    if roh is not None:
         muster = roh.split(os.pathsep)
     else:
         maschine = config.maschine()
