@@ -19,6 +19,7 @@ Session und startet im selben Fenster den Nachfolge-Aufseher mit dem Handoff als
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import logging
 import os
@@ -47,12 +48,15 @@ from to_spawn import (  # noqa: E402
     konsole,
     manifest,
     nest,
+    respawn_aufseher,
     sitzung_env,
     sitzung_filter,
     spawn_exit,
     speicher,
+    sperre,
     starter,
     startklar,
+    startstelle,
     temp_ordner,
     terminal_maus,
     umzug,
@@ -517,6 +521,74 @@ def _filter_dateien_schreiben(
     return settings_path, mcp_path
 
 
+def wache_sperr_datei(spec: int, gh_repo: str) -> Path:
+    """Sperr-Datei je Repo und Spec für den Aufseher (``wache-<S>``, #898)."""
+    return startstelle.sperr_datei(f"wache-{spec}", gh_repo)
+
+
+def _wache_sperre_uebernehmen(
+    haupt: Path,
+    abloese_stapel: contextlib.ExitStack,
+    ende: threading.Event,
+) -> None:
+    """Ablöse-Ausnahme (#898): wartet auf die Haupt-Sperre, hält sie und gibt ``.abloesung`` frei."""
+
+    def warten() -> None:
+        with contextlib.ExitStack() as stapel:
+            try:
+                if not stapel.enter_context(sperre.halte(haupt, warten=float(10**9))):
+                    return
+            except OSError as fehler:
+                log.error("Ablösung: Aufseher-Sperre %s nicht übernehmbar: %s", haupt, fehler)
+                return
+            abloese_stapel.close()
+            ende.wait()
+
+    threading.Thread(target=warten, name="wache-sperre-uebernahme", daemon=True).start()
+
+
+def wache_sperre_betreten(
+    spec: int,
+    gh_repo: str,
+    *,
+    abloesung: bool = False,
+) -> tuple[bool, str, int, contextlib.ExitStack | None]:
+    """Exklusive, nicht-blockierende Prozess-Sperre je Spec (``wache-<S>``, #898).
+
+    Analog zu :func:`to_spawn.startstelle.betreten`: ein zweiter Aufseher für dieselbe Spec
+    endet sofort mit klarer Meldung (Exit 0) ohne Claude-Start. Mit ``abloesung=True``
+    (kontrollierte Ablösung über :data:`to_spawn.respawn_aufseher.ABLOESE_AUSNAHME_ENV`) darf
+    genau eine Ablösung neben dem laufenden Aufseher starten und übernimmt die Haupt-Sperre,
+    sobald der Vorgänger endet.
+    """
+    haupt = wache_sperr_datei(spec, gh_repo)
+    stapel = contextlib.ExitStack()
+    try:
+        if stapel.enter_context(sperre.halte(haupt)):
+            return True, "", 0, stapel
+        if not abloesung:
+            stapel.close()
+            grund = f"Aufseher #{spec}: läuft schon auf dieser Maschine — kein zweiter Start."
+            log.info("%s", grund)
+            return False, grund, 0, None
+        if not stapel.enter_context(sperre.halte(haupt.with_name(haupt.name + ".abloesung"))):
+            stapel.close()
+            grund = f"Aufseher #{spec}: eine Ablösung läuft schon — kein zweiter Start."
+            log.info("%s", grund)
+            return False, grund, 0, None
+        ende = threading.Event()
+        gesamt = contextlib.ExitStack()
+        gesamt.callback(ende.set)
+        gesamt.callback(stapel.close)
+        _wache_sperre_uebernehmen(haupt, stapel, ende)
+        return True, "", 0, gesamt
+    except OSError as fehler:
+        stapel.close()
+        grund = f"Aufseher #{spec}: Start-Sperre {haupt} nicht nutzbar ({fehler}) — KEIN Start."
+        log.error("%s", grund)
+        return False, grund, 2, None
+
+
 def main() -> int:
     konsole.utf8_ausgabe()  # Prompt enthält „→“, Windows-Konsole ist cp1252 (#68)
     ap = argparse.ArgumentParser(description="Bau-Aufseher-Session für eine Spec.")
@@ -636,6 +708,47 @@ def main() -> int:
             )
         print(" ".join(cmd[:-1]), '"<prompt>"')
         return 0
+    # Exklusive Prozess-Sperre je Spec (#898): genau ein Aufseher je Spec (mit Ablöse-Ausnahme).
+    abloese_ausnahme = os.environ.get(respawn_aufseher.ABLOESE_AUSNAHME_ENV, "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    erlaubt, _grund, sperr_code, sperr_stapel = wache_sperre_betreten(a.spec, REPO, abloesung=abloese_ausnahme)
+    if not erlaubt:
+        return sperr_code
+    try:
+        return _main_mit_sperre(
+            a,
+            konfig,
+            ordner,
+            claude,
+            prompt,
+            ausweich,
+            remote_control,
+            effort,
+            overrides,
+            mcp_servers,
+            chrome,
+        )
+    finally:
+        if sperr_stapel is not None:
+            sperr_stapel.close()
+
+
+def _main_mit_sperre(
+    a: argparse.Namespace,
+    konfig: dict,
+    ordner: Path,
+    claude: str,
+    prompt: str,
+    ausweich: str,
+    remote_control: bool,
+    effort: str,
+    overrides: dict[str, str],
+    mcp_servers: dict[str, dict[str, object]],
+    chrome: bool,
+) -> int:
     # Speicher-Schutz (#257 Paket B, Fixrunde 1 F3): RAM knapp oder Obergrenze an
     # Claude-Sessions erreicht → warten statt Exit 5, damit Fenster und Grund bleiben.
     auf_speicher_warten(konfig, wer=f"Aufseher #{a.spec}")
@@ -651,6 +764,7 @@ def main() -> int:
     os.environ.update(sauber)
     # Eine Session im Worktree darf nicht das Repo des Launchers erben (#205).
     os.environ.pop("TO_SPAWN_REPO", None)
+    os.environ.pop(respawn_aufseher.ABLOESE_AUSNAHME_ENV, None)
     os.environ["CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"] = "1"
     os.environ.update(
         temp_ordner.umgebung(a.spec, repo=REPO, von="wache")
