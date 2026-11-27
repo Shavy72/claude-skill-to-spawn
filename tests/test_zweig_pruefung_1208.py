@@ -200,8 +200,10 @@ def test_fall1_haengender_rot_zweig_aus_journal_und_konflikt_zweig(testrepo: _Te
 
     journal = testrepo.basis / "schlange.jsonl"
     journal.write_text(
-        json.dumps({"zweig": "ticket/101-rot", "ticket": 101, "status": "rot"}) + "\n"
-        + json.dumps({"zweig": "ticket/103-frisch", "ticket": 103, "status": "rot"}) + "\n",
+        json.dumps({"zweig": "ticket/101-rot", "ticket": 101, "status": "rot"})
+        + "\n"
+        + json.dumps({"zweig": "ticket/103-frisch", "ticket": 103, "status": "rot"})
+        + "\n",
         encoding="utf-8",
     )
     log_datei = testrepo.basis / "zweig_pruefung.jsonl"
@@ -274,13 +276,7 @@ def test_fall2_geschlossenes_issue_ohne_code_und_inhalts_probe(testrepo: _TestRe
 
 def test_inhalts_probe_anteilsberechnung_gegen_bare_repo(testrepo: _TestRepo) -> None:
     """Inhalts-Probe berechnet den Anteil hinzugefügter Zeilen auf dem Hauptzweig korrekt."""
-    zweig_inhalt = (
-        "zeile_a = 1\n"
-        "zeile_b = 2\n"
-        "zeile_c = 3\n"
-        "zeile_d = 4\n"
-        "zeile_e = 5\n"
-    )
+    zweig_inhalt = "zeile_a = 1\nzeile_b = 2\nzeile_c = 3\nzeile_d = 4\nzeile_e = 5\n"
     testrepo.push_zweig("ticket/250-teil", "probe.py", zweig_inhalt, "feat: probe", zeit=JETZT - 1 * TAG)
     # 2 von 5 Zeilen auf main -> 0.4
     testrepo.push_main("probe.py", "zeile_a = 1\nzeile_b = 2\n", "feat: teil", zeit=JETZT - 1 * TAG)
@@ -360,9 +356,7 @@ def test_cli_unterbefehl_zweige_pruefen(testrepo: _TestRepo, capsys: pytest.Capt
     assert log_datei.is_file()
 
 
-def test_hausmeister_tageslauf_optional_mit_schalter(
-    testrepo: _TestRepo, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_hausmeister_tageslauf_optional_mit_schalter(testrepo: _TestRepo, monkeypatch: pytest.MonkeyPatch) -> None:
     """Hausmeister führt die Zweig-Prüfung nur mit Schalter und höchstens einmal täglich aus."""
     hm_log = testrepo.basis / "state" / "hausmeister.jsonl"
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_LOG", str(hm_log))

@@ -185,13 +185,13 @@ def lade_journal(pfad: Path | None) -> tuple[dict[str, str], dict[int, str]]:
             continue
         if not isinstance(eintrag, dict):
             continue
-        status = str(
-            eintrag.get("status")
-            or eintrag.get("ergebnis")
-            or eintrag.get("zustand")
-            or eintrag.get("state")
-            or ""
-        ).strip().lower()
+        status = (
+            str(
+                eintrag.get("status") or eintrag.get("ergebnis") or eintrag.get("zustand") or eintrag.get("state") or ""
+            )
+            .strip()
+            .lower()
+        )
         if not status:
             continue
         zweig = str(eintrag.get("zweig") or eintrag.get("branch") or "").strip()
