@@ -157,6 +157,33 @@ def test_leitstand_sitzung_ohne_grenze_kein_neustart(
     assert protokoll.read_text(encoding="utf-8").splitlines() == ["lauf"]
 
 
+def test_leitstand_sitzung_attrappe_ohne_timeout_parameter(
+    lf: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Prozess-Attrappen mit ``wait(self)`` ohne ``timeout`` laufen durch (Vertrag #869/#1428)."""
+    fake_claude = tmp_path / "claude"
+    fake_claude.write_text("", encoding="utf-8")
+
+    class _FakeProc:
+        pid = 12345
+
+        def wait(self) -> int:
+            return 0
+
+    class _NullCtx:
+        def __enter__(self) -> None:
+            return None
+
+        def __exit__(self, *_args: object) -> bool:
+            return False
+
+    monkeypatch.setattr(lf.starter, "finde", lambda _name: str(fake_claude))
+    monkeypatch.setattr(lf.starter, "starte", lambda *_a, **_k: _FakeProc())
+    monkeypatch.setattr(lf.sitzungsjob, "gebunden", lambda _proc: _NullCtx())
+
+    assert lf.sitzung(lf.Ablage(repo=tmp_path, spec="950"), aufsicht_takt=0.05) == 0
+
+
 def test_leitstand_anweisung_untersagt_claude_handoff_datei(lf: ModuleType) -> None:
     """Takt-Anweisung untersagt dem Leitstand-Loop das Schreiben von ``.claude-handoff*.md``."""
     text = lf.anweisung_text(

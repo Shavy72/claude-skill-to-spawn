@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import inspect
 import json
 import logging
 import os
@@ -366,6 +367,22 @@ def start_mail(ablage: Ablage) -> int:
     return 1
 
 
+def _warte(prozess: Any, timeout: float) -> int:
+    """Wartet bis ``timeout`` s auf ``prozess``; minimale Attrappen ohne ``timeout``-Schlüsselwort nutzen ``wait()``."""
+    try:
+        parameter = inspect.signature(prozess.wait).parameters
+    except (TypeError, ValueError):
+        return int(prozess.wait(timeout=timeout))
+    timeout_param = parameter.get("timeout")
+    nimmt_timeout = (
+        timeout_param is not None
+        and timeout_param.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    ) or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameter.values())
+    if nimmt_timeout:
+        return int(prozess.wait(timeout=timeout))
+    return int(prozess.wait())
+
+
 def sitzung(
     ablage: Ablage,
     *,
@@ -455,7 +472,7 @@ def sitzung(
                 try:
                     while True:
                         try:
-                            rc = prozess.wait(timeout=ueberwachung_takt)
+                            rc = _warte(prozess, ueberwachung_takt)
                             break
                         except subprocess.TimeoutExpired:
                             if not grenze_erreicht.is_set():
