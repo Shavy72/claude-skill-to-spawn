@@ -1220,17 +1220,50 @@ def test_vps_kopf_pfad_mit_tilde_bleibt_fuer_server_offen(monkeypatch: pytest.Mo
 #: Echte SSOT aus dem Haupt-Repo (scripts/schlange_deckung.py + deploy_ziel.py + schlange_spur.py), keine
 #: Nachbildung. Gelesen beim Import, weil conftest ``TO_SPAWN_*`` je Test löscht.
 _HAUPT_REPO_TEST = os.environ.get("TO_SPAWN_HAUPT_REPO_TEST") or ""
+_HAUPT_REPO_PFLICHT = os.environ.get("TO_SPAWN_HAUPT_REPO_PFLICHT", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "ja",
+)
 _SCRIPTS = Path(_HAUPT_REPO_TEST).expanduser() / "scripts" if _HAUPT_REPO_TEST else None
 #: Dateien, die capos Deckungs-Befehl im Repo braucht (relativ zu scripts/).
 _DECKUNG_DATEIEN = ("schlange_deckung.py", "schlange_spur.py", "staging/deploy_ziel.py")
+#: #872: Bei gesetzter Gate-Schalter-Variable scheitert ein fehlendes Ziel-Repo laut statt stillem Skip.
+_HAUPT_REPO_FEHLT = (
+    "TO_SPAWN_HAUPT_REPO_TEST nicht gesetzt (TO_SPAWN_HAUPT_REPO_PFLICHT aktiv) — "
+    "die #1207-Weg-Tests brauchen das Haupt-Repo. "
+    "Aufruf: TO_SPAWN_HAUPT_REPO_TEST=<Haupt-Repo> python -m pytest tests -q"
+)
+
+
+def _haupt_repo_pruefen(scripts: Path | None = _SCRIPTS, *, pflicht: bool = _HAUPT_REPO_PFLICHT) -> Path:
+    """Liefert den ``scripts``-Pfad des Haupt-Repos; fehlt er, laut scheitern (Gate) oder überspringen (lokal)."""
+    if scripts is None:
+        if pflicht:
+            pytest.fail(_HAUPT_REPO_FEHLT)
+        pytest.skip("TO_SPAWN_HAUPT_REPO_TEST nicht gesetzt — #1207-Weg-Tests brauchen das Haupt-Repo")
+    return scripts
 
 
 def test_1207_haupt_repo_variable_zeigt_auf_deploy_ziel() -> None:
-    """Gesetzte Variable ohne Skript ist ein Fehler, kein stiller Skip der #1207-Tests."""
-    if _SCRIPTS is None:
-        pytest.skip("TO_SPAWN_HAUPT_REPO_TEST nicht gesetzt — #1207-Weg-Tests brauchen das Haupt-Repo")
-    fehlt = [d for d in _DECKUNG_DATEIEN if not (_SCRIPTS / d).is_file()]
-    assert not fehlt, f"TO_SPAWN_HAUPT_REPO_TEST gesetzt, aber unter {_SCRIPTS} fehlt: {fehlt}"
+    """Gesetzte Variable ohne Skript ist ein Fehler; mit Gate-Schalter ist auch fehlende Variable rot (#872)."""
+    scripts = _haupt_repo_pruefen()
+    fehlt = [d for d in _DECKUNG_DATEIEN if not (scripts / d).is_file()]
+    assert not fehlt, f"TO_SPAWN_HAUPT_REPO_TEST gesetzt, aber unter {scripts} fehlt: {fehlt}"
+
+
+def test_872_gate_schalter_laesst_fehlendes_haupt_repo_laut_scheitern() -> None:
+    """#872: Bei gesetzter Gate-Schalter-Variable ``TO_SPAWN_HAUPT_REPO_PFLICHT`` scheitert fehlendes Ziel-Repo laut.
+
+    Ohne Gate-Schalter bleiben lokale Entwickler-Läufe sauber abgekoppelt (Skip).
+    """
+    pruefe = globals().get("_haupt_repo_pruefen")
+    assert pruefe is not None, "_haupt_repo_pruefen fehlt (Gate-Schalter TO_SPAWN_HAUPT_REPO_PFLICHT)"
+    with pytest.raises(pytest.fail.Exception, match="TO_SPAWN_HAUPT_REPO_TEST"):
+        pruefe(None, pflicht=True)
+    with pytest.raises(pytest.skip.Exception, match="TO_SPAWN_HAUPT_REPO_TEST"):
+        pruefe(None, pflicht=False)
 
 
 def _vps_deckung(
@@ -1247,9 +1280,8 @@ def _vps_deckung(
 
     Zettel-Namen mit ``{davor}`` werden durch den SHA des Davor-Commits ersetzt; Rückgabe = dieser SHA.
     """
-    if _SCRIPTS is None:
-        pytest.skip("TO_SPAWN_HAUPT_REPO_TEST nicht gesetzt — #1207-Weg-Tests brauchen das Haupt-Repo")
-    dateien = {f"scripts/{d}": (_SCRIPTS / d).read_text(encoding="utf-8") for d in _DECKUNG_DATEIEN}
+    scripts = _haupt_repo_pruefen()
+    dateien = {f"scripts/{d}": (scripts / d).read_text(encoding="utf-8") for d in _DECKUNG_DATEIEN}
     if manifest is not None:
         dateien["docs/agents/manifests/spec-900.json"] = json.dumps(manifest)
     vorher = _commit(welt["repo"], "chore: Deploy-Ziel (#1)", dateien)
