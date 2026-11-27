@@ -302,7 +302,8 @@ def test_bau_dry_run_runner_agy_interaktiv_und_ohne_context_mode(
     assert gesucht == ["agy"]
     assert "/bin/agy" in ausgabe
     assert '-i "<prompt>"' in ausgabe
-    assert "--model gemini-4-neon-high" in ausgabe
+    # Standard-Effort in config.DEFAULTS["effort"]["ticket"] ist "medium" → gemini-4-neon-medium (#845).
+    assert "--model gemini-4-neon-medium" in ausgabe
     assert "--dangerously-skip-permissions" in ausgabe
     assert "--settings" not in ausgabe
     assert "--mcp-config" not in ausgabe
@@ -317,7 +318,7 @@ def test_bau_dry_run_runner_agy_probesitz_und_ohne_prompt(
     assert bau.main() == 0
     ausgabe_p = capsys.readouterr().out
     assert '-p "<prompt>"' in ausgabe_p
-    assert "--model gemini-4-neon-high" in ausgabe_p
+    assert "--model gemini-4-neon-medium" in ausgabe_p
     assert "--dangerously-skip-permissions" in ausgabe_p
     assert "--output-format json" in ausgabe_p
 
@@ -576,7 +577,8 @@ def test_bau_cli_runner_flag_ueberschreibt_konfig(
     assert bau.main() == 0
     ausgabe = capsys.readouterr().out
     assert "/bin/agy" in ausgabe
-    assert "--model gemini-4-neon-high" in ausgabe
+    # Standard-Effort in config.DEFAULTS["effort"]["ticket"] ist "medium" → gemini-4-neon-medium (#845).
+    assert "--model gemini-4-neon-medium" in ausgabe
     assert "--dangerously-skip-permissions" in ausgabe
 
 

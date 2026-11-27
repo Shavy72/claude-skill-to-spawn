@@ -42,6 +42,14 @@ AGY_MODELLE: tuple[tuple[str, str], ...] = (
     ("gemini-4-neon-medium", "Gemini 4 Neon (Medium)"),
     ("gemini-4-neon-low", "Gemini 4 Neon (Low)"),
 )
+#: Zuordnung Effort-Stufe → ``agy``-Modellname (#845; ``agy`` kodiert Effort im Modellnamen).
+AGY_EFFORT_MODELLE: dict[str, str] = {
+    "low": "gemini-4-neon-low",
+    "medium": "gemini-4-neon-medium",
+    "high": "gemini-4-neon-high",
+    "xhigh": "gemini-4-neon-xhigh",
+    "max": "gemini-4-neon-xhigh",
+}
 #: Relativer Datenordner von Antigravity CLI unterhalb des Heimordners (#660).
 AGY_DATEN_REL = Path(".gemini") / "antigravity-cli"
 #: Ausdrücklicher Staffel-Übergabe-Marker im Handoff (wie ``staffel_stop.py``).
@@ -103,18 +111,35 @@ def runner_von(konfig: Mapping[str, Any] | None) -> str:
     return STANDARD_RUNNER
 
 
+def agy_modell_fuer_effort(effort: str | None) -> str | None:
+    """Übersetzt eine Effort-Stufe (``low``…``max``) in den ``agy``-Modellnamen (#845)."""
+    if not isinstance(effort, str):
+        return None
+    stufe = effort.strip().lower()
+    if not stufe:
+        return None
+    modell = AGY_EFFORT_MODELLE.get(stufe)
+    if modell is None:
+        log.warning("Unbekannter Effort %r für agy — nehme %s.", effort, AGY_STANDARD_MODELL)
+        return AGY_STANDARD_MODELL
+    return modell
+
+
 def modell_fuer(
     runner: str,
     konfig: Mapping[str, Any] | None = None,
     *,
     cli_modell: str | None = None,
     default_modell: str | None = None,
+    effort: str | None = None,
 ) -> str | None:
-    """Modell für ``runner`` auflösen: ``--model`` > Konfig ``modelle.ticket`` > Vorgabe.
+    """Modell für ``runner`` auflösen: ``--model`` > Konfig ``modelle.ticket`` > Effort (``agy``) > Vorgabe.
 
     Bei ``runner == "agy"`` reicht das Umschalten von ``runner`` allein: ein aus den
-    Vorgaben geerbtes Claude-Modell (``claude-*``) wird durch :data:`AGY_STANDARD_MODELL`
-    ersetzt. Ein ausdrückliches ``--model`` auf der Kommandozeile gewinnt immer.
+    Vorgaben geerbtes Claude-Modell (``claude-*``) zählt nicht als ausdrückliche
+    Modellwahl — dann wird ``effort`` in ``gemini-4-neon-<effort>`` übersetzt (#845),
+    ohne ``effort`` gilt :data:`AGY_STANDARD_MODELL`. Ein ausdrückliches ``--model``
+    oder ein Nicht-Claude-Modell in ``config.modelle.ticket`` gewinnt immer.
     """
     if cli_modell and cli_modell.strip():
         return cli_modell.strip()
@@ -123,7 +148,7 @@ def modell_fuer(
     if runner == "agy":
         if konfig_modell and not konfig_modell.startswith("claude-"):
             return konfig_modell
-        return AGY_STANDARD_MODELL
+        return agy_modell_fuer_effort(effort) or AGY_STANDARD_MODELL
     return konfig_modell or default_modell
 
 
@@ -183,11 +208,12 @@ def startbefehl(
             cmd.append(prompt)
         return cmd
 
+    eff_modell = modell or agy_modell_fuer_effort(effort)
     cmd = [bin_pfad]
     if prompt is not None:
         cmd += ["-p" if druck else "-i", prompt]
-    if modell:
-        cmd += ["--model", modell]
+    if eff_modell:
+        cmd += ["--model", eff_modell]
     cmd.append("--dangerously-skip-permissions")
     if druck:
         cmd += ["--output-format", "json"]
