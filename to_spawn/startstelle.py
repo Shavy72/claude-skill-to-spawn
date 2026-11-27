@@ -611,6 +611,13 @@ def _pruefen(ticket: str, cwd: Path | None, pruefer: TicketPruefer | None) -> En
         grund = f"bau {ticket}: nichts zu tun ({ticket_zustand.wortlaut(daten)}) — Ticket ist geschlossen, kein Start."
         log.info("%s", grund)
         return Entscheidung(False, grund, art="nichts")
+    if ticket_zustand.ist_abnahme(daten, repo=cwd):
+        label = ticket_zustand.abnahme_label(cwd)
+        grund = (
+            f"bau {ticket}: nichts zu tun (Abnahme-Ticket mit Label „{label}“) — wartet auf den Nutzer, kein Bau-Start."
+        )
+        log.info("%s", grund)
+        return Entscheidung(False, grund, art="nichts")
     lage = (
         wiederanlauf.feststellen(int(ticket), cwd, daten=daten)
         if cwd is not None and ticket.isdigit() and (cwd / ".git").exists()
