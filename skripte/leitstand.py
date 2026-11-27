@@ -57,7 +57,7 @@ _SKILL = str(_SKRIPTE.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
 from to_spawn import bau_log, config, gh as gh_modul, manifest as manifest_modul, ticket_zustand, tmux_aufruf  # noqa: E402
-from to_spawn.capo import AUFSEHER_KOEPFE  # noqa: E402
+from to_spawn.capo import AUFSEHER_KOEPFE, abnahme_passt_live_pruefen  # noqa: E402
 
 # Fenster-Teil (Ablage, Zustands-/URL-Datei, seite, anweisung, mail, aktiv, sitzung) liegt in leitstand_fenster.py.
 if str(_SKRIPTE) not in sys.path:
@@ -576,6 +576,11 @@ def vorbereiten(ablage: Ablage) -> list[dict[str, str]]:
     titel, prozesse = prozess_stand(ss, ablage.spec)
     nummern = sorted(titel, key=int)
     issues = gh_issues(ablage.repo, [ablage.spec, *nummern])
+    try:
+        for z in abnahme_passt_live_pruefen(ablage.repo, int(ablage.spec), issues, gh_repo=repo_slug(ablage.repo)):
+            log.info("Abnahme-Live: %s", z)
+    except Exception as fehler:  # noqa: BLE001 — Leitstand-Takt darf nie am Live-Schritt scheitern
+        log.warning("Abnahme-Live-Prüfung Spec #%s gescheitert: %s", ablage.spec, fehler)
     zeilen = {nr: bau_zeilen(ablage.repo, nr) for nr in nummern}
     live, ereignisse, merk = berechne(ablage.spec, titel, prozesse, issues, zeilen, zustand)
     docs = neue_dokumente(zustand, live, ereignisse)

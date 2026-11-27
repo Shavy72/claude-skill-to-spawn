@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
 from types import ModuleType
 
@@ -46,12 +47,18 @@ def _lade(name: str, datei: Path) -> ModuleType:
     spec = importlib.util.spec_from_file_location(name, datei)
     assert spec is not None and spec.loader is not None
     modul = importlib.util.module_from_spec(spec)
+    sys.modules[name] = modul
     spec.loader.exec_module(modul)
     return modul
 
 
 def _einrichten(welt: dict[str, Path], *, staging: bool) -> tuple[Path, Path]:
     zaehl, live_zaehl = welt["tmp"] / "zaehl.txt", welt["tmp"] / "live.txt"
+    exclude = welt["repo"] / ".git" / "info" / "exclude"
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    alt = exclude.read_text(encoding="utf-8") if exclude.is_file() else ""
+    if ".to-spawn/*" not in alt:
+        exclude.write_text(alt + "\n.to-spawn/*\n!.to-spawn/config.json\n", encoding="utf-8")
     _konfig(
         welt,
         staging=STAGING if staging else {"ohne": True},
@@ -306,3 +313,173 @@ def test_aufseher_quittung_nach_passt_startet_trotzdem_live_935(welt: dict[str, 
     assert _laeufe(zaehl) == 1, _text(erg)
     assert _laeufe(live_zaehl) == 1, _text(erg)
     assert capo.live_gelaufen(welt["repo"], int(SPEC), GH)
+
+
+def _leitstand_vorbereiten(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> list[dict[str, str]]:
+    """Ruft ``skripte/leitstand.py`` (``vorbereiten``) ohne capo-Takt gegen den Fake-Stand aus ``welt``."""
+    ls = _lade("leitstand_924", SKILL / "skripte" / "leitstand.py")
+    daten = _gh_zustand(welt)
+    issues_gql: dict[str, dict[str, object]] = {
+        SPEC: {"state": "OPEN", "labels": {"nodes": []}, "comments": {"nodes": []}}
+    }
+    titel: dict[str, str] = {}
+    for nr_int in daten.get("sub", {}).get(SPEC, []):
+        nr = str(nr_int)
+        item = daten.get("issues", {}).get(nr) or {}
+        titel[nr] = str(item.get("title") or f"Ticket {nr}")
+        labels = [{"name": lbl["name"] if isinstance(lbl, dict) else str(lbl)} for lbl in item.get("labels") or []]
+        issues_gql[nr] = {
+            "state": str(item.get("state") or "open").upper(),
+            "stateReason": item.get("state_reason"),
+            "closedAt": item.get("closed_at"),
+            "labels": {"nodes": labels},
+            "timelineItems": {"nodes": []},
+            "comments": {"nodes": []},
+        }
+    monkeypatch.setenv("TO_SPAWN_GH_REPO", GH)
+    monkeypatch.delenv("TO_SPAWN_TICKET", raising=False)
+    monkeypatch.setattr(ls, "lade_sessions_stand", lambda _repo: object())
+    monkeypatch.setattr(ls, "prozess_stand", lambda _ss, _spec: (titel, {nr: "aus" for nr in titel}))
+    monkeypatch.setattr(ls, "gh_issues", lambda _repo, _nrs: issues_gql)
+    monkeypatch.setattr(ls, "repo_slug", lambda _repo: GH)
+    return ls.vorbereiten(ls.Ablage(welt["repo"], SPEC))
+
+
+def test_ohne_capo_leitstand_passt_beantwortet_live_frage_und_startet_live(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#924 Rest (-ohne, nur leitstand.py): passt beantwortet offene Live-Frage (ja) und startet Komplett + Live."""
+    zaehl, live_zaehl = _einrichten(welt, staging=False)
+    _abnahme_hinzufuegen(welt)
+    _bau_tickets_zu(welt)
+    monkeypatch.delenv("TO_SPAWN_TICKET", raising=False)
+    fid = briefkasten.einwerfen(
+        "903",
+        "Darf Spec #900 live gehen?",
+        "ja",
+        2,
+        [],
+        ziel="live",
+        art="deploy",
+        hauptbaum=welt["repo"],
+    )
+
+    # Vor „passt“: Live-Frage bleibt offen, weder Komplett-Prüfung noch Live starten.
+    _leitstand_vorbereiten(welt, monkeypatch)
+    assert briefkasten.lesen("903", fid, hauptbaum=welt["repo"]) == briefkasten.NUTZER
+    assert _laeufe(zaehl) == 0 and _laeufe(live_zaehl) == 0
+
+    # Nutzer kommentiert „passt — abgenommen.“ (+ Aufseher-Quittung danach wie in #935).
+    _kommentar(welt, "903", "passt — abgenommen.")
+    _kommentar(welt, "903", "Aufseher: Abnahme erhalten.")
+
+    _leitstand_vorbereiten(welt, monkeypatch)
+    antwort = briefkasten.lesen("903", fid, hauptbaum=welt["repo"])
+    assert isinstance(antwort, briefkasten.Antwort)
+    assert antwort.wahl == "ja"
+    assert antwort.von == briefkasten.NUTZER_VON
+    assert briefkasten.offene(["903"], hauptbaum=welt["repo"]) == []
+    assert _laeufe(zaehl) == 1
+    assert _laeufe(live_zaehl) == 1
+    assert capo.live_gelaufen(welt["repo"], int(SPEC), GH)
+
+    # Zweiter Leitstand-Lauf startet weder Komplett-Prüfung noch Live erneut.
+    _leitstand_vorbereiten(welt, monkeypatch)
+    assert _laeufe(zaehl) == 1 and _laeufe(live_zaehl) == 1
+
+
+def test_capo_takt_passt_beantwortet_offene_live_frage_im_briefkasten(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#924 (capo-Weg): auch im capo-Takt wird eine offene Briefkasten-Live-Frage nach „passt“ mit „ja“ beantwortet."""
+    zaehl, live_zaehl = _einrichten(welt, staging=False)
+    _abnahme_hinzufuegen(welt)
+    _bau_tickets_zu(welt)
+    monkeypatch.delenv("TO_SPAWN_TICKET", raising=False)
+    fid = briefkasten.einwerfen(
+        "903",
+        "Darf Spec #900 live ausgerollt werden?",
+        "ja",
+        2,
+        [],
+        ziel="live",
+        art="deploy",
+        hauptbaum=welt["repo"],
+    )
+    _kommentar(welt, "903", "passt — abgenommen.")
+
+    erg = _capo(welt)
+    assert erg.returncode == 0, _text(erg)
+    antwort = briefkasten.lesen("903", fid, hauptbaum=welt["repo"])
+    assert isinstance(antwort, briefkasten.Antwort)
+    assert antwort.wahl == "ja"
+    assert antwort.von == briefkasten.NUTZER_VON
+    assert briefkasten.offene(["903"], hauptbaum=welt["repo"]) == []
+    assert _laeufe(zaehl) == 1 and _laeufe(live_zaehl) == 1
+
+
+def test_nicht_live_klasse_2_frage_bleibt_trotz_passt_offen(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#924 Abgrenzung: Nicht-Live-Klasse-2-Fragen (Kosten/Konto/Löschen) bleiben trotz „passt“ offen."""
+    _einrichten(welt, staging=False)
+    _abnahme_hinzufuegen(welt)
+    _bau_tickets_zu(welt)
+    monkeypatch.delenv("TO_SPAWN_TICKET", raising=False)
+    fid_kosten = briefkasten.einwerfen(
+        "903",
+        "Kostenpflichtiges Abo buchen?",
+        "nein",
+        2,
+        [],
+        ziel="konto",
+        art="kosten",
+        hauptbaum=welt["repo"],
+    )
+    fid_loeschen = briefkasten.einwerfen(
+        "903",
+        "Live-Datenbank löschen?",
+        "nein",
+        2,
+        [],
+        ziel="live",
+        art="loeschen",
+        hauptbaum=welt["repo"],
+    )
+    _kommentar(welt, "903", "passt — abgenommen.")
+
+    _leitstand_vorbereiten(welt, monkeypatch)
+    assert briefkasten.lesen("903", fid_kosten, hauptbaum=welt["repo"]) == briefkasten.NUTZER
+    assert briefkasten.lesen("903", fid_loeschen, hauptbaum=welt["repo"]) == briefkasten.NUTZER
+
+
+def test_ohne_capo_teilabnahme_und_kritik_beantworten_live_frage_nicht(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#924 Gegenfall (ohne capo): offenes Bau-Ticket oder Kritik lassen Live-Frage offen und starten kein Live."""
+    zaehl, live_zaehl = _einrichten(welt, staging=False)
+    _abnahme_hinzufuegen(welt)
+    monkeypatch.delenv("TO_SPAWN_TICKET", raising=False)
+    fid = briefkasten.einwerfen(
+        "903",
+        "Darf Spec #900 live gehen?",
+        "ja",
+        2,
+        [],
+        ziel="live",
+        art="deploy",
+        hauptbaum=welt["repo"],
+    )
+    _kommentar(welt, "903", "passt")
+
+    # Bau-Tickets noch offen (Teilabnahme): nichts beantworten, kein Live.
+    _leitstand_vorbereiten(welt, monkeypatch)
+    assert briefkasten.lesen("903", fid, hauptbaum=welt["repo"]) == briefkasten.NUTZER
+    assert _laeufe(zaehl) == 0 and _laeufe(live_zaehl) == 0
+
+    # Bau-Tickets zu, aber jüngster Mensch-Kommentar ist Kritik: bleibt offen, kein Live.
+    _bau_tickets_zu(welt)
+    _kommentar(welt, "903", "passt nicht, bitte noch ändern.")
+    _leitstand_vorbereiten(welt, monkeypatch)
+    assert briefkasten.lesen("903", fid, hauptbaum=welt["repo"]) == briefkasten.NUTZER
+    assert _laeufe(zaehl) == 0 and _laeufe(live_zaehl) == 0
