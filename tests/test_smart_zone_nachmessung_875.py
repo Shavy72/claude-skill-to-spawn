@@ -9,6 +9,7 @@ Schadens-Schwellen, Determinismus sowie Plattform-Neutralität.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -382,5 +383,62 @@ def test_cli_schreibt_ausgabe_und_erzeugt_valides_json(tmp_path: Path) -> None:
     )
     assert lauf_json.returncode == 0, lauf_json.stderr
     daten = json.loads(lauf_json.stdout)
+    assert daten["frist"]["frist_erfuellt"] is True
+    assert daten["empfehlung_code"] == "beobachten"
+
+
+def test_cli_erzwingt_utf8_ausgabe_trotz_cp1252_umgebung(tmp_path: Path) -> None:
+    """Unter Windows-Codepage (cp1252) liefern stdout (Markdown/JSON) und stderr trotzdem valides UTF-8."""
+    projekte = tmp_path / "projects"
+    projekte.mkdir()
+    env_cp1252 = {**os.environ, "PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0"}
+
+    lauf_md = subprocess.run(
+        [
+            sys.executable,
+            str(SKRIPT),
+            "--projekte",
+            str(projekte),
+            "--ab",
+            "2026-11-23",
+            "--stichtag",
+            "2026-12-08",
+            "--umstellung",
+            "2026-11-23",
+        ],
+        capture_output=True,
+        env=env_cp1252,
+        check=False,
+    )
+    assert lauf_md.returncode == 0
+    md_text = lauf_md.stdout.decode("utf-8")
+    err_md = lauf_md.stderr.decode("utf-8")
+    assert "Messgröße A" in md_text
+    assert "250–330k" in md_text
+    assert "14-Tage-Frist" in md_text
+    assert "Auswertung" in err_md or err_md == "" or "INFO" in err_md
+
+    lauf_json = subprocess.run(
+        [
+            sys.executable,
+            str(SKRIPT),
+            "--projekte",
+            str(projekte),
+            "--ab",
+            "2026-11-23",
+            "--stichtag",
+            "2026-12-08",
+            "--umstellung",
+            "2026-11-23",
+            "--json",
+        ],
+        capture_output=True,
+        env=env_cp1252,
+        check=False,
+    )
+    assert lauf_json.returncode == 0
+    json_text = lauf_json.stdout.decode("utf-8")
+    _ = lauf_json.stderr.decode("utf-8")
+    daten = json.loads(json_text)
     assert daten["frist"]["frist_erfuellt"] is True
     assert daten["empfehlung_code"] == "beobachten"

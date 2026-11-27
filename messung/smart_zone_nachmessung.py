@@ -1158,8 +1158,17 @@ def baue_parser() -> argparse.ArgumentParser:
     return ap
 
 
+def _utf8_stroeme() -> None:
+    """Stellt stdout und stderr auf UTF-8 (Windows-Pipes nutzen sonst cp1252)."""
+    for strom in (sys.stdout, sys.stderr):
+        reconfigure = getattr(strom, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI-Einstiegspunkt."""
+    _utf8_stroeme()
     ap = baue_parser()
     args = ap.parse_args(argv)
 
