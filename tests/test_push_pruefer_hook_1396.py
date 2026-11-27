@@ -239,9 +239,7 @@ def test_push_auf_ticket_zweig_abgelehnt_bei_kaputter_beleg_form_und_testverlust
 
 
 @pytest.mark.skipif(BASH is None, reason="bash / Git Bash fehlt")
-def test_push_auf_ticket_zweig_erlaubt_wenn_pruefer_gruen(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_push_auf_ticket_zweig_erlaubt_wenn_pruefer_gruen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo = _repo_basis(tmp_path)
     sha = _commit(repo, f"feat: Umsetzung (#{TICKET})", {"app.py": "x = 1\n"})
     _commit(repo, f"docs: Beleg (#{TICKET})", _gueltige_beleg_dateien(TICKET, sha))
@@ -253,9 +251,7 @@ def test_push_auf_ticket_zweig_erlaubt_wenn_pruefer_gruen(
 
 
 @pytest.mark.skipif(BASH is None, reason="bash / Git Bash fehlt")
-def test_push_auf_ticket_zweig_erlaubt_fuer_reines_doku_ticket(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_push_auf_ticket_zweig_erlaubt_fuer_reines_doku_ticket(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo = _repo_basis(tmp_path)
     _commit(repo, f"docs: Anleitung aktualisiert (#{TICKET})", {"docs/anleitung.md": "# Neu\n"})
     bau = _lade_bau(monkeypatch, repo)

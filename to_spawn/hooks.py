@@ -1014,7 +1014,9 @@ def _git_push_ziele(woerter: list[str], cwd: Path) -> list[tuple[Path, str, str]
             if ziel_kurz == "HEAD":
                 ziel_kurz = _aktueller_zweig(ziel_cwd) or ""
             if ziel_kurz.startswith("ticket/"):
-                quelle_ref = quelle.removeprefix("refs/heads/") if quelle.startswith("refs/heads/") else (quelle or "HEAD")
+                quelle_ref = (
+                    quelle.removeprefix("refs/heads/") if quelle.startswith("refs/heads/") else (quelle or "HEAD")
+                )
                 treffer.append((ziel_cwd, ziel_kurz, quelle_ref))
     elif not sammel:
         aktuell = _aktueller_zweig(ziel_cwd)
