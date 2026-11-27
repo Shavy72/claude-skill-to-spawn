@@ -2007,10 +2007,11 @@ class Aufpasser:
         return basis
 
     def offene_tickets(self, spec: str, repo: Path) -> dict[int, dict]:
-        """Unter-Tickets, die nicht :func:`ticket_zustand.endgueltig_zu` sind, je Nummer
-        mit ``state``/``labels`` — aus EINEM Listen-Aufruf, kein ``issue view`` je Ticket
-        (#279: ein hängendes ``gh`` hielt sonst den ganzen Takt auf). Unlesbar ⇒
-        ``RuntimeError``."""
+        """Unter-Tickets (Sub-Issues und zusätzliche Manifest-Tickets #867), die nicht
+        :func:`ticket_zustand.endgueltig_zu` sind, je Nummer mit ``state``/``labels`` —
+        Sub-Issues aus EINEM Listen-Aufruf (#279: ein hängendes ``gh`` hielt sonst den
+        ganzen Takt auf), fehlende Manifest-Folge-Tickets einzeln über :meth:`ticket_lesen`.
+        Unlesbar ⇒ ``RuntimeError``."""
         raus = self.sh(
             "gh",
             "api",
@@ -2024,9 +2025,17 @@ class Aufpasser:
             tickets = [json.loads(z) for z in raus.splitlines() if z.strip()]
             if not all(isinstance(t, dict) for t in tickets):
                 raise TypeError("Zeile ist kein JSON-Objekt")
-            return {int(t["number"]): t for t in tickets if not ticket_zustand.endgueltig_zu(t)}
+            bekannt = {int(t["number"]) for t in tickets}
+            offen = {int(t["number"]): t for t in tickets if not ticket_zustand.endgueltig_zu(t)}
         except (json.JSONDecodeError, KeyError, TypeError) as fehler:
             raise RuntimeError(f"sub_issues {spec}: unlesbar ({fehler})") from None
+        for nummer in manifest.ticket_nummern(repo, spec):
+            if nummer in bekannt:
+                continue
+            daten = self.ticket_lesen(nummer, repo)
+            if not ticket_zustand.endgueltig_zu(daten):
+                offen[nummer] = {"number": nummer, **daten}
+        return offen
 
     def ticket_lesen(self, ticket: int, repo: Path) -> dict:
         """Ticket über :func:`ticket_zustand.lesen` — alle Felder des Bausteins, ``labels``
