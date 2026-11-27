@@ -55,6 +55,7 @@ from to_spawn import (
     warten,
     wecker,
     werkzeug,
+    zweig_pruefung,
 )
 from to_spawn import einreichen as einreichen_modul
 from to_spawn import spawn as spawn_modul
@@ -627,6 +628,8 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         return ort_wahl.lauf(args, config.repo_wurzel(_repo_aus_umgebung()))
     if args.befehl == "regeln-pruefen":
         return regel_pruefung.lauf(args)
+    if args.befehl == "zweige-pruefen":
+        return zweig_pruefung.lauf(args, _repo_aus_umgebung())
     if args.befehl == "aufraeumen":
         return _aufraeumen(args, ap)
     if args.befehl == "sichern":
