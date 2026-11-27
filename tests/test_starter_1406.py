@@ -151,6 +151,7 @@ KEIN_START = frozenset(
         ("to_spawn/capo.py", "_staging_zeilen"),  # ssh lesen
         ("to_spawn/capo.py", "tmux_fenster"),  # tmux list-windows
         ("to_spawn/capo.py", "_abschluss_lauf"),  # abschluss_paket.py
+        ("to_spawn/capo.py", "live_gedeckt"),  # Repo-Skript scripts/schlange_deckung.py, Ausgabe gelesen (#859)
         ("to_spawn/gh.py", "lauf"),  # gh
         ("to_spawn/handoff_blick.py", "EchteNaht.leiter"),  # Skill-Skript, Ausgabe gelesen
         ("to_spawn/inventur.py", "_fuehre_aus"),  # Prüfbefehle

@@ -104,6 +104,7 @@ from to_spawn import (
     config,
     eigener_handoff,
     gh,
+    halt,
     manifest,
     prozessbaum,
     sessions_datei,
@@ -119,7 +120,7 @@ from to_spawn import (
 )
 from to_spawn import sperre as _sperre
 from to_spawn.waechter_lauf import _LIMIT_TEXT as LIMIT_TEXT
-from to_spawn.waechter_lauf import transkript_ordner
+from to_spawn.waechter_lauf import ist_echte_antwort, limit_offen, transkript_ordner
 
 log = logging.getLogger("aufpasser")
 
@@ -145,6 +146,16 @@ START_NACHWEIS_S = 5.0
 #: Mehr als so viele Anstupser je Fenster im Zeitfenster ⇒ „braucht den Menschen“ (R5).
 STUPSER_MAX = 3
 STUPSER_FENSTER_S = 24 * 3600
+#: Limit-Probe (#1453, #892) höchstens einmal je so viele Sekunden je (Programm, Modell);
+#: der Zeitstempel liegt in ``stand.json`` und überlebt so den 15-min-Cron-Neustart.
+LIMIT_PROBE_ABSTAND_S = 30 * 60
+
+
+def _probe_gueltig(eintrag: dict[str, Any], jetzt: float) -> bool:
+    """Probe-Eintrag zählt nur mit Alter in [0, Abstand) — Zukunftszeit = unbekannt."""
+    return 0 <= jetzt - float(eintrag.get("zeit", 0)) < LIMIT_PROBE_ABSTAND_S
+
+
 #: Meldungen ohne Eingriff kommen je Fenster/Ereignis nur einmal am Tag ins Issue;
 #: jeder Eingriff (gestartet, angestupst, fortgesetzt, geschlossen) immer (R3).
 MELDUNG_EINMAL_PRO_TAG = frozenset(
@@ -311,11 +322,15 @@ CRON_TAKT = "*/15 * * * *"
 #: Datei im Zustandsordner, in die der Cron-Lauf schreibt (Aufpasser-Log für Menschen).
 CRON_LOG = "cron.out"
 SKRIPT_STARTER = Path(__file__).resolve().parent.parent / "skripte" / "aufpasser.py"
-ARBEITS_MARKER = (
-    "esc to interrupt",
+ARBEITS_MARKER = ("esc to interrupt",)
+#: Limit-Meldung im Fenster: zählt in :func:`arbeitet` mit, ist aber im ``bau``-Fenster
+#: ein eigener Zustand „Limit-Pause“ (:func:`limit_pause`, #1453, #892).
+LIMIT_MARKER = (
     "usage limit",
     "limit reset",
 )
+#: Zeilenanfang neuer Claude-Ausgabe bzw. neuer Eingabe unter einer Limit-Zeile.
+NEUE_AUSGABE = ("⏺", "●", "✻", "❯", ">")
 #: Nur echte laufende Arbeit (ohne Limit-Hinweise) — genutzt vom externen Wecker (#287),
 #: damit eine alte Limit-Meldung nach dem Reset einen neuen Weckruf nicht dauerhaft sperrt.
 LAUFEND_MARKER = ("esc to interrupt",)
@@ -581,7 +596,7 @@ def arbeits_marker_aktiv(text: str) -> bool:
     wie ``✻ Waiting for 1 background agent to finish`` ein stilles Fenster nicht sperren.
     """
     return (
-        any(m in text for m in ARBEITS_MARKER)
+        any(m in text for m in ARBEITS_MARKER + LIMIT_MARKER)
         or any(m in statuszeile(text) for m in STATUSZEILEN_ARBEITS_MARKER)
         or bool(LIMIT_TEXT.search(text))
         or bool(_AGY_SUBAGENT_AKTIV.search(text))
@@ -597,6 +612,63 @@ def arbeitet(text: str, status: str | None = None) -> bool:
     if status == "busy":
         return True
     return arbeits_marker_aktiv(text) or rueckfrage(text) or bool(BLOCKER_WARTEN.search(text))
+
+
+def _ist_limit_zeile(zeile: str) -> bool:
+    return any(m in zeile for m in LIMIT_MARKER) or bool(LIMIT_TEXT.search(zeile))
+
+
+def limit_pause(text: str) -> bool:
+    """Fenster steht nur wegen des Nutzungs-Limits still (#1453, #892).
+
+    Wahr, wenn eine Limit-Zeile die letzte Ausgabe über dem Eingabefeld ist (darunter
+    keine neue Ausgabe/Eingabe) und ohne die Limit-Zeilen nichts nach Arbeit aussieht.
+    Ob das Limit wieder offen ist, sagt diese Funktion nicht — das prüft die Probe.
+    """
+    zeilen = ohne_statuszeile(text).splitlines()
+    linien = [i for i, z in enumerate(zeilen) if EINGABEFELD_LINIE.fullmatch(z)]
+    if linien:
+        zeilen = zeilen[: linien[-1]]
+    treffer = [i for i, z in enumerate(zeilen) if _ist_limit_zeile(z)]
+    if not treffer:
+        return False
+    if any(z.lstrip().startswith(NEUE_AUSGABE) for z in zeilen[treffer[-1] + 1 :]):
+        return False
+    return not arbeitet(ohne_limit_zeilen(text))
+
+
+def ohne_limit_zeilen(text: str) -> str:
+    """Pane-Text ohne Limit-Zeilen — was bleibt, entscheidet über „arbeitet“."""
+    return "\n".join(z for z in text.splitlines() if not _ist_limit_zeile(z))
+
+
+#: So viele Bytes vom Transkript-Ende reichen für die letzte echte Antwort (#1463, #892).
+TRANSKRIPT_ENDE_BYTES = 512_000
+
+
+def fenster_modell(transkript: Path) -> str | None:
+    """Modell der letzten echten Antwort im Transkript einer Session (#1463, #892).
+
+    Künstliche Zeilen von Claude Code (Limit, API-Fehler, ``<synthetic>``) zählen nicht.
+    Kein Transkript/keine Antwort → ``None`` (der Aufrufer nimmt das Konfig-Modell).
+    """
+    try:
+        with transkript.open("rb") as datei:
+            datei.seek(0, os.SEEK_END)
+            datei.seek(max(0, datei.tell() - TRANSKRIPT_ENDE_BYTES))
+            zeilen = datei.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return None
+    for zeile in reversed(zeilen):
+        try:
+            eintrag = json.loads(zeile)
+        except ValueError:
+            continue
+        if isinstance(eintrag, dict) and ist_echte_antwort(eintrag):
+            modell = (eintrag.get("message") or {}).get("model")
+            if isinstance(modell, str) and modell:
+                return modell
+    return None
 
 
 def arbeitet_echt(text: str, status: str | None = None) -> bool:
@@ -1643,6 +1715,8 @@ class Stand:
     starts: dict[str, list[float]] = field(default_factory=dict)
     #: Zeitstempel des letzten abgeschlossenen :meth:`Aufpasser.platz_schaffen`-Laufs (#624).
     platz_zuletzt: float = 0.0
+    #: Letzte Limit-Probe je ``Programm|Modell``: ``{"zeit": t, "offen": bool}`` (#1453, #892).
+    limit_proben: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 class Aufpasser:
@@ -1715,6 +1789,7 @@ class Aufpasser:
             meldungen=dict(roh.get("meldungen") or {}),
             starts={k: [float(t) for t in v] for k, v in (roh.get("starts") or {}).items()},
             platz_zuletzt=platz_zuletzt,
+            limit_proben=dict(roh.get("limit_proben") or {}),
         )
 
     def _stand_schreiben(self) -> None:
@@ -1724,11 +1799,15 @@ class Aufpasser:
         meldungen = {k: t for k, t in self.stand.meldungen.items() if t >= grenze}
         starts = {k: [t for t in v if self.jetzt - t < START_FENSTER_S] for k, v in self.stand.starts.items()}
         starts = {k: v for k, v in starts.items() if v}
+        limit_proben = {
+            k: v for k, v in self.stand.limit_proben.items() if isinstance(v, dict) and _probe_gueltig(v, self.jetzt)
+        }
         self.e.zustand.mkdir(parents=True, exist_ok=True)
         daten: dict[str, Any] = {
             "fenster": self.stand.fenster,
             "meldungen": meldungen,
             "starts": starts,
+            "limit_proben": limit_proben,
         }
         if self.stand.platz_zuletzt:
             daten["platz_zuletzt"] = self.stand.platz_zuletzt
@@ -2007,10 +2086,11 @@ class Aufpasser:
         return basis
 
     def offene_tickets(self, spec: str, repo: Path) -> dict[int, dict]:
-        """Unter-Tickets, die nicht :func:`ticket_zustand.endgueltig_zu` sind, je Nummer
-        mit ``state``/``labels`` — aus EINEM Listen-Aufruf, kein ``issue view`` je Ticket
-        (#279: ein hängendes ``gh`` hielt sonst den ganzen Takt auf). Unlesbar ⇒
-        ``RuntimeError``."""
+        """Unter-Tickets (Sub-Issues und zusätzliche Manifest-Tickets #867), die nicht
+        :func:`ticket_zustand.endgueltig_zu` sind, je Nummer mit ``state``/``labels`` —
+        Sub-Issues aus EINEM Listen-Aufruf (#279: ein hängendes ``gh`` hielt sonst den
+        ganzen Takt auf), fehlende Manifest-Folge-Tickets einzeln über :meth:`ticket_lesen`.
+        Unlesbar ⇒ ``RuntimeError``."""
         raus = self.sh(
             "gh",
             "api",
@@ -2024,9 +2104,17 @@ class Aufpasser:
             tickets = [json.loads(z) for z in raus.splitlines() if z.strip()]
             if not all(isinstance(t, dict) for t in tickets):
                 raise TypeError("Zeile ist kein JSON-Objekt")
-            return {int(t["number"]): t for t in tickets if not ticket_zustand.endgueltig_zu(t)}
+            bekannt = {int(t["number"]) for t in tickets}
+            offen = {int(t["number"]): t for t in tickets if not ticket_zustand.endgueltig_zu(t)}
         except (json.JSONDecodeError, KeyError, TypeError) as fehler:
             raise RuntimeError(f"sub_issues {spec}: unlesbar ({fehler})") from None
+        for nummer in manifest.ticket_nummern(repo, spec):
+            if nummer in bekannt:
+                continue
+            daten = self.ticket_lesen(nummer, repo)
+            if not ticket_zustand.endgueltig_zu(daten):
+                offen[nummer] = {"number": nummer, **daten}
+        return offen
 
     def ticket_lesen(self, ticket: int, repo: Path) -> dict:
         """Ticket über :func:`ticket_zustand.lesen` — alle Felder des Bausteins, ``labels``
@@ -2037,10 +2125,11 @@ class Aufpasser:
             raise RuntimeError(f"#{ticket}: Ticket-Zustand nicht lesbar (gh)")
         return {**daten, "labels": ticket_zustand.label_namen(daten)}
 
-    def zu_bauen(self, offen: dict[int, dict]) -> set[int]:
-        """Die offenen Tickets, die noch nicht fertig gebaut sind — nur dort baut noch
-        jemand (#279, Fall 03:05). Urteil aus den Listen-Daten, kein weiterer Aufruf."""
-        return {n for n, t in offen.items() if not ticket_zustand.fertig_gebaut(t)}
+    def zu_bauen(self, offen: dict[int, dict], *, repo: Path | None = None) -> set[int]:
+        """Die offenen Tickets, die noch als Bau-Session starten dürfen (#279, #854).
+        Urteil aus den Listen-Daten über :func:`ticket_zustand.bau_startbar`, kein weiterer Aufruf."""
+        label = ticket_zustand.abnahme_label(repo)
+        return {n for n, t in offen.items() if ticket_zustand.bau_startbar(t, checkpoint_label=label)}
 
     def pane_text(self, ziel: str) -> str:
         return self.tmux("capture-pane", "-p", "-t", ziel)
@@ -2545,7 +2634,7 @@ class Aufpasser:
             return False
         text, hash_text = self._pane_lesen(f.ziel)
         status = info.status if info else None
-        aktiv = arbeitet_echt(text, status) if limit_ignorieren else arbeitet(text, status)
+        aktiv = arbeitet_echt(text, status) if limit_ignorieren else self._arbeitet(f, text, status, repo)
         h_neu = pane_hash(hash_text)
         if h_neu != hash_start or aktiv:
             log.info("%s: inzwischen aktiv — kein Eingriff", f.name)
@@ -2560,6 +2649,56 @@ class Aufpasser:
         return True
 
     # -- Regeln je Fenster -------------------------------------------------------
+
+    def _arbeitet(self, f: Fenster, text: str, status: str | None, repo: Path) -> bool:
+        """:func:`arbeitet`, aber ein ``bau``-Fenster in Limit-Pause gilt als still,
+        sobald die Limit-Probe aus #1449 das Limit offen meldet (#1453, #892).
+
+        Steht unter der Limit-Zeile schon neue Ausgabe, ist sie alt: dann zählt nur
+        der Rest des Textes (B3, #1463) — fertige Arbeit darunter heißt „still“.
+
+        Aufseher-Fenster bleiben außen vor: der Aufseher wartet sein Limit selbst ab.
+        """
+        if not arbeitet(text, status):
+            return False
+        if f.ist_wache or status == "busy":
+            return True
+        if limit_pause(text):
+            return not self._limit_offen(f, repo)
+        return arbeitet(ohne_limit_zeilen(text))
+
+    def _fenster_modell(self, f: Fenster) -> str | None:
+        """Modell, mit dem das Fenster zuletzt geantwortet hat (Transkript, #1463, #892)."""
+        info = self.session(f)
+        if not info or not info.cwd:
+            return None
+        return fenster_modell(transkript_ordner(info.cwd, self.e.heim) / f"{info.session_id}.jsonl")
+
+    def _limit_offen(self, f: Fenster, repo: Path) -> bool:
+        """Limit-Probe mit dem Modell des Fensters (#1463, #892), gedrosselt.
+
+        Modell aus dem Session-Transkript; fehlt es, ``modelle.ticket`` der Repo-Konfig.
+
+        Höchstens eine echte Probe je :data:`LIMIT_PROBE_ABSTAND_S` je (Programm, Modell),
+        über Läufe hinweg (Merker in ``stand.json``); dazwischen gilt das letzte Ergebnis.
+        Im Trockenlauf keine Probe (kostet Abo): nur melden, Limit gilt als zu.
+        """
+        konfig = config.lade(repo)
+        claude = str(konfig.get("runner") or "claude")
+        modell = self._fenster_modell(f) or str((konfig.get("modelle") or {}).get("ticket") or "")
+        if not modell:
+            log.warning("Limit-Probe: kein Modell (Transkript/Konfig) — gilt als zu.")
+            return False
+        schluessel = f"{claude}|{modell}"
+        letzte = self.stand.limit_proben.get(schluessel)
+        if isinstance(letzte, dict) and _probe_gueltig(letzte, self.jetzt):
+            return bool(letzte.get("offen"))
+        if self.e.trocken:
+            print(f"[trocken] Limit-Probe würde laufen ({claude}, {modell}) — gilt als zu")
+            return False
+        offen = limit_offen(claude, modell, repo)
+        self.stand.limit_proben[schluessel] = {"zeit": self.jetzt, "offen": offen}
+        return offen
 
     def _agy_still_seit(self, f: Fenster, repo: Path | None, ticket: int | None) -> float | None:
         """Letzte Aktivitätszeit (``mtime`` des Transkripts) einer laufenden ``agy``-Session (#288)."""
@@ -3023,7 +3162,7 @@ class Aufpasser:
                 except (RuntimeError, ValueError) as fehler:
                     log.error("%s: GitHub nicht lesbar: %s", sitzung, fehler)
                     continue
-                offen = self.zu_bauen(offen_roh)
+                offen = self.zu_bauen(offen_roh, repo=repo)
                 if any(isinstance(fb, Fenster) and (fb.ist_leitstand or fb.ist_wache) for fb in fenster):
                     self._platz_spec_grund[sitzung] = self._spec_abgeschlossen_grund(spec, repo, offen_roh, fenster)
                 for f in fenster:
@@ -3090,7 +3229,6 @@ class Aufpasser:
         e = self.eintrag(schluessel, hash_text, seit_hinweis=seit_hinweis)
         hash_start = e["hash"]
         still_min = (self.jetzt - e["seit"]) / 60
-        arbeitend = arbeitet(text, status)
 
         if self._fertiges_fenster(f, repo, offen, ticket, text, info, e, still_min, schluessel, echt_arbeitend):
             return
@@ -3105,6 +3243,7 @@ class Aufpasser:
                     f"„{f.name}“ wartet seit {int(still_min)} min auf eine Ja/Nein-Bestätigung — braucht den Menschen.",
                 )
             return
+        arbeitend = self._arbeitet(f, text, status, repo)
         if (
             ticket is not None
             and ticket in offen
@@ -3447,12 +3586,29 @@ class Aufpasser:
 
     # -- Ein Lauf ----------------------------------------------------------------
 
-    def start_erlaubt(self, spec: str, repo: Path, ticket: int | None, *, sitzung: str = "") -> bool:
-        """Regel 1: kein Start außerhalb der gespeicherten Teil-Start-Auswahl (#271), bei
-        Stopp-Label oder wenn das Fenster in 6 h schon ``START_MAX``-mal gestartet wurde.
+    def halt_der_spec(self, repo: Path) -> halt.Halt | None:
+        """Halt der Spec (#1444); im Trockenlauf wird nichts aufgehoben."""
+        return halt.pruefen(repo, aufheben=not self.e.trocken, wer="aufpasser")
+
+    def start_erlaubt(
+        self,
+        spec: str,
+        repo: Path,
+        ticket: int | None,
+        *,
+        sitzung: str = "",
+        halt_geprueft: bool = False,
+    ) -> bool:
+        """Regel 1: kein Start bei Halt der Spec, außerhalb der gespeicherten Teil-Start-Auswahl (#271),
+        bei Stopp-Label oder wenn das Fenster in 6 h schon ``START_MAX``-mal gestartet wurde.
         ``ticket`` None = Aufseher-Fenster (prüft Auswahl/``--ohne-wache``/Rechner,
-        Start-Gedächtnis ``wache-<S>``)."""
+        Start-Gedächtnis ``wache-<S>``).
+        ``halt_geprueft``: Aufrufer hat den Halt für diese Spec schon geprüft."""
         name = f"bau {ticket}" if ticket is not None else f"wache {spec}"
+        angehalten = None if halt_geprueft else self.halt_der_spec(repo)
+        if angehalten is not None:
+            log.info("%s: %s — kein Start", name, angehalten.text())
+            return False
         auswahl_stand = auswahl.lesen(repo, spec)
         if ticket is None:
             if not auswahl.wache_erlaubt(repo, spec, auswahl=auswahl_stand, gelesen=True):
@@ -3476,12 +3632,13 @@ class Aufpasser:
             except RuntimeError as fehler:
                 log.error("#%s: Ticket nicht lesbar, kein Start: %s", ticket, fehler)
                 return False
-            if ticket_zustand.fertig_gebaut(daten):
-                log.info(
-                    "#%s: %s — kein Start",
-                    ticket,
-                    ticket_zustand.wortlaut(daten),
+            if not ticket_zustand.bau_startbar(daten, repo=repo):
+                grund = (
+                    f"Abnahme-Ticket ({ticket_zustand.abnahme_label(repo)})"
+                    if ticket_zustand.ist_abnahme(daten, repo=repo)
+                    else ticket_zustand.wortlaut(daten)
                 )
+                log.info("#%s: %s — kein Start", ticket, grund)
                 return False
             gesperrt = daten["labels"] & STOPP_LABELS
             if gesperrt:
@@ -3613,28 +3770,31 @@ class Aufpasser:
             sorted(offen_hier) or "-",
             f" ({auswahl.beschreibung(auswahl_stand)})" if auswahl_stand is not None else "",
         )
+        angehalten = self.halt_der_spec(repo)  # einmal je Spec (#1444)
+        if angehalten is not None:
+            log.info("%s: %s — kein Start", sitzung, angehalten.text())
         # Aufseher-Fenster fehlt (R2): zuerst nachstarten (#418), solange die Spec (hier)
         # offene Tickets hat und die Auswahl einen Aufseher auf diesem Rechner erlaubt (#271).
         # Gehört die Auswahl einem anderen Rechner oder gilt --ohne-wache, keinen zweiten
         # Start versuchen und das in einer Zeile melden (#288).
-        if offen and f"wache {spec}" not in vorhanden:
+        if offen and angehalten is None and f"wache {spec}" not in vorhanden:
             if not auswahl.wache_erlaubt(repo, spec, auswahl=auswahl_stand, gelesen=True):
                 log.info(
                     "spec %s: Aufseher läuft laut Auswahl nicht auf diesem Rechner (%s) — kein zweiter Start",
                     spec,
                     auswahl.beschreibung(auswahl_stand),
                 )
-            elif offen_hier and self.start_erlaubt(spec, repo, None, sitzung=sitzung):
+            elif offen_hier and self.start_erlaubt(spec, repo, None, sitzung=sitzung, halt_geprueft=True):
                 self.fehlendes_fenster(sitzung, spec, repo, None)
         # Bau-Fenster nur für „noch nicht fertig gebaut“ (#279) innerhalb der Auswahl (#271);
         # der Aufseher oben bleibt, bis alle gewählten Tickets endgültig zu sind.
-        bauen = self.zu_bauen(offen_hier)
+        bauen = self.zu_bauen(offen_hier, repo=repo)
         fehlend = [t for t in sorted(bauen) if f"bau {t}" not in vorhanden]
         # Läuft das Ticket schon in einer Fenster-Kette (oder folgt dort noch),
         # kein eigenes Fenster — sonst zwei Sessions auf einem Ticket (#598).
-        belegt = self.belegte_tickets() if fehlend else set()
-        gh_repo = gh.repo_aus_origin(repo) if fehlend else ""
-        for ticket in fehlend:
+        belegt = self.belegte_tickets() if fehlend and angehalten is None else set()
+        gh_repo = gh.repo_aus_origin(repo) if fehlend and angehalten is None else ""
+        for ticket in fehlend if angehalten is None else []:
             if ticket in belegt:
                 log.info("%s: #%d läuft in einer Fenster-Kette — kein Start", sitzung, ticket)
                 continue
@@ -3647,7 +3807,7 @@ class Aufpasser:
                     ", ".join(f"#{b}" for b in blocker),
                 )
                 continue
-            if not self.start_erlaubt(spec, repo, ticket, sitzung=sitzung):
+            if not self.start_erlaubt(spec, repo, ticket, sitzung=sitzung, halt_geprueft=True):
                 continue
             self.fehlendes_fenster(sitzung, spec, repo, ticket)
         for f in fenster:
