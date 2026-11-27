@@ -233,7 +233,10 @@ def _lies(klon: Path) -> Halt | None:
             wer=str(daten.get("wer") or "?"),
             bedingung=None,
         )
-        log.warning("%s nicht lesbar oder ohne gültige Bedingung (%s) — %s", datei, fehler, halt.text())
+        if _merker_seit(klon, halt) is None:  # Merker = schon gemeldet ⇒ Warnung einmal je Halt
+            log.warning("%s nicht lesbar oder ohne gültige Bedingung (%s) — %s", datei, fehler, halt.text())
+        else:
+            log.debug("%s weiter nicht lesbar oder ohne gültige Bedingung (%s) — %s", datei, fehler, halt.text())
         return halt
 
 
