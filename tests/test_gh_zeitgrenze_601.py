@@ -79,10 +79,7 @@ def _wartet(zeile: str) -> str:
 
 
 def _vorfaelle(haupt: Path) -> list[dict]:
-    pfad = bau_log.lauf_pfad(haupt, TICKET)
-    if not pfad.is_file():
-        return []
-    zeilen = [json.loads(z) for z in pfad.read_text(encoding="utf-8").splitlines() if z.strip()]
+    zeilen = bau_log.lese(haupt, TICKET)
     return [z for z in zeilen if z.get("typ") == "vorfall"]
 
 

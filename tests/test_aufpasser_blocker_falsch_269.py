@@ -50,12 +50,7 @@ def _fenster_mit(welt: Welt, zeile: str) -> None:
 
 
 def _vorfaelle(welt: Welt) -> list[dict]:
-    import json
-
-    pfad = bau_log.lauf_pfad(welt.repo, TICKET)
-    if not pfad.is_file():
-        return []
-    zeilen = [json.loads(z) for z in pfad.read_text(encoding="utf-8").splitlines() if z.strip()]
+    zeilen = bau_log.lese(welt.repo, TICKET)
     return [z for z in zeilen if z.get("typ") == "vorfall" and z.get("regel") == "blocker_falsch_gewartet"]
 
 

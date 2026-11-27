@@ -1510,8 +1510,13 @@ def _lese_datei(datei: Path) -> list[tuple[str, dict[str, Any]]]:
     return _parse_rohzeilen(rohzeilen(datei), str(datei))
 
 
+def zeitstempel(zeile: dict[str, Any]) -> Any:
+    """Zeitstempel einer Bau-Log-/Protokoll-Zeile (``zeit`` oder historisch ``ts``)."""
+    return zeile.get("zeit") or zeile.get("ts")
+
+
 def _sortier_zeit(zeile: dict[str, Any]) -> datetime:
-    return _zeitpunkt(zeile.get("zeit") or zeile.get("ts")) or datetime.min.replace(tzinfo=UTC)
+    return _zeitpunkt(zeitstempel(zeile)) or datetime.min.replace(tzinfo=UTC)
 
 
 def lese(
