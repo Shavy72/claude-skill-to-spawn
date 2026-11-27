@@ -114,3 +114,34 @@ def test_warnung_nicht_pruefbar_nur_einmal_je_halt(
             assert halt.pruefen(klon) is not None
     warnungen = [r for r in caplog.records if "nicht prüfbar" in r.getMessage()]
     assert len(warnungen) == 1
+
+
+@pytest.mark.parametrize("rohbytes", [b"\xff\xfe kaputt", b"{kein json"])
+def test_unlesbare_datei_warnt_einmal_und_sichert_mit_rohinhalt_im_log(
+    klon: Path, caplog: pytest.LogCaptureFixture, rohbytes: bytes
+) -> None:
+    """Unlesbare/kaputte Halt-Datei: Warnung einmal je Halt, nach Frist umbenannt + Rohinhalt im Log."""
+    datei = klon / halt.DATEI
+    datei.write_bytes(rohbytes)
+    with caplog.at_level(logging.WARNING, logger="to_spawn.halt"):
+        for _ in range(3):
+            assert halt.pruefen(klon) is not None
+    lese_warnungen = [r for r in caplog.records if "nicht lesbar" in r.getMessage()]
+    pruef_warnungen = [r for r in caplog.records if "nicht prüfbar" in r.getMessage()]
+    assert len(lese_warnungen) == 1
+    assert len(pruef_warnungen) == 1
+
+    _merker_altern(klon)
+    assert halt.pruefen(klon) is None
+    assert not datei.exists()
+    gesichert = list(datei.parent.glob(f"{datei.name}.aufgehoben-*"))
+    assert len(gesichert) == 1
+    assert gesichert[0].read_bytes() == rohbytes
+
+    eintraege = [
+        json.loads(zeile) for zeile in (klon / halt.LOG_DATEI).read_text(encoding="utf-8").splitlines() if zeile
+    ]
+    aufgehoben = [e for e in eintraege if e["ereignis"] == "aufgehoben"]
+    assert len(aufgehoben) == 1
+    assert aufgehoben[0]["gesichert_als"] == gesichert[0].name
+    assert aufgehoben[0]["roh"] == rohbytes.decode("utf-8", errors="replace")[:500]

@@ -46,6 +46,7 @@ from to_spawn import (
     ssh_beobachten,
     start_last,
     startklar,
+    taktgeber,
     ticket_zustand,
     ticketstand,
     tmux_aufruf,
@@ -639,6 +640,8 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         return leitstand.lauf(args)
     if args.befehl in ("takt", "takt-einrichten"):
         return waechter_takt.lauf(args)
+    if args.befehl in taktgeber.BEFEHLE:
+        return taktgeber.cli_lauf(args)
     if args.befehl == "aufpasser":
         return aufpasser.lauf_mit_args(args)
     if args.befehl == "wecker":

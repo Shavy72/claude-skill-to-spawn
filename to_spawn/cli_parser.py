@@ -30,6 +30,7 @@ from to_spawn import (
     respawn,
     ssh_beobachten,
     start_last,
+    taktgeber,
     ticketstand,
     uebergabe_sichern,
     vorfall,
@@ -421,6 +422,7 @@ def baue_parser() -> _Parser:
     auswahl.richte_parser_ein(unter)
     leitstand.richte_parser_ein(unter)
     waechter_takt.richte_parser_ein(unter)
+    taktgeber.richte_parser_ein(unter)
     aufseher_stand.richte_parser_ein(unter)
     ticketstand.richte_parser_ein(unter)
     uebergabe_sichern.richte_parser_ein(unter)
