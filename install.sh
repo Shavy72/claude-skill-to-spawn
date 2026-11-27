@@ -71,6 +71,43 @@ besitzer_info() {
   stat -f '%u %Su:%Sg' "$1" 2>/dev/null || printf '%s %s\n' "" "unbekannt"
 }
 
+# _dienst_gilt_fuer_hooks <dienst> <hooks_dir>: prüft, ob die systemd-Unit für diesen Hooks-Ordner gilt.
+# Nennt die Unit einen bestimmten /.claude/hooks-Pfad, gilt sie nur für diesen (Tests unter tmp_path bleiben getrennt).
+_dienst_gilt_fuer_hooks() {
+  local dienst="$1" hooks_dir="$2"
+  [ -f "$dienst" ] || return 1
+  if grep -Fq "$hooks_dir" "$dienst" 2>/dev/null; then
+    return 0
+  fi
+  if grep -q '/\.claude/hooks' "$dienst" 2>/dev/null; then
+    return 1
+  fi
+  return 0
+}
+
+# hooks_fremdverwaltet <hooks_dir> (#851): erkennt absichtlich root-/fremdverwalteten Hooks-Ordner
+# (fremder Besitzer oder nicht schreibbar + claude-config-hooks-Dienst oder Marker im Ordner).
+hooks_fremdverwaltet() {
+  local hooks_dir="$1" meine_uid besitzer_zeile uid_besitzer dienst
+  ist_windows && return 1
+  [ -e "$hooks_dir" ] || return 1
+  meine_uid="$(id -u 2>/dev/null || echo "")"
+  [ -n "$meine_uid" ] && [ "$meine_uid" != "0" ] || return 1
+  besitzer_zeile="$(besitzer_info "$hooks_dir")"
+  uid_besitzer="${besitzer_zeile%% *}"
+  if { [ -z "$uid_besitzer" ] || [ "$uid_besitzer" = "$meine_uid" ]; } && [ -w "$hooks_dir" ]; then
+    return 1
+  fi
+  dienst="${TO_SPAWN_HOOKS_DIENST:-/etc/systemd/system/claude-config-hooks.service}"
+  if _dienst_gilt_fuer_hooks "$dienst" "$hooks_dir"; then
+    return 0
+  fi
+  if [ -e "$hooks_dir/.claude-config-hooks" ] || [ -d "$hooks_dir/config-sync" ]; then
+    return 0
+  fi
+  return 1
+}
+
 # pruefe_zielrechte (#297): vor dem ersten Schreiben Besitzer und Schreibrecht aller Zielordner prüfen.
 # Bricht vor jeder Änderung mit allen betroffenen Pfaden, Besitzer und Behebungsbefehl ab.
 pruefe_zielrechte() {
@@ -125,14 +162,23 @@ pruefe_zielrechte() {
 
 CLAUDE_DIR="$(dirname "$CLAUDE_MD")"
 HOME_CLAUDE="$(nativ "$HOME/.claude")"
+HOOKS_FREMDVERWALTET=0
+if hooks_fremdverwaltet "$HOME_CLAUDE/hooks"; then
+  HOOKS_FREMDVERWALTET=1
+fi
 ZIEL_PFADE=(
   "$SKILLS"
   "$CLAUDE_DIR"
   "$HOME_CLAUDE"
-  "$HOME_CLAUDE/hooks"
-  "$HOME_CLAUDE/hooks/review"
   "$HOME_CLAUDE/review"
 )
+if [ "$HOOKS_FREMDVERWALTET" -eq 0 ]; then
+  ZIEL_PFADE+=(
+    "$HOME_CLAUDE/hooks"
+    "$HOME_CLAUDE/hooks/review"
+  )
+  [ -e "$HOME_CLAUDE/hooks/_alt" ] && ZIEL_PFADE+=("$HOME_CLAUDE/hooks/_alt")
+fi
 for vorhanden in \
   "$SKILLS/_alt" \
   "$ZIEL" \
@@ -140,7 +186,6 @@ for vorhanden in \
   "$CLAUDE_MD" \
   "$CLAUDE_DIR/bin" \
   "$CLAUDE_DIR/settings.json" \
-  "$HOME_CLAUDE/hooks/_alt" \
   "$HOME_CLAUDE/_alt"; do
   [ -e "$vorhanden" ] && ZIEL_PFADE+=("$vorhanden")
 done
@@ -210,7 +255,12 @@ PYTHONPATH="$ZIEL" "$PY" -m to_spawn.globale_regeln --ziel "$CLAUDE_MD"
 PYTHONPATH="$ZIEL" "$PY" -m to_spawn.ja_einrichten --claude-dir "$(dirname "$CLAUDE_MD")" --python "$PY" --cli "$ZIEL/to_spawn.py"
 
 # --- 3c. Review-Hook (review-hook/ → ~/.claude/hooks/review, #214) + Werkzeug (review/ → ~/.claude/review, #329); Regel in to_spawn/review_hook.py
-PYTHONPATH="$ZIEL" "$PY" -m to_spawn.review_hook --klon "$HIER"  # Klon: nur versionierte Dateien
+if [ "$HOOKS_FREMDVERWALTET" -eq 1 ]; then
+  echo "Hooks übersprungen: $HOME_CLAUDE/hooks (Hooks kommen über claude-config, nicht von hier)"
+  PYTHONPATH="$ZIEL" "$PY" -m to_spawn.review_hook --klon "$HIER" --ohne-hook
+else
+  PYTHONPATH="$ZIEL" "$PY" -m to_spawn.review_hook --klon "$HIER"  # Klon: nur versionierte Dateien
+fi
 
 # --- 3d. Review-Dirigent (review-dirigent/ → <skills>/review-dirigent, #396) ---
 if [ -d "$HIER/review-dirigent" ]; then
