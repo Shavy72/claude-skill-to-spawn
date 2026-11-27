@@ -266,6 +266,18 @@ def lade_manifest(repo: Path, spec: int | str) -> dict[str, Any]:
     return lade_manifest_mit_doppelten(repo, spec)[0]
 
 
+def ticket_nummern(repo: Path, spec: int | str) -> list[int]:
+    """Numerische Ticket-Nummern aus ``spec-<S>.json`` (sortiert); leer bei fehlendem/unlesbarem Manifest (#867)."""
+    try:
+        daten = lade_manifest(repo, spec)
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError) as fehler:
+        log.warning("Manifest spec-%s nicht lesbar: %s", spec, fehler)
+        return []
+    return [int(n) for n in sorted(daten["tickets"], key=ticket_schluessel) if str(n).isdigit()]
+
+
 @dataclass
 class Bericht:
     """Ergebnis der Regularien-Prüfung."""

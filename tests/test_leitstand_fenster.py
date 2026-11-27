@@ -154,6 +154,7 @@ def test_cli_seite_schreibt_datei(tmp_path: Path) -> None:
 # ---------------------------------------------------------------- Start-Mail
 
 
+@pytest.mark.xfail(strict=True, reason="überholt durch #885: tagsüber keine Leitstand-Mail (Entscheidung 27.11.)")
 def test_mail_genau_einmal_auch_bei_nur_kritisch(tmp_path: Path) -> None:
     konfig, ausgang = _mail_konfig(tmp_path)
     repo = _repo(tmp_path, konfig)
@@ -185,6 +186,7 @@ def test_mail_ohne_url_exit4(tmp_path: Path) -> None:
     assert not ausgang.exists()
 
 
+@pytest.mark.xfail(strict=True, reason="überholt durch #885: tagsüber keine Leitstand-Mail (Entscheidung 27.11.)")
 def test_mail_befehl_scheitert_exit1_ohne_schluessel(tmp_path: Path) -> None:
     repo = _repo(tmp_path, {"mail": {"befehl": [sys.executable, "-c", "raise SystemExit(7)"]}})
     _cli(repo, tmp_path, "url", "--setzen", URL)
@@ -298,6 +300,7 @@ def test_alias_leitstand_im_installer() -> None:
     assert 'skripte/leitstand.py") $args[0] @rest' in text and '$rest = @("sitzung")' in text
 
 
+@pytest.mark.xfail(strict=True, reason="überholt durch #885: tagsüber keine Leitstand-Mail (Entscheidung 27.11.)")
 def test_melder_leitstand_start_immer() -> None:
     from to_spawn import melder
 

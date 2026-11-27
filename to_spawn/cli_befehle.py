@@ -357,6 +357,26 @@ def _befund(args: argparse.Namespace) -> int:
     return 0 if ergebnis.ok else 1
 
 
+def _kommentiere(args: argparse.Namespace) -> int:
+    """Unterbefehl ``kommentiere`` (#899): Aufseher-Kommentar zwingend durch ``befund.kommentiere``."""
+    repo = config.repo_wurzel(_repo_aus_umgebung())
+    gh_repo = args.gh_repo or gh.repo_aus_origin(repo)
+    if not gh_repo:
+        print("FEHLER: kein GitHub-Repo erkannt (origin fehlt oder zeigt nicht auf github.com)", file=sys.stderr)
+        return 2
+    ok = (
+        befund.kommentiere(args.ticket, gh_repo, args.text, befehl="reopen")
+        if args.reopen
+        else befund.kommentiere(args.ticket, gh_repo, args.text)
+    )
+    if not ok:
+        print(f"FEHLER: Kommentar auf #{args.ticket} gescheitert", file=sys.stderr)
+        return 1
+    aktion = "wieder geöffnet + kommentiert" if args.reopen else "kommentiert"
+    print(f"#{args.ticket} {aktion}")
+    return 0
+
+
 def _spec_schliessen(args: argparse.Namespace) -> int:
     """Unterbefehl ``spec-schliessen`` (E2-4): schließt die Spec nur ohne offene Folge-Tickets."""
     repo = config.repo_wurzel(_repo_aus_umgebung())
@@ -412,19 +432,20 @@ def _einreichen(args: argparse.Namespace) -> int:
 
 
 def _zu_bauen(args: argparse.Namespace) -> int:
-    """Unterbefehl ``zu-bauen`` (#279): Tickets der Spec, an denen noch jemand bauen muss.
+    """Unterbefehl ``zu-bauen`` (#279, #854): Tickets der Spec, die als Bau-Session starten dürfen.
 
-    Eine Nummer je Zeile, Regel nur in :func:`ticket_zustand.fertig_gebaut`. Unbekannter
+    Eine Nummer je Zeile, Regel nur in :func:`ticket_zustand.bau_startbar`. Unbekannter
     Stand (gh-Fehler) → Nummer fehlt, Zeile auf stderr, Exit 1 — fail-closed, nie „zu bauen“.
     """
     repo = config.repo_wurzel(_repo_aus_umgebung())
+    label = ticket_zustand.abnahme_label(repo)
     code = 0
     for ticket in _spec_tickets(repo, args.spec):
         daten = ticket_zustand.lesen(ticket, repo)
         if daten is None:
             print(f"#{ticket}: Ticket-Stand nicht bestimmbar — nicht gestartet", file=sys.stderr)
             code = 1
-        elif not ticket_zustand.fertig_gebaut(daten):
+        elif ticket_zustand.bau_startbar(daten, checkpoint_label=label):
             print(ticket)
     return code
 
@@ -592,6 +613,8 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         return _eintrag(args)
     if args.befehl == "befund":
         return _befund(args)
+    if args.befehl == "kommentiere":
+        return _kommentiere(args)
     if args.befehl == "spec-schliessen":
         return _spec_schliessen(args)
     if args.befehl == "spec-pruefen":

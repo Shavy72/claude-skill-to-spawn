@@ -30,6 +30,8 @@ Eine Mail je Spec (#586), zusätzlich zum Aufruf oben:
   Vermerk „Rückblick fehlgeschlagen: …“ raus. Gleicher Mail-Schlüssel wie oben.
   Exit 0 = verschickt/schon verschickt/Probe, 1 = Mail-Befehl gescheitert, 2 = keine Ablage,
   3 = wartet noch.
+* Beide verweigern mit Exit 4, solange capo die Spec führt, aber nicht „SPEC FERTIG“ meldet (#889):
+  das Fertig-Urteil fällt nur capo, nie die Aufseher-Session.
 """
 
 from __future__ import annotations
@@ -418,6 +420,8 @@ def main(argv: list[str] | None = None) -> int:
         return ablegen(argv[1:])
     if argv[:1] == ["nachsehen"]:
         return nachsehen(argv[1:])
+    if argv[:1] == ["morgen-bericht"]:
+        return morgen_bericht_cli(argv[1:])
     if _geheimnis_abbruch(argv):
         return 2
     ap = _parser()
@@ -451,6 +455,9 @@ def main(argv: list[str] | None = None) -> int:
     _schreiben(md_datei, text, offen, _offen_daten(repo, p))
     if not melder.mail_eingerichtet(konfig):
         log.info("Mail nicht eingerichtet (mail.befehl leer) — nur Datei.")
+        return 0
+    if not melder.darf_raus("spec_fertig", konfig):
+        melder.melden(repo, "spec_fertig", titel, text, f"abschluss_{p.spec}{_endung(p)}", konfig=konfig)
         return 0
     if not melder.melden(repo, "spec_fertig", titel, text, f"abschluss_{p.spec}{_endung(p)}", konfig=konfig):
         log.warning("Mail „%s“ nicht verschickt (schon gesendet oder Befehl gescheitert).", titel)
@@ -882,6 +889,32 @@ def stand_cli(argv: list[str]) -> int:
     return 0
 
 
+#: Exit-Code, wenn capo die Spec führt, aber nicht „fertig“ meldet (#889).
+NICHT_FERTIG = 4
+
+
+def capo_sperre(repo: Path, spec: int) -> bool:
+    """``True`` = Aufruf verweigert: das Urteil „Spec fertig“ fällt nur capo (#889).
+
+    Führt capo die Spec (Zustandsdatei da), braucht ``ablegen``/``nachsehen`` dessen
+    ``spec_fertig_seit`` — sonst könnte die Aufseher-Session die Abschluss-Mail an capo vorbei
+    anstoßen (z. B. Staging nicht lesbar). Ohne Zustandsdatei (Handlauf) keine Sperre.
+    Kaputte Datei oder Alt-Zustand ohne ``spec_fertig_seit`` sperren ebenfalls (sichere Seite);
+    der Text nennt Datei, Grund und Ausweg. Gilt für ``--stand abnahme`` und ``--stand live`` gleich.
+    """
+    luecke = capo.fertig_luecke(repo, spec)
+    if luecke is None:
+        return False
+    datei, grund = luecke
+    sys.stderr.write(
+        f"FEHLER: capo meldet Spec {spec} nicht fertig — Abschluss nur nach capo-„SPEC FERTIG“ (#889), "
+        f"nichts abgelegt/verschickt. Zustandsdatei {datei}: {grund}. Ausweg: capo schreibt das Urteil "
+        "beim nächsten Durchlauf selbst, sobald die Spec fertig ist; wer die Spec ohne capo abschließt, "
+        "tut das bewusst von Hand.\n"
+    )
+    return True
+
+
 def ablegen(argv: list[str]) -> int:
     """Paket bauen und ablegen, nicht mailen. Eine schon abgelegte SPEC-FERTIG-Zeit bleibt."""
     if _geheimnis_abbruch(argv):
@@ -894,6 +927,8 @@ def ablegen(argv: list[str]) -> int:
     a = ap.parse_args(argv)
     repo = _repo(a.repo)
     p, neue_form = _paket(a, ap, repo)
+    if capo_sperre(repo, p.spec):
+        return NICHT_FERTIG
     vor_stand = abschluss_faellig(repo, p.spec)
     if p.stand == "abnahme":
         if vor_stand.runde == 0:
@@ -1214,7 +1249,7 @@ def nachsehen(argv: list[str]) -> int:
     """Mail verschicken, sobald Rückblick + Thermo da sind (oder WARTE_MINUTEN um sind).
 
     Exit 0 = verschickt/schon verschickt/Probe, 1 = Mail-Befehl gescheitert, 2 = keine Ablage,
-    3 = wartet noch auf einen Marker.
+    3 = wartet noch auf einen Marker, 4 = capo meldet nicht fertig (#889).
     """
     ap = argparse.ArgumentParser(description="Abgelegtes Abschluss-Paket als eine Mail verschicken.")
     ap.add_argument("spec", type=int)
@@ -1224,6 +1259,8 @@ def nachsehen(argv: list[str]) -> int:
     ap.add_argument("--dry-run", action="store_true", help="Mailtext zeigen, nichts schreiben, nichts mailen")
     a = ap.parse_args(argv)
     repo = _repo(a.repo)
+    if capo_sperre(repo, a.spec):
+        return NICHT_FERTIG
     datei = ablage_pfad(repo, a.spec, a.stand)
     ablage = melder.lade_json(datei)
     try:
@@ -1284,8 +1321,51 @@ def nachsehen(argv: list[str]) -> int:
     if not melder.mail_eingerichtet(konfig):
         log.warning("Mail nicht eingerichtet (mail.befehl leer) — nur Datei %s, keine Mail.", md_datei)
         return 0
-    if not melder.melden(repo, "spec_fertig", titel, text, schluessel, konfig=konfig):
+    if not melder.darf_raus("spec_fertig", konfig, jetzt=jetzt):
+        melder.melden(repo, "spec_fertig", titel, text, schluessel, konfig=konfig, jetzt=jetzt)
+        return 0
+    if not melder.melden(repo, "spec_fertig", titel, text, schluessel, konfig=konfig, jetzt=jetzt):
         log.warning("Mail „%s“ nicht verschickt (Befehl gescheitert).", titel)
+        return 1
+    return 0
+
+
+def morgen_bericht_cli(argv: list[str]) -> int:
+    """Einmal morgens genau 1 Morgen-Bericht (4 Teile, mit Deckel) als Mail verschicken (#885)."""
+    ap = argparse.ArgumentParser(description="Morgen-Bericht einer Spec als eine Mail verschicken (#885).")
+    ap.add_argument("spec", type=int)
+    ap.add_argument("--repo", type=Path, default=None)
+    ap.add_argument("--jetzt", default=None, help="Zeitpunkt jetzt (ISO), sonst Uhr")
+    ap.add_argument("--dry-run", action="store_true", help="Bericht zeigen, nicht mailen")
+    a = ap.parse_args(argv)
+    repo = _repo(a.repo)
+    jetzt = _zeit(a.jetzt, ap, "--jetzt")
+    datei = capo.morgen_bericht_datei(repo, a.spec)
+    if datei.is_file():
+        text = datei.read_text(encoding="utf-8")
+    else:
+        liste = [
+            {"number": int(nr), "title": titel, "state": "closed"}
+            for nr, titel in _tickets(repo, a.spec)
+            if nr.isdigit()
+        ]
+        datei, text = capo.morgen_bericht(repo, capo.haupt_ref(repo), a.spec, liste)
+    konfig = config.lade(repo)
+    if a.dry_run:
+        sys.stdout.write(text)
+        return 0
+    if not melder.mail_eingerichtet(konfig):
+        log.info("Mail nicht eingerichtet (mail.befehl leer) — Morgen-Bericht nur in %s.", datei)
+        return 0
+    schluessel = f"morgen_bericht|{a.spec}"
+    if melder.schon_gesendet(repo, schluessel):
+        log.info("Morgen-Bericht %s schon verschickt — keine zweite Mail.", schluessel)
+        return 0
+    if not melder.darf_raus("morgen_bericht", konfig, jetzt=jetzt):
+        capo.morgen_bericht_verschicken(repo, a.spec, text, konfig=konfig, schluessel=schluessel, jetzt=jetzt)
+        return 0
+    if not capo.morgen_bericht_verschicken(repo, a.spec, text, konfig=konfig, schluessel=schluessel, jetzt=jetzt):
+        log.warning("Morgen-Bericht Spec #%s nicht verschickt (Befehl gescheitert).", a.spec)
         return 1
     return 0
 
