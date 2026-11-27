@@ -18,6 +18,25 @@ from .ticket_zustand import STAGING_FERTIG_LABEL
 #: Überschrift der Entscheidungs-Linie (#376).
 LINIE_KOPF = "Entscheidungs-Linie"
 
+#: Kennzeichen im Commit-Betreff an der Spitze für Fix-Commits auf einem roten Hauptzweig (#900).
+MASTER_ROT_KENNZEICHEN = "(master-rot)"
+
+
+def master_rot_regel(hauptzweig: str = "", kennzeichen: str = MASTER_ROT_KENNZEICHEN) -> str:
+    """Regel für Fix-Commits auf einem roten Hauptzweig (#900, aus App #1532).
+
+    Steht an genau einer Stelle im Skill und wird über ``{MASTER_ROT_REGEL}`` in
+    ``skripte/bau.py`` in den Start-Text jeder Bau-Session eingesetzt.
+    """
+    zweig = f"`origin/{hauptzweig}`" if hauptzweig else "dem Hauptzweig"
+    return (
+        f"Fix für roten Hauptzweig ({zweig}): Betreff des Spitzen-Commits trägt "
+        f"„{kennzeichen}“ (z. B. `fix: … {kennzeichen} (#<N>)`), damit die "
+        f"Warteschlange den Fix vor regulären Tickets durchlässt — nur für echte "
+        f"Reparaturen eines roten {zweig}, nie für normale Tickets."
+    )
+
+
 #: Mindset (E10, E41, E40, E42): steht wortgleich im Aufseher-Prompt, in jedem
 #: Anstupser und in der Bau-Prompt-Vorlage.
 MINDSET = (
