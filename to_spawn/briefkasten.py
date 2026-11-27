@@ -46,7 +46,7 @@ import re
 import secrets
 import shlex
 import sys
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -189,11 +189,108 @@ def _jetzt() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def _ist_klasse_2(f: dict[str, Any]) -> bool:
+def _ist_klasse_2(f: Mapping[str, Any]) -> bool:
     """Klasse 2, wenn gespeichert ODER der Text anschlägt — eine von Hand gesenkte Klasse zählt nicht."""
     return f.get("klasse") != 3 or befugnis.ist_klasse_2(
         f.get("frage"), f.get("vorschlag"), f.get("ziel"), f.get("art")
     )
+
+
+#: Live-Zielwörter, die eine Abnahme-Freigabe („passt“) deckt — alle übrigen Klasse-2-Wörter bleiben gesperrt (#924).
+_LIVE_ZIEL_WOERTER = frozenset({"live", "prod"})
+_LIVE_ART_WOERTER = frozenset(
+    {"deploy", "deployen", "ausrollen", "live", "schalten", "freigabe", "freigeben", "starten"}
+)
+_LOESCH_WOERTER = frozenset({"lösch", "loesch", "delete", "entfern", "drop", "truncate", "destroy"})
+_NICHT_LIVE_WOERTER = (befugnis._KLASSE_2_WOERTER - {"live", "prod", "vps"}) | _LOESCH_WOERTER  # noqa: SLF001
+
+
+def _enthaelt_nicht_live_klasse_2(f: Mapping[str, Any]) -> bool:
+    """True, sobald Frage, Vorschlag, Ziel oder Art ein Nicht-Live-Klasse-2-Wort trägt (Kosten, Konto, Löschen…)."""
+    for feld in (f.get("frage"), f.get("vorschlag"), f.get("ziel"), f.get("art")):
+        norm = befugnis._norm(feld)  # noqa: SLF001 — einzige Normalisierung aus befugnis
+        if not norm:
+            continue
+        teile = re.split(r"\W+", norm)
+        if any(w in norm for w in _NICHT_LIVE_WOERTER) or any(w in teile for w in befugnis._KLASSE_2_GANZWORT):  # noqa: SLF001
+            return True
+    return False
+
+
+def ist_live_frage(f: Mapping[str, Any]) -> bool:
+    """True, wenn ``f`` eine reine Live-Deploy-Frage ist (kein Kosten-/Konto-/Zugangs-/Lösch-Thema, #924)."""
+    if not str(f.get("id") or "").strip() or not _ist_klasse_2(f):
+        return False
+    if _enthaelt_nicht_live_klasse_2(f):
+        return False
+    ziel = befugnis._norm(f.get("ziel"))  # noqa: SLF001
+    art = befugnis._norm(f.get("art"))  # noqa: SLF001
+    frage = befugnis._norm(f.get("frage"))  # noqa: SLF001
+    ziel_live = any(w in ziel for w in _LIVE_ZIEL_WOERTER)
+    art_teile = set(re.split(r"\W+", art)) if art else set()
+    art_live = bool(art_teile & _LIVE_ART_WOERTER)
+    if ziel_live and (not art or art_live):
+        return True
+    return art_live and any(w in frage for w in _LIVE_ZIEL_WOERTER)
+
+
+def hat_offene_live_fragen(tickets: Iterable[str | int], *, hauptbaum: Path | None = None) -> bool:
+    """Rein lokal: liegt für mindestens ein Ticket in ``tickets`` eine offene Live-Frage im Briefkasten? (#924)"""
+    for t in tickets:
+        try:
+            datei = _datei(t, hauptbaum)
+        except ValueError:
+            continue
+        inhalt = _lies(datei)
+        if _sperrgruende(datei, inhalt):
+            continue
+        if any(not _gilt(f) and ist_live_frage(f) for f in (inhalt.daten or {}).get("fragen", [])):
+            return True
+    return False
+
+
+def live_fragen_freigeben(
+    tickets: Iterable[str | int],
+    abnahme_ticket: int,
+    beleg_id: str | int = "",
+    *,
+    hauptbaum: Path | None = None,
+) -> list[tuple[str, str]]:
+    """Beantwortet offene Live-Fragen der Spec nach Abnahme-„passt“ mit „ja“ über :func:`nutzer_antworten` (#924).
+
+    Nicht-Live-Klasse-2-Fragen (Kosten, Konto, Zugang, Löschen) und kaputte Dateien bleiben unberührt.
+    In einer Bau-Session (``TO_SPAWN_TICKET``) verweigert :func:`nutzer_antworten`.
+    """
+    gesehen: set[int] = set()
+    beantwortet: list[tuple[str, str]] = []
+    beleg = (
+        f"Abnahme-Freigabe #{abnahme_ticket} (id {beleg_id})"
+        if str(beleg_id).strip()
+        else f"Abnahme-Freigabe #{abnahme_ticket}"
+    )
+    grund = f"Abnahme „passt“ an #{abnahme_ticket} gilt als Live-Freigabe (#924)"
+    for t in tickets:
+        try:
+            nummer = _nummer(t)
+        except ValueError:
+            continue
+        if nummer in gesehen:
+            continue
+        gesehen.add(nummer)
+        datei = _datei(nummer, hauptbaum)
+        inhalt = _lies(datei)
+        if _sperrgruende(datei, inhalt):
+            continue
+        offen_ids = [
+            str(f["id"]) for f in (inhalt.daten or {}).get("fragen", []) if not _gilt(f) and ist_live_frage(f)
+        ]
+        for fid in offen_ids:
+            try:
+                nutzer_antworten(nummer, fid, "ja", [beleg], grund, hauptbaum=hauptbaum)
+            except ValueError:
+                continue  # zeitgleich bereits beantwortet
+            beantwortet.append((str(nummer), fid))
+    return beantwortet
 
 
 def _hat_antwort(f: dict[str, Any]) -> bool:

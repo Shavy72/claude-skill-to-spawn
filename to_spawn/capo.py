@@ -51,7 +51,7 @@ import tarfile
 import tempfile
 import time
 import urllib.parse
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -2843,6 +2843,7 @@ def _tick(
                 erledigt,
                 aktionen,
                 dry_run=dry_run,
+                spec_tickets=[int(i["number"]) for i in liste],
             )
         ):
             sichern()
@@ -3069,17 +3070,32 @@ def _live_nach_abnahme_passt(
     zeilen: list[str],
     *,
     dry_run: bool = False,
+    spec_tickets: Iterable[str | int] | None = None,
 ) -> bool:
-    """Abnahme-Kommentar „passt“ startet den Live-Schritt direkt ohne Briefkasten-Frage (#924).
+    """Abnahme-Kommentar „passt“ gilt als Live-Freigabe und startet Komplett-Prüfung + Live (#924).
 
-    Läuft nur, wenn alle Bau-Tickets fertig sind, noch kein Live-Merker liegt und das Repo nicht
-    bewusst ohne Live arbeitet (``live.ohne: true``). Fehlt sowohl ``live.befehl`` als auch
-    ``pruefung.komplett`` (nicht eingerichtetes Repo), bleibt der Takt still. Rückgabe ``True``,
+    Die eine Stelle für alle Wege (capo-Takt und Wege ohne capo-Takt wie ``leitstand.py`` über
+    :func:`abnahme_passt_live_pruefen`). Läuft nur, wenn alle Bau-Tickets fertig sind und das Repo
+    nicht bewusst ohne Live arbeitet (``live.ohne: true``). Offene Briefkasten-Live-Fragen der Spec
+    werden nach „passt“ als beantwortet (``ja``) eingetragen; danach startet :func:`live_tuer.starte`
+    (Komplett-Prüfung genau einmal, dann Live), sofern noch kein Live-Merker liegt. Rückgabe ``True``,
     wenn ``erledigt`` ergänzt wurde (Aufrufer sichert).
     """
-    if config.live_bewusst_ohne(konfig) or live_gelaufen(repo, spec, gh_repo):
+    if config.live_bewusst_ohne(konfig):
         return False
-    if not config.live_schritt(konfig)["befehl"] and not config.pruef_befehl(konfig, "komplett"):
+    alle_tickets: list[int] = list(
+        dict.fromkeys(
+            [
+                spec,
+                *(int(issue["number"]) for issue in abnahme_tickets),
+                *(int(t) for t in (spec_tickets or ()) if str(t).strip().isdigit()),
+            ]
+        )
+    )
+    bereits_live = live_gelaufen(repo, spec, gh_repo)
+    live_konfiguriert = bool(config.live_schritt(konfig)["befehl"] or config.pruef_befehl(konfig, "komplett"))
+    hat_live_fragen = briefkasten.hat_offene_live_fragen(alle_tickets, hauptbaum=repo)
+    if (bereits_live or not live_konfiguriert) and not hat_live_fragen:
         return False
     treffer: tuple[int, dict[str, Any]] | None = None
     for issue in abnahme_tickets:
@@ -3095,19 +3111,40 @@ def _live_nach_abnahme_passt(
         return False
     n, kommentar = treffer
     if dry_run:
-        zeilen.append(f"#{n} [Probe] Abnahme „passt“ — würde Live-Schritt starten (to_spawn.py live {spec}).")
+        if hat_live_fragen:
+            zeilen.append(f"#{n} [Probe] Abnahme „passt“ — würde offene Briefkasten-Live-Fragen mit „ja“ beantworten.")
+        if not bereits_live and live_konfiguriert:
+            zeilen.append(f"#{n} [Probe] Abnahme „passt“ — würde Live-Schritt starten (to_spawn.py live {spec}).")
+        return False
+    if hat_live_fragen:
+        try:
+            beantwortet = briefkasten.live_fragen_freigeben(
+                alle_tickets, n, kommentar.get("id", ""), hauptbaum=repo
+            )
+        except (briefkasten.Verweigert, OSError, TimeoutError) as fehler:
+            log.warning("Briefkasten-Live-Fragen Spec #%s nach Abnahme #%s nicht freigegeben: %s", spec, n, fehler)
+        else:
+            for t_nr, fid in beantwortet:
+                zeilen.append(
+                    f"#{t_nr} Briefkasten-Live-Frage {fid} durch Abnahme „passt“ an #{n} mit „ja“ beantwortet."
+                )
+    if bereits_live or not live_konfiguriert:
         return False
     from to_spawn import live_tuer  # spät: live_tuer importiert capo
 
-    try:
-        code, live_zeilen = live_tuer.starte(repo, spec, konfig, gh_repo=gh_repo)
-    except Exception as fehler:  # der Tick (sichern) bricht nie ab
-        log.exception("Live-Schritt nach Abnahme #%s (Spec #%s): unerwarteter Fehler", n, spec)
-        _werkzeug_fehler("capo.abnahme_live", "Live-Schritt nach Abnahme: unerwarteter Fehler", fehler, spec=spec)
-        zeilen.append(
-            f"FEHLER: #{n} Live-Schritt nach Abnahme — unerwarteter Fehler ({type(fehler).__name__}: {fehler})."
-        )
-        return False
+    sperre_pfad = _live_merker_datei(repo, spec, gh_repo).with_suffix(".live.lock")
+    with _sperre.halte(sperre_pfad, warten=0) as gehalten:
+        if not gehalten or live_gelaufen(repo, spec, gh_repo):
+            return False
+        try:
+            code, live_zeilen = live_tuer.starte(repo, spec, konfig, gh_repo=gh_repo)
+        except Exception as fehler:  # der Tick (sichern) bricht nie ab
+            log.exception("Live-Schritt nach Abnahme #%s (Spec #%s): unerwarteter Fehler", n, spec)
+            _werkzeug_fehler("capo.abnahme_live", "Live-Schritt nach Abnahme: unerwarteter Fehler", fehler, spec=spec)
+            zeilen.append(
+                f"FEHLER: #{n} Live-Schritt nach Abnahme — unerwarteter Fehler ({type(fehler).__name__}: {fehler})."
+            )
+            return False
     if code == 0:
         zeilen.append(f"#{n} Abnahme „passt“ — Live-Schritt gestartet ({'; '.join(live_zeilen)}).")
         return False
@@ -3120,6 +3157,56 @@ def _live_nach_abnahme_passt(
         return False
     zeilen.append(f"FEHLER: #{n} Abnahme „passt“ — {'; '.join(live_zeilen)}")
     return False
+
+
+def abnahme_passt_live_pruefen(
+    repo: Path,
+    spec: int,
+    issues: Mapping[str, Mapping[str, Any]] | Sequence[Mapping[str, Any]],
+    *,
+    gh_repo: str = "",
+    konfig: dict[str, Any] | None = None,
+    dry_run: bool = False,
+) -> list[str]:
+    """Gemeinsame Regel für Wege ohne capo-Takt (z. B. ``skripte/leitstand.py``) (#924).
+
+    Prüft dieselbe Vorbedingung wie :func:`tick` (alle Bau-Tickets fertig gebaut, mindestens ein
+    Abnahme-Ticket) und delegiert direkt an :func:`_live_nach_abnahme_passt` — keine zweite Kopie.
+    """
+    konfig_aktiv = konfig if konfig is not None else config.lade(repo)
+    slug = gh_repo or gh.repo_aus_origin(repo) or os.environ.get("TO_SPAWN_GH_REPO", "").strip()
+    if not slug:
+        return []
+    liste: list[dict[str, Any]] = []
+    if isinstance(issues, Mapping):
+        for nr, daten in issues.items():
+            if not str(nr).strip().isdigit() or int(nr) == spec or not isinstance(daten, Mapping):
+                continue
+            liste.append({"number": int(nr), **daten})
+    else:
+        for daten in issues:
+            nr_roh = daten.get("number")
+            if not str(nr_roh or "").strip().isdigit() or int(nr_roh) == spec:
+                continue
+            liste.append({**daten, "number": int(nr_roh)})
+    checkpoint = str(konfig_aktiv.get("regularien", {}).get("checkpoint_label") or ticket_zustand.CHECKPOINT_LABEL)
+    bau_tickets = [i for i in liste if checkpoint not in ticket_zustand.label_namen(i)]
+    abnahme_tickets = [i for i in liste if checkpoint in ticket_zustand.label_namen(i)]
+    if not bau_tickets or not abnahme_tickets or not all(ticket_zustand.fertig_gebaut(i) for i in bau_tickets):
+        return []
+    zeilen: list[str] = []
+    _live_nach_abnahme_passt(
+        repo,
+        spec,
+        slug,
+        konfig_aktiv,
+        abnahme_tickets,
+        set(),
+        zeilen,
+        dry_run=dry_run,
+        spec_tickets=[int(i["number"]) for i in liste],
+    )
+    return zeilen
 
 
 def _komplett_alle_auf_staging(
