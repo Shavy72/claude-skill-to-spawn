@@ -79,15 +79,16 @@ class Sicherung:
     lesbar: bool = True
 
     @classmethod
-    def merken(cls, pfad: Path) -> Sicherung:
-        """Sicherung des jetzigen Stands; unlesbar → ``lesbar=False`` (geloggt)."""
+    def merken(cls, repo: Path, name: str) -> Sicherung:
+        """Sicherung der Sessions-Datei ``name`` in ``repo``; unlesbar → ``lesbar=False`` (geloggt)."""
+        datei = pfad(repo, name)
         try:
-            return cls(pfad, pfad.read_bytes())
+            return cls(datei, datei.read_bytes())
         except FileNotFoundError:
-            return cls(pfad, None)
+            return cls(datei, None)
         except OSError:
-            log.exception("%s nicht lesbar — wird bei Abbruch nicht zurückgesetzt.", pfad)
-            return cls(pfad, None, lesbar=False)
+            log.exception("%s nicht lesbar — wird bei Abbruch nicht zurückgesetzt.", datei)
+            return cls(datei, None, lesbar=False)
 
     def zuruecklegen(self) -> bool:
         """Alten Stand wiederherstellen; False bei Dateifehler oder unbekanntem Stand (geloggt)."""
