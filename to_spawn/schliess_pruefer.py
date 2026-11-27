@@ -31,7 +31,7 @@ import re
 import struct
 import subprocess
 import urllib.parse
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -125,6 +125,9 @@ class Grund:
     text: str
     kern: str = ""
     details: list[str] = field(default_factory=list)
+
+    def __str__(self) -> str:
+        return f"{self.regel}: {self.text}"
 
 
 @dataclass
@@ -315,9 +318,9 @@ def regel_commit(ticket: int, eigene: list[Commit]) -> Grund | None:
 # --- Regel 2: Belegseite vorhanden & in fester Form -----------------------------
 
 
-def belege_ordner(konfig: dict[str, Any]) -> str:
+def belege_ordner(konfig: Mapping[str, Any]) -> str:
     """Beleg-Ordner aus ``regularien.belege_ordner`` (ohne Schrägstriche am Rand), sonst Vorgabe."""
-    regularien = konfig.get("regularien") if isinstance(konfig.get("regularien"), dict) else {}
+    regularien = konfig.get("regularien") if isinstance(konfig.get("regularien"), Mapping) else {}
     return str(regularien.get("belege_ordner") or BELEGE_ORDNER).replace("\\", "/").strip("/") or BELEGE_ORDNER
 
 
@@ -1027,42 +1030,88 @@ def regel_gruen_auf_hauptzweig(
 # --- Schmale Tür ----------------------------------------------------------------
 
 
-def pruefe(stand: Stand) -> PruefErgebnis:
-    """Schmale Tür des Schließ-Prüfers: :class:`Stand` rein, :class:`PruefErgebnis` raus.
+def _stand_aus_eingabe(eingabe: Stand | Mapping[str, Any]) -> Stand:
+    """Wandelt ein :class:`Stand`-Objekt oder ein ``Mapping`` (z. B. aus ``taktgeber.py``) in :class:`Stand`."""
+    if isinstance(eingabe, Stand):
+        return eingabe
+    if not isinstance(eingabe, Mapping):
+        raise TypeError(f"Stand oder Mapping erwartet, erhalten: {type(eingabe).__name__}")
+    repo = Path(eingabe["repo"])
+    ticket = int(eingabe["ticket"])
+    ref = str(eingabe.get("ref") or "HEAD")
+    ordner_roh = eingabe.get("belege_ordner")
+    konfig_roh = eingabe.get("konfig")
+    ordner: str | None = (
+        str(ordner_roh)
+        if ordner_roh is not None
+        else (belege_ordner(konfig_roh) if isinstance(konfig_roh, Mapping) else None)
+    )
+    eigene_roh = eingabe.get("eigene")
+    if eigene_roh is not None:
+        eigene: list[Commit] | None = list(eigene_roh)
+    elif eingabe.get("commits") is not None:
+        eigene = ticket_commits(list(eingabe["commits"]), ticket)
+    else:
+        eigene = None
+    if "gruen_auf_hauptzweig" in eingabe:
+        gruen_wert = eingabe["gruen_auf_hauptzweig"]
+    else:
+        gruen_wert = eingabe.get("gruen_sha")
+    haupt_ref_roh = eingabe.get("haupt_ref")
+    return Stand(
+        repo=repo,
+        ticket=ticket,
+        ref=ref,
+        belege_ordner=ordner,
+        eigene=eigene,
+        haupt_ref=str(haupt_ref_roh) if haupt_ref_roh is not None else None,
+        gruen_auf_hauptzweig=gruen_wert,
+        kommentare=eingabe.get("kommentare"),
+        gruen_pruefen=bool(eingabe.get("gruen_pruefen", True)),
+        form_pruefen=bool(eingabe.get("form_pruefen", True)),
+        beleg_auf_hauptzweig=bool(eingabe.get("beleg_auf_hauptzweig", True)),
+        klickweg_pflicht=bool(eingabe.get("klickweg_pflicht", True)),
+        git_lauf=eingabe.get("git_lauf"),
+    )
+
+
+def pruefe(stand: Stand | Mapping[str, Any]) -> PruefErgebnis:
+    """Schmale Tür des Schließ-Prüfers: :class:`Stand` (oder Mapping) rein, :class:`PruefErgebnis` raus.
 
     Prüft alle Schließ-Regeln an genau dieser Stelle — bewusst ohne „Server nicht aktuell“.
     """
-    lauf = stand.git_lauf
-    ziel_ref = stand.haupt_ref or stand.ref
-    ordner = stand.belege_ordner if stand.belege_ordner is not None else belege_ordner(config.lade(stand.repo))
+    daten = _stand_aus_eingabe(stand)
+    lauf = daten.git_lauf
+    ziel_ref = daten.haupt_ref or daten.ref
+    ordner = daten.belege_ordner if daten.belege_ordner is not None else belege_ordner(config.lade(daten.repo))
     eigene = (
-        list(stand.eigene)
-        if stand.eigene is not None
-        else ticket_commits(alle_commits(stand.repo, stand.ref, git_lauf=lauf), stand.ticket)
+        list(daten.eigene)
+        if daten.eigene is not None
+        else ticket_commits(alle_commits(daten.repo, daten.ref, git_lauf=lauf), daten.ticket)
     )
     kandidaten: list[Grund | None] = [
-        regel_commit(stand.ticket, eigene),
+        regel_commit(daten.ticket, eigene),
         regel_beweis(
-            stand.repo,
+            daten.repo,
             ziel_ref,
-            stand.ticket,
+            daten.ticket,
             eigene,
             ordner,
-            form_pruefen=stand.form_pruefen,
-            beleg_auf_hauptzweig=stand.beleg_auf_hauptzweig,
-            klickweg_pflicht=stand.klickweg_pflicht,
+            form_pruefen=daten.form_pruefen,
+            beleg_auf_hauptzweig=daten.beleg_auf_hauptzweig,
+            klickweg_pflicht=daten.klickweg_pflicht,
             git_lauf=lauf,
         ),
-        regel_tests(stand.repo, stand.ticket, eigene, git_lauf=lauf),
+        regel_tests(daten.repo, daten.ticket, eigene, git_lauf=lauf),
     ]
-    if stand.gruen_pruefen:
+    if daten.gruen_pruefen:
         kandidaten.append(
             regel_gruen_auf_hauptzweig(
-                stand.repo,
+                daten.repo,
                 ziel_ref,
                 eigene,
-                stand.gruen_auf_hauptzweig,
-                stand.kommentare,
+                daten.gruen_auf_hauptzweig,
+                daten.kommentare,
                 git_lauf=lauf,
             )
         )

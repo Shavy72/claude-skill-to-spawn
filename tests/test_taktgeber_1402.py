@@ -28,9 +28,11 @@ import concurrent.futures
 import json
 import os
 import re
+import struct
 import subprocess
 import sys
 import time
+import zlib
 from pathlib import Path
 from typing import Any
 
@@ -143,6 +145,19 @@ def _welt_bauen(
     return {"repo": repo, "zustand": zustand_pfad, "env": env, "tmp": tmp_path}
 
 
+def _png_bytes(breite: int, hoehe: int) -> bytes:
+    """Kleinstes gültiges PNG mit echter IHDR-Breite und -Höhe für feste Belegform."""
+
+    def _chunk(typ: bytes, daten: bytes) -> bytes:
+        crc = zlib.crc32(typ + daten) & 0xFFFFFFFF
+        return struct.pack(">I", len(daten)) + typ + daten + struct.pack(">I", crc)
+
+    ihdr = struct.pack(">IIBBBBB", breite, hoehe, 8, 2, 0, 0, 0)
+    zeile = b"\x00" + b"\x00\x00\x00" * breite
+    idat = zlib.compress(zeile * hoehe)
+    return b"\x89PNG\r\n\x1a\n" + _chunk(b"IHDR", ihdr) + _chunk(b"IDAT", idat) + _chunk(b"IEND", b"")
+
+
 def _commit_mit_beleg(
     repo: Path,
     ticket: int,
@@ -155,10 +170,24 @@ def _commit_mit_beleg(
     datei = repo / f"modul_{ticket}.py"
     datei.write_text(f"WERT_{ticket} = {ticket}\n", encoding="utf-8")
     if mit_beleg:
-        beleg = repo / "docs" / "verify-hard" / f"{ticket}_beweis.md"
-        beleg.parent.mkdir(parents=True, exist_ok=True)
-        beleg.write_text(
-            f"# Beleg #{ticket}\n\n## Tests\ngrün\n\n## Klickweg\nKlickweg: entfällt (Kern-Test)\n",
+        stand_sha = _git(repo, "rev-parse", "HEAD")
+        beleg_ordner = repo / "docs" / "verify-hard" / str(ticket)
+        beleg_ordner.mkdir(parents=True, exist_ok=True)
+        (beleg_ordner / "desktop.png").write_bytes(_png_bytes(1280, 800))
+        (beleg_ordner / "handy.png").write_bytes(_png_bytes(390, 844))
+        (beleg_ordner / f"{ticket}_beweis.md").write_text(
+            f"# Beleg #{ticket}\n\n"
+            f"- **Ticket:** #{ticket}\n"
+            f"- **Commit-Stand:** `{stand_sha}`\n"
+            "- **Staging-Adresse:** https://staging.example.test/start\n"
+            "- **Rolle:** Admin\n"
+            "- **Datum:** 2026-11-27 10:00\n\n"
+            "## Tests\ngrün\n\n"
+            "## Staging-Klickweg\n"
+            "| Schritt | Ergebnis | Bild |\n"
+            "| --- | --- | --- |\n"
+            "| Startseite Desktop | sichtbar, 0 offen | ![Desktop](desktop.png) |\n"
+            "| Startseite Handy 390x844 | lesbar, 0 offen | ![Handy](handy.png) |\n",
             encoding="utf-8",
         )
     if test_loeschen:

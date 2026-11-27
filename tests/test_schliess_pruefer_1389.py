@@ -586,3 +586,39 @@ def test_weg_mit_echtem_git_repo_ueber_git_bash(tmp_path: Path) -> None:
     assert lauf.returncode == 0, lauf.stdout + lauf.stderr
     daten = json.loads(lauf.stdout.strip())
     assert daten == {"ok": True, "regeln": []}
+
+
+# --- 9. Mapping-Eingabe / Taktgeber-Integration (#906 + #864) -----------------
+
+
+def test_pruefe_nimmt_taktgeber_dict_mit_commits_konfig_und_gruen_sha(tmp_path: Path) -> None:
+    """``schliess_pruefer.pruefe(dict)`` verarbeitet den Taktgeber-Aufruf direkt ohne AttributeError."""
+    from to_spawn import schliess_pruefer, taktgeber
+
+    repo, _ = _welt(tmp_path)
+    sha_ok = _sauberer_stand(repo, ticket=TICKET)
+    sha_ohne_beleg = _commit(repo, "feat: zweites Ticket ohne Beleg (#1390)", {"app/zwei.py": "y = 2\n"})
+    alle = schliess_pruefer.alle_commits(repo, "origin/master")
+
+    erg_ok = schliess_pruefer.pruefe(
+        {
+            "repo": repo,
+            "ref": "origin/master",
+            "ticket": TICKET,
+            "commits": alle,
+            "konfig": {},
+            "gruen_sha": sha_ok,
+        }
+    )
+    assert erg_ok.ok is True, erg_ok.gruende
+
+    erg_fehlt = taktgeber.pruefe_mit_pruefer(
+        repo,
+        "origin/master",
+        1390,
+        alle,
+        {},
+        gruen_sha=sha_ohne_beleg,
+    )
+    assert erg_fehlt.ok is False
+    assert any("beweis_fehlt:" in g and "Belegseite" in g for g in erg_fehlt.gruende), erg_fehlt.gruende
