@@ -717,146 +717,115 @@ def main() -> int:
     erlaubt, _grund, sperr_code, sperr_stapel = wache_sperre_betreten(a.spec, REPO, abloesung=abloese_ausnahme)
     if not erlaubt:
         return sperr_code
-    try:
-        return _main_mit_sperre(
-            a,
-            konfig,
-            ordner,
-            claude,
-            prompt,
-            ausweich,
-            remote_control,
-            effort,
-            overrides,
-            mcp_servers,
-            chrome,
-        )
-    finally:
-        if sperr_stapel is not None:
-            sperr_stapel.close()
-
-
-def _main_mit_sperre(
-    a: argparse.Namespace,
-    konfig: dict,
-    ordner: Path,
-    claude: str,
-    prompt: str,
-    ausweich: str,
-    remote_control: bool,
-    effort: str,
-    overrides: dict[str, str],
-    mcp_servers: dict[str, dict[str, object]],
-    chrome: bool,
-) -> int:
-    # Speicher-Schutz (#257 Paket B, Fixrunde 1 F3): RAM knapp oder Obergrenze an
-    # Claude-Sessions erreicht → warten statt Exit 5, damit Fenster und Grund bleiben.
-    auf_speicher_warten(konfig, wer=f"Aufseher #{a.spec}")
-    # Wartende Fenster (#560): sobald wieder Platz ist, in Sekunden statt erst beim Aufpasser-Takt.
-    _nachstarter_starten(a.spec, REPO_ORDNER)
-    # Vertrauens-Dialog für die Repo-Wurzel vorab bestätigen (#257) — Fehler nur Warnung.
-    vertrauen.still_sicherstellen(REPO_ORDNER)
-    # Aus einer Claude-Session gestartet erben Kind-Sessions die Markierung
-    # CLAUDE_CODE_CHILD_SESSION und speichern kein Transkript (kein Resume nach
-    # Absturz, Beleg 17.09.2026). Persistenz deshalb ausdrücklich erzwingen.
-    sauber = sitzung_env.ohne_sitzung()  # alle Sitzungs-Variablen, nicht nur CHILD_SESSION
-    os.environ.clear()
-    os.environ.update(sauber)
-    # Eine Session im Worktree darf nicht das Repo des Launchers erben (#205).
-    os.environ.pop("TO_SPAWN_REPO", None)
-    os.environ.pop(respawn_aufseher.ABLOESE_AUSNAHME_ENV, None)
-    os.environ["CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"] = "1"
-    os.environ.update(
-        temp_ordner.umgebung(a.spec, repo=REPO, von="wache")
-    )  # #136/#177: markierter Spec-Temp auf der Platte
-    # Klick-Sperre nur für lokal gespawnte Sessions (Windows, Maus-Müll im Eingabefeld).
-    terminal_maus.maus_ruhig()
-    # Umzug (#212): /to-spawn-of im Aufseher zieht alle Sessions um und beendet am Ende
-    # diese Aufseher-Session über die Umzug-Datei (Temp-Ordner je Lauf).
-    lauf_ordner = Path(tempfile.mkdtemp(prefix=f"wache-{a.spec}-", dir=os.environ.get("TMPDIR")))
-    try:
-        settings_path, mcp_path = _filter_dateien_schreiben(lauf_ordner, overrides, mcp_servers)
-        umzug_datei = lauf_ordner / "umzug.json"
-        abloese_datei = lauf_ordner / "abloesung.json"
-        os.environ["BAU_UMZUG_DATEI"] = str(umzug_datei)
-        os.environ["TO_SPAWN_WACHE_SPEC"] = str(a.spec)
-        os.environ[ABLOESE_ENV] = str(abloese_datei)
-        umzug_datei.unlink(missing_ok=True)
-        session_id = a.resume
-        start_prompt = prompt
-        terminal_log_abschalten()  # #541: ab hier gehört das Terminal Claude, Fäden loggen nur in die Datei
-        # Handoff-Blick (#542): eigener Faden prüft alle ≤ 2,5 min fällige Handoffs und
-        # startet die Leiter — nicht erst beim nächsten Aufseher-Tick (bis 30 min).
-        # Briefkasten-Wecker (#414): neue Frage weckt diese Session, Antwort die Bau-Session (≤ 1 min).
-        with (
-            handoff_blick.laeuft(a.spec, handoff_blick.EchteNaht(REPO_ORDNER, ordner, REPO)),
-            briefkasten_wecker.laeuft(a.spec, REPO_ORDNER, gh_repo=REPO),
-        ):
-            for runde in range(1, MAX_ABLOESUNGEN + 2):
-                # Aufsicht (#213): Limit im Transkript → Ausweich-Modell; Umzug-/Ablöse-Datei → Ende.
-                code = waechter_lauf.fahre(
-                    claude=claude,
-                    spec=a.spec,
-                    prompt=start_prompt,
-                    modell=a.model,
-                    ausweich=ausweich,
-                    remote_control=remote_control,
-                    repo=REPO_ORDNER,
-                    cwd=ordner,
-                    takt=waechter_lauf.zahl_aus_umgebung("TO_SPAWN_AUFSICHT_TAKT", waechter_lauf.TAKT_S)
-                    or waechter_lauf.TAKT_S,
-                    puffer=waechter_lauf.zahl_aus_umgebung("TO_SPAWN_RESET_PUFFER_S", waechter_lauf.RESET_PUFFER_S),
-                    hoechstens=waechter_lauf.zahl_aus_umgebung("TO_SPAWN_RESET_MAX_S", waechter_lauf.MAX_WARTE_S)
-                    or waechter_lauf.MAX_WARTE_S,
-                    abbruch=lambda: umzug_datei.exists() or abloese_datei.exists(),
-                    session_id=session_id,
-                    effort=effort,
-                    settings_pfad=settings_path,
-                    mcp_pfad=mcp_path,
-                    chrome=chrome,
-                )
-                umzug_daten = umzug.lies_umzug(umzug_datei)
-                if umzug_daten is not None:
+    with sperr_stapel or contextlib.nullcontext():
+        # Speicher-Schutz (#257 Paket B, Fixrunde 1 F3): RAM knapp oder Obergrenze an
+        # Claude-Sessions erreicht → warten statt Exit 5, damit Fenster und Grund bleiben.
+        auf_speicher_warten(konfig, wer=f"Aufseher #{a.spec}")
+        # Wartende Fenster (#560): sobald wieder Platz ist, in Sekunden statt erst beim Aufpasser-Takt.
+        _nachstarter_starten(a.spec, REPO_ORDNER)
+        # Vertrauens-Dialog für die Repo-Wurzel vorab bestätigen (#257) — Fehler nur Warnung.
+        vertrauen.still_sicherstellen(REPO_ORDNER)
+        # Aus einer Claude-Session gestartet erben Kind-Sessions die Markierung
+        # CLAUDE_CODE_CHILD_SESSION und speichern kein Transkript (kein Resume nach
+        # Absturz, Beleg 17.09.2026). Persistenz deshalb ausdrücklich erzwingen.
+        sauber = sitzung_env.ohne_sitzung()  # alle Sitzungs-Variablen, nicht nur CHILD_SESSION
+        os.environ.clear()
+        os.environ.update(sauber)
+        # Eine Session im Worktree darf nicht das Repo des Launchers erben (#205).
+        os.environ.pop("TO_SPAWN_REPO", None)
+        os.environ.pop(respawn_aufseher.ABLOESE_AUSNAHME_ENV, None)
+        os.environ["CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"] = "1"
+        os.environ.update(
+            temp_ordner.umgebung(a.spec, repo=REPO, von="wache")
+        )  # #136/#177: markierter Spec-Temp auf der Platte
+        # Klick-Sperre nur für lokal gespawnte Sessions (Windows, Maus-Müll im Eingabefeld).
+        terminal_maus.maus_ruhig()
+        # Umzug (#212): /to-spawn-of im Aufseher zieht alle Sessions um und beendet am Ende
+        # diese Aufseher-Session über die Umzug-Datei (Temp-Ordner je Lauf).
+        lauf_ordner = Path(tempfile.mkdtemp(prefix=f"wache-{a.spec}-", dir=os.environ.get("TMPDIR")))
+        try:
+            settings_path, mcp_path = _filter_dateien_schreiben(lauf_ordner, overrides, mcp_servers)
+            umzug_datei = lauf_ordner / "umzug.json"
+            abloese_datei = lauf_ordner / "abloesung.json"
+            os.environ["BAU_UMZUG_DATEI"] = str(umzug_datei)
+            os.environ["TO_SPAWN_WACHE_SPEC"] = str(a.spec)
+            os.environ[ABLOESE_ENV] = str(abloese_datei)
+            umzug_datei.unlink(missing_ok=True)
+            session_id = a.resume
+            start_prompt = prompt
+            terminal_log_abschalten()  # #541: ab hier gehört das Terminal Claude, Fäden loggen nur in die Datei
+            # Handoff-Blick (#542): eigener Faden prüft alle ≤ 2,5 min fällige Handoffs und
+            # startet die Leiter — nicht erst beim nächsten Aufseher-Tick (bis 30 min).
+            # Briefkasten-Wecker (#414): neue Frage weckt diese Session, Antwort die Bau-Session (≤ 1 min).
+            with (
+                handoff_blick.laeuft(a.spec, handoff_blick.EchteNaht(REPO_ORDNER, ordner, REPO)),
+                briefkasten_wecker.laeuft(a.spec, REPO_ORDNER, gh_repo=REPO),
+            ):
+                for runde in range(1, MAX_ABLOESUNGEN + 2):
+                    # Aufsicht (#213): Limit im Transkript → Ausweich-Modell; Umzug-/Ablöse-Datei → Ende.
+                    code = waechter_lauf.fahre(
+                        claude=claude,
+                        spec=a.spec,
+                        prompt=start_prompt,
+                        modell=a.model,
+                        ausweich=ausweich,
+                        remote_control=remote_control,
+                        repo=REPO_ORDNER,
+                        cwd=ordner,
+                        takt=waechter_lauf.zahl_aus_umgebung("TO_SPAWN_AUFSICHT_TAKT", waechter_lauf.TAKT_S)
+                        or waechter_lauf.TAKT_S,
+                        puffer=waechter_lauf.zahl_aus_umgebung("TO_SPAWN_RESET_PUFFER_S", waechter_lauf.RESET_PUFFER_S),
+                        hoechstens=waechter_lauf.zahl_aus_umgebung("TO_SPAWN_RESET_MAX_S", waechter_lauf.MAX_WARTE_S)
+                        or waechter_lauf.MAX_WARTE_S,
+                        abbruch=lambda: umzug_datei.exists() or abloese_datei.exists(),
+                        session_id=session_id,
+                        effort=effort,
+                        settings_pfad=settings_path,
+                        mcp_pfad=mcp_path,
+                        chrome=chrome,
+                    )
+                    umzug_daten = umzug.lies_umzug(umzug_datei)
+                    if umzug_daten is not None:
+                        log.info(
+                            "Umzug nach %s bestätigt — lokaler Aufseher beendet (Exit %s).",
+                            umzug_daten.get("ziel") or "?",
+                            code,
+                        )
+                        return 0
+                    if not abloese_datei.exists():
+                        return code
+                    try:
+                        daten = json.loads(abloese_datei.read_text(encoding="utf-8"))
+                        handoff = Path(daten["handoff"])
+                        start = str(daten.get("start") or "")
+                    except (OSError, ValueError, KeyError, TypeError) as fehler:
+                        log.error(
+                            "Ablöse-Datei %s unlesbar (%s) — Aufseher endet.",
+                            abloese_datei,
+                            fehler,
+                        )
+                        return 2
+                    abloese_datei.unlink(missing_ok=True)
+                    if runde > MAX_ABLOESUNGEN:
+                        log.error(
+                            "Aufseher #%s: %s Ablösungen erreicht — keine weitere Nachfolge.",
+                            a.spec,
+                            MAX_ABLOESUNGEN,
+                        )
+                        return 2
                     log.info(
-                        "Umzug nach %s bestätigt — lokaler Aufseher beendet (Exit %s).",
-                        umzug_daten.get("ziel") or "?",
-                        code,
-                    )
-                    return 0
-                if not abloese_datei.exists():
-                    return code
-                try:
-                    daten = json.loads(abloese_datei.read_text(encoding="utf-8"))
-                    handoff = Path(daten["handoff"])
-                    start = str(daten.get("start") or "")
-                except (OSError, ValueError, KeyError, TypeError) as fehler:
-                    log.error(
-                        "Ablöse-Datei %s unlesbar (%s) — Aufseher endet.",
-                        abloese_datei,
-                        fehler,
-                    )
-                    return 2
-                abloese_datei.unlink(missing_ok=True)
-                if runde > MAX_ABLOESUNGEN:
-                    log.error(
-                        "Aufseher #%s: %s Ablösungen erreicht — keine weitere Nachfolge.",
+                        "Aufseher #%s: Ablösung %s — Nachfolge-Aufseher startet mit %s.",
                         a.spec,
-                        MAX_ABLOESUNGEN,
+                        runde,
+                        handoff,
                     )
-                    return 2
-                log.info(
-                    "Aufseher #%s: Ablösung %s — Nachfolge-Aufseher startet mit %s.",
-                    a.spec,
-                    runde,
-                    handoff,
-                )
-                session_id = None
-                start_prompt = abloese_prompt(prompt, handoff, runde + 1, a.spec, start)
-        return code
-    finally:
-        # #355: eigenen Lauf-Ordner räumen (nur echte ``wache-<spec>-*``-Ordner, keine Test-tmp_paths)
-        if lauf_ordner.name.startswith(f"wache-{a.spec}-"):
-            shutil.rmtree(lauf_ordner, ignore_errors=True)
+                    session_id = None
+                    start_prompt = abloese_prompt(prompt, handoff, runde + 1, a.spec, start)
+            return code
+        finally:
+            # #355: eigenen Lauf-Ordner räumen (nur echte ``wache-<spec>-*``-Ordner, keine Test-tmp_paths)
+            if lauf_ordner.name.startswith(f"wache-{a.spec}-"):
+                shutil.rmtree(lauf_ordner, ignore_errors=True)
 
 
 if __name__ == "__main__":

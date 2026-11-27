@@ -31,7 +31,7 @@ log = logging.getLogger("to_spawn.respawn_aufseher")
 #: Wird dem Aufseher getippt, wenn die Ablösung nach Schritt a abbricht.
 WEITER_AUFTRAG_AUFSEHER = anleitung.WEITER_AUFTRAG_AUFSEHER
 #: Umgebungsvariable für die kontrollierte Ablöse-Ausnahme der Aufseher-Sperre (#898).
-ABLOESE_AUSNAHME_ENV = "TO_SPAWN_WACHE_ABLOESUNG_START"
+ABLOESE_AUSNAHME_ENV = "TO_SPAWN_WACHE_SPERRE_ABLOESUNG"
 
 
 @dataclass(frozen=True)

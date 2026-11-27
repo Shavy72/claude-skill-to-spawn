@@ -19,6 +19,8 @@ import textwrap
 import time
 from pathlib import Path
 
+from to_spawn import respawn_aufseher, sperre
+
 SKILL = Path(__file__).resolve().parent.parent
 
 _KIND_SKRIPT = textwrap.dedent(
@@ -86,7 +88,7 @@ def _basis_env(tmp_path: Path, repo: Path, spec: int, name: str) -> tuple[dict[s
         "TO_SPAWN_START_SPERREN": str(tmp_path / "sperren"),
         "TO_SPAWN_TEMP_ORDNER": str(tmp_path / "temp"),
     }
-    env.pop("TO_SPAWN_WACHE_ABLOESUNG_START", None)
+    env.pop(respawn_aufseher.ABLOESE_AUSNAHME_ENV, None)
     return env, bereit, stopp, gestartet
 
 
@@ -210,7 +212,7 @@ def test_abloese_ausnahme_erlaubt_genau_eine_abloesung(tmp_path: Path) -> None:
 
         # Kontrollierte Ablösung darf neben dem laufenden Aufseher starten.
         env2, bereit2, stopp2, gestartet2 = _basis_env(tmp_path, repo, 1523, "neu")
-        env2["TO_SPAWN_WACHE_ABLOESUNG_START"] = "1"
+        env2[respawn_aufseher.ABLOESE_AUSNAHME_ENV] = "1"
         p2 = subprocess.Popen(
             [sys.executable, "-c", _KIND_SKRIPT],
             cwd=str(repo),
@@ -225,7 +227,7 @@ def test_abloese_ausnahme_erlaubt_genau_eine_abloesung(tmp_path: Path) -> None:
 
         # Eine zweite gleichzeitige Ablösung wird abgewiesen.
         env3, _bereit3, stopp3, gestartet3 = _basis_env(tmp_path, repo, 1523, "neu2")
-        env3["TO_SPAWN_WACHE_ABLOESUNG_START"] = "1"
+        env3[respawn_aufseher.ABLOESE_AUSNAHME_ENV] = "1"
         stopp3.write_text("1", encoding="utf-8")
         p3 = subprocess.run(
             [sys.executable, "-c", _KIND_SKRIPT],
@@ -244,7 +246,16 @@ def test_abloese_ausnahme_erlaubt_genau_eine_abloesung(tmp_path: Path) -> None:
         # Alter Aufseher endet -> Ablösung übernimmt die Haupt-Sperre -> normaler Start bleibt gesperrt.
         stopp1.write_text("1", encoding="utf-8")
         p1.wait(timeout=10)
-        time.sleep(0.4)
+        abloese_sperre = tmp_path / "sperren" / "test_repo-wache-1523.lock.abloesung"
+        frist = time.monotonic() + 5.0
+        uebernommen = False
+        while time.monotonic() < frist:
+            with sperre.halte(abloese_sperre) as frei:
+                if frei:
+                    uebernommen = True
+                    break
+            time.sleep(0.05)
+        assert uebernommen, "Ablösung hat die Haupt-Sperre nicht rechtzeitig übernommen"
 
         env4, _bereit4, stopp4, gestartet4 = _basis_env(tmp_path, repo, 1523, "normal")
         stopp4.write_text("1", encoding="utf-8")
