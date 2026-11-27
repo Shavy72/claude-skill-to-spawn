@@ -26,6 +26,7 @@ from to_spawn import (  # noqa: E402
     config,
     melder,
     sitzung_env,
+    sitzung_filter,
     sitzungsjob,
     speicher,
     sperre,
@@ -204,11 +205,25 @@ def erlaubte_werkzeuge(python: str, skript: str, ordner: str) -> list[str]:
     return [f"Bash({python} {skript} *)", "Artifact", "ArtifactData", "ToolSearch", f"Read({ordner}/**)"]
 
 
-def sitzung_befehl(modell: str, werkzeuge: list[str], anweisung: str, takt: str = TAKT) -> list[str]:
+def sitzung_befehl(
+    modell: str,
+    werkzeuge: list[str],
+    anweisung: str,
+    takt: str = TAKT,
+    *,
+    mcp_pfad: Path | str | None = None,
+) -> list[str]:
+    """Leitstand-Session mit schlankem MCP-Profil (nur ``context-mode`` + ``--strict-mcp-config``, #869)."""
+    mcp_flags = (
+        ["--mcp-config", str(mcp_pfad), sitzung_filter.STRICT_MCP_FLAG]
+        if mcp_pfad is not None
+        else sitzung_filter.schlanke_mcp_flags(logger=log)
+    )
     return [
         "claude",
         "--model",
         modell,
+        *mcp_flags,
         "--allowedTools",
         *werkzeuge,
         "--",
