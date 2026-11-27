@@ -58,6 +58,7 @@ from . import (
     capo,
     config,
     gh,
+    halt,
     leitstand,
     manifest,
     melder,
@@ -643,6 +644,11 @@ def takt(
         print(f"Takt #{spec} läuft schon — steige aus.")
         return 0
     with schein:
+        # Halt der Spec (#1444): prüft die Bedingung und hebt ihn ggf. selbst auf.
+        angehalten = halt.pruefen(repo, aufheben=not dry_run, wer="takt")
+        if angehalten is not None:
+            print(f"Takt #{spec}: {angehalten.text()} — steige aus.")
+            return 0
         konfig = config.lade(repo)
         try:
             merker = leitstand.lese_zustand().get("takt", {}).get(str(spec))

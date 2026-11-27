@@ -240,6 +240,18 @@ def ticket_stand_timeout() -> float:
     return wert if wert > 0 else TICKET_STAND_TIMEOUT_S
 
 
+def ticket_existiert(ticket: str, cwd: Path | None = None) -> bool | None:
+    """``True``/``False``; ``None``, wenn GitHub nicht sicher antwortet (Netz, Auth, gh fehlt).
+
+    ``False`` nur bei der eindeutigen gh-Meldung „Could not resolve to an issue“ — ein
+    Netzfehler darf nie als „gibt es nicht“ gelten (#1444).
+    """
+    code, ausgabe = lauf(["issue", "view", str(ticket), "--json", "state"], cwd=cwd, timeout=60, fehlertext=True)
+    if code == 0:
+        return True
+    return False if "Could not resolve to an issue" in ausgabe else None
+
+
 def ticket_daten(ticket: str, cwd: Path | None = None) -> dict[str, Any] | None:
     """Zustand, Labels, Text und Zuständige eines Issues (``None`` bei Fehler)."""
     daten = json_lauf(["issue", "view", str(ticket), "--json", "state,labels,body,assignees"], cwd=cwd)
