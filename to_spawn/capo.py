@@ -3179,33 +3179,30 @@ def ist_abnahme_passt(text: str) -> bool:
 
 
 def abnahme_passt_kommentar(kommentare: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Jüngster Mensch-Kommentar nach dem letzten eigenen Kommentar, wenn er eine „passt“-Freigabe ist (#924).
+    """Jüngster Mensch-Kommentar am Abnahme-Ticket, wenn er eine „passt“-Freigabe ist (#924, #935).
 
     ``kommentare`` stammt aus :func:`issue_kommentare` (nur Repo-Beteiligte). Kommentare mit
     Aufseher-, Aufpasser- oder Session-Marke zählen nie als Freigabe des Menschen — auch eine
-    automatische Aufseher-Annahme nach Frist löst kein Live aus. Folgt auf ein „passt“ später
-    noch ein anderer Mensch-Kommentar (z. B. Stopp/Kritik), gilt nur der jüngste Mensch-Kommentar.
+    automatische Aufseher-Annahme nach Frist löst kein Live aus — und verdecken ein vorheriges
+    „passt“ des Menschen nicht (#935: z. B. Aufseher-Quittung nach der Abnahme). Folgt auf ein
+    „passt“ später noch ein anderer Mensch-Kommentar (z. B. Stopp/Kritik), gilt nur der jüngste
+    Mensch-Kommentar.
     """
     sortiert = sorted(
         kommentare,
         key=lambda e: (_kommentar_teile(e)[2] or datetime.min.replace(tzinfo=timezone.utc), int(e.get("id") or 0)),
     )
-    letzter_eigen = -1
-    for i, eintrag in enumerate(sortiert):
-        text = _kommentar_teile(eintrag)[1].lstrip()
-        if text.startswith(EIGENE_KOEPFE) or _ist_session_kommentar(text):
-            letzter_eigen = i
-    mensch_danach = [
+    mensch_kommentare = [
         eintrag
-        for eintrag in sortiert[letzter_eigen + 1 :]
+        for eintrag in sortiert
         if not (
             _kommentar_teile(eintrag)[1].lstrip().startswith(EIGENE_KOEPFE)
             or _ist_session_kommentar(_kommentar_teile(eintrag)[1])
         )
     ]
-    if not mensch_danach:
+    if not mensch_kommentare:
         return None
-    juengster = mensch_danach[-1]
+    juengster = mensch_kommentare[-1]
     return juengster if ist_abnahme_passt(_kommentar_teile(juengster)[1]) else None
 
 
