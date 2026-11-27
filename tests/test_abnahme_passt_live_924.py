@@ -241,3 +241,68 @@ def test_prompts_und_wecker_nennen_passt_als_live_freigabe_ohne_zweites_ja() -> 
     assert "keine Briefkasten-Frage" in befugnis.aufseher_text("python X/to_spawn.py")
     assert "Live-Freigabe" in briefkasten_wecker.KOMMENTAR_TEXT
     assert "ohne Briefkasten-Frage" in briefkasten_wecker.KOMMENTAR_TEXT
+
+
+@pytest.mark.parametrize(
+    "eigener_text",
+    [
+        "Aufseher: Abnahme erhalten. Komplett-Prüfung vor Live grün.",
+        "Bau-Session: Abnahme notiert.",
+        "Aufpasser: Status geprüft.",
+    ],
+)
+def test_abnahme_passt_bleibt_nach_eigenem_kommentar_sichtbar_935(eigener_text: str) -> None:
+    """#935: Eigene Kommentare (Aufseher-Quittung, Session, Aufpasser) nach „passt“ verdecken die Freigabe nicht."""
+    passt = {
+        "id": 1,
+        "autor": "nutzer",
+        "body": "passt — abgenommen.",
+        "created_at": "2026-11-27T04:24:20Z",
+    }
+    quittung = {
+        "id": 2,
+        "autor": "nutzer",
+        "body": eigener_text,
+        "created_at": "2026-11-27T04:26:04Z",
+    }
+    assert capo.abnahme_passt_kommentar([passt, quittung]) == passt
+
+
+def test_abnahme_kritik_nach_passt_bleibt_stopp_935() -> None:
+    """#935 Gegenfall: folgt nach „passt“ (auch nach Aufseher-Quittung) eine Mensch-Kritik, gibt es kein Live."""
+    passt = {
+        "id": 1,
+        "autor": "nutzer",
+        "body": "passt — abgenommen.",
+        "created_at": "2026-11-27T04:24:20Z",
+    }
+    quittung = {
+        "id": 2,
+        "autor": "nutzer",
+        "body": "Aufseher: Abnahme erhalten.",
+        "created_at": "2026-11-27T04:26:04Z",
+    }
+    kritik = {
+        "id": 3,
+        "autor": "nutzer",
+        "body": "Stopp, bitte noch ändern.",
+        "created_at": "2026-11-27T04:30:00Z",
+    }
+    assert capo.abnahme_passt_kommentar([passt, kritik]) is None
+    assert capo.abnahme_passt_kommentar([passt, quittung, kritik]) is None
+
+
+def test_aufseher_quittung_nach_passt_startet_trotzdem_live_935(welt: dict[str, Path]) -> None:
+    """#935 End-to-End im Takt: Mensch „passt“ → Aufseher-Quittung → Takt startet Live."""
+    zaehl, live_zaehl = _einrichten(welt, staging=False)
+    _abnahme_hinzufuegen(welt)
+    _bau_tickets_zu(welt)
+
+    _kommentar(welt, "903", "passt — abgenommen.")
+    _kommentar(welt, "903", "Aufseher: Abnahme erhalten. Komplett-Prüfung vor Live grün.")
+
+    erg = _capo(welt)
+    assert erg.returncode == 0, _text(erg)
+    assert _laeufe(zaehl) == 1, _text(erg)
+    assert _laeufe(live_zaehl) == 1, _text(erg)
+    assert capo.live_gelaufen(welt["repo"], int(SPEC), GH)
