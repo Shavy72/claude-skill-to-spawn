@@ -498,6 +498,33 @@ def laufende_sessions(proc: Path | None = None, *, mit_vergebenen: bool = True) 
     return _mit_vergebenen(anzahl, None)
 
 
+def auslastung_messen(*, proc: Path | None = None) -> dict[str, Any]:
+    """Misst freie Platte (über :mod:`to_spawn.hausmeister`), Speicher und laufende Sessions (#904).
+
+    Plattformunabhängig (Linux ``/proc`` + Windows ``GlobalMemoryStatusEx``/Kernel-Prozessliste
+    sowie ``shutil.disk_usage`` bzw. Test-Türen ``TO_SPAWN_SPEICHER_*`` und
+    ``TO_SPAWN_HAUSMEISTER_PLATTE``). Unmessbare Einzelwerte sind ``None``.
+    """
+    from to_spawn import hausmeister  # spät: hausmeister → aufpasser → speicher
+
+    speicher_frei, speicher_gesamt = system_speicher_mib()
+    sessions_aktiv = claude_sessions(proc=proc)
+    sessions_alle = claude_sessions(proc=proc, mit_stillen=True)
+    try:
+        anteil = hausmeister._frei_anteil()
+    except Exception:  # Messung darf Aufrufer nie kippen
+        log.warning("Platten-Anteil für Auslastung nicht messbar.", exc_info=True)
+        anteil = None
+    platte_prozent = round(anteil * 100, 1) if anteil is not None else None
+    return {
+        "platte_frei_prozent": platte_prozent,
+        "speicher_frei_mib": speicher_frei,
+        "speicher_gesamt_mib": speicher_gesamt,
+        "sessions": sessions_aktiv,
+        "sessions_gesamt": sessions_alle,
+    }
+
+
 def _sitzung_text(sitzung: Sitzung | None) -> str:
     return ",".join(sitzung) if sitzung else ""
 

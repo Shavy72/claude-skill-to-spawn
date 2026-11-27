@@ -32,7 +32,8 @@ import time
 import uuid
 from collections import Counter
 from collections.abc import Iterable
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, overload
 
@@ -42,14 +43,24 @@ log = logging.getLogger("to_spawn.bau_log")
 
 #: Typ der Zeile einer abgelehnten Komplett-Prüfung (#496); Zähler: ``komplett_lauf.ablehnungen``.
 KOMPLETT_ABGELEHNT = "komplett_abgelehnt"
+#: Ereignis-Typ für gemeldete Hindernisse (#904 / App #1399, Tür + Typ).
+HINDERNIS_GEMELDET = "hindernis_gemeldet"
+#: Ereignis-Typ und ticketfreie Datei für 15-Minuten-Auslastungszeilen (#904 / App #1399).
+AUSLASTUNG_TYP = "auslastung"
+AUSLASTUNG_TICKET = "auslastung"
+#: Verdichtete Monats-Zusammenfassung des 90-Tage-Pflege-Laufs (#904 / App #1399).
+MONATS_ZUSAMMENFASSUNG = "monats_zusammenfassung"
+#: Standard-Aufbewahrungsfrist (Tage) vor Verdichtung in Monats-Zusammenfassungen (#904).
+PFLEGE_ALTER_TAGE = 90
 
-#: Pflicht-Ereignistypen des gemeinsamen Ereignis-Protokolls (#902 / #1395).
+#: Pflicht-Ereignistypen des gemeinsamen Ereignis-Protokolls (#902 / #1395 / #904).
 EREIGNIS_TYPEN: tuple[str, ...] = (
     "start",
     "uebergabe",
     "schliessen",
     "wiedereroeffnen",
     "hindernis",
+    HINDERNIS_GEMELDET,
 )
 
 #: Pflichtfelder jeder Zeile im Ereignis-Protokoll (#902 / #1395).
@@ -69,6 +80,8 @@ PROTOKOLL_ZWEIG = "protokoll"
 PROTOKOLL_REF = f"refs/heads/{PROTOKOLL_ZWEIG}"
 PROTOKOLL_REMOTE_REF = f"refs/remotes/origin/{PROTOKOLL_ZWEIG}"
 PROTOKOLL_BAUM_ORDNER = "bau_log"
+PROTOKOLL_MONATE_ORDNER = f"{PROTOKOLL_BAUM_ORDNER}/monate"
+_MONAT_MUSTER = re.compile(r"^\d{4}-\d{2}$")
 #: Env-Überschreibungen für Tests und Sonderläufe.
 PROTOKOLL_PUFFER_ENV = "TO_SPAWN_PROTOKOLL_PUFFER"
 PROTOKOLL_REPO_ENV = "TO_SPAWN_PROTOKOLL_REPO"
@@ -116,6 +129,9 @@ TYPEN = (
     KOMPLETT_ABGELEHNT,
     # Taktgeber (#906, App #1402): zustandslose Handlungen (geschlossen, label_gesetzt, geweckt; wer="taktgeber").
     "taktgeber",
+    # Protokoll-Pflege & Auslastung (#904, App #1399): 15-Minuten-Auslastung und Monats-Verdichtung.
+    AUSLASTUNG_TYP,
+    MONATS_ZUSAMMENFASSUNG,
 )
 
 
@@ -125,7 +141,12 @@ class ProtokollPflichtfeldFehler(ValueError):
 
 #: Felder, deren ``None`` als ``null`` stehen bleibt, weil es etwas bedeutet (sonst
 #: fallen ``None``-Felder weg). ``aufseher_abloesung.exit`` null = Ablösung nicht versucht.
-NULL_FELDER: dict[str, frozenset[str]] = {"aufseher_abloesung": frozenset({"exit"})}
+NULL_FELDER: dict[str, frozenset[str]] = {
+    "aufseher_abloesung": frozenset({"exit"}),
+    AUSLASTUNG_TYP: frozenset(
+        {"platte_frei_prozent", "speicher_frei_mib", "speicher_gesamt_mib", "sessions", "sessions_gesamt"}
+    ),
+}
 
 #: Vorgabe-Ordner der versionierten Logs (Alias für Aufrufer/Tests; es gilt ``pfade.bau_log``).
 LOG_ORDNER = Path(config.DEFAULTS["pfade"]["bau_log"])
@@ -1052,6 +1073,454 @@ def schreibe(*args: Any, **felder: Any) -> dict[str, Any]:
     if darf_pushen:
         _schiebe_puffer(puffer, ziel_repo)
     return doppelt if doppelt is not None else zeile
+
+
+def hindernis_gemeldet(**felder: Any) -> dict[str, Any]:
+    """Schreib-Tür für den Ereignis-Typ ``hindernis_gemeldet`` (#904 / App #1399).
+
+    Leitet alle Felder unverändert durch :func:`schreibe` (inkl. Pflichtfeld-Prüfung,
+    Puffer, Sperre und Git-Plumbing-Push auf ``protokoll``).
+    """
+    return schreibe(HINDERNIS_GEMELDET, **felder)
+
+
+def auslastung_schreiben(
+    repo: Path | None = None,
+    *,
+    platte_frei_prozent: float | None,
+    speicher_frei_mib: int | None,
+    sessions: int | None,
+    sessions_gesamt: int | None = None,
+    speicher_gesamt_mib: int | None = None,
+    wer: str = "aufpasser",
+    grund: str = "15-Minuten-Takt",
+    zeit: str | None = None,
+    idempotenz_schluessel: str | None = None,
+    puffer_ordner: Path | None = None,
+    sofort_push: bool | None = None,
+) -> dict[str, Any]:
+    """Schreibt eine ticketfreie Auslastungszeile über :func:`schreibe` (#904 / App #1399).
+
+    Wird unter ``bau_log/auslastung.jsonl`` auf ``origin/protokoll`` abgelegt und über
+    :func:`lese` (``ticket=AUSLASTUNG_TICKET``) oder :func:`lese_auslastung` gelesen.
+    """
+    platte_text = f"{_komma(platte_frei_prozent)} %" if platte_frei_prozent is not None else "unbekannt"
+    ram_text = f"{speicher_frei_mib} MiB" if speicher_frei_mib is not None else "unbekannt"
+    sess_text = str(sessions) if sessions is not None else "unbekannt"
+    felder: dict[str, Any] = {
+        "ticket": AUSLASTUNG_TICKET,
+        "wer": wer,
+        "was": f"Platte {platte_text} frei, RAM {ram_text} frei, {sess_text} Sessions aktiv",
+        "session": wer,
+        "commit": "-",
+        "grund": grund,
+        "kontextstand": 0,
+        "platte_frei_prozent": platte_frei_prozent,
+        "speicher_frei_mib": speicher_frei_mib,
+        "speicher_gesamt_mib": speicher_gesamt_mib,
+        "sessions": sessions,
+        "sessions_gesamt": sessions_gesamt,
+    }
+    if repo is not None:
+        felder["repo"] = repo
+    if zeit is not None:
+        felder["zeit"] = zeit
+    if idempotenz_schluessel is not None:
+        felder["idempotenz_schluessel"] = idempotenz_schluessel
+    if puffer_ordner is not None:
+        felder["puffer_ordner"] = puffer_ordner
+    if sofort_push is not None:
+        felder["sofort_push"] = sofort_push
+    return schreibe(AUSLASTUNG_TYP, **felder)
+
+
+def lese_auslastung(
+    repo: Path,
+    *,
+    holen: bool = True,
+    puffer_ordner: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Liest alle Auslastungszeilen aus ``origin/protokoll`` und lokalem Puffer (#904)."""
+    return [
+        z
+        for z in lese(repo, AUSLASTUNG_TICKET, holen=holen, puffer_ordner=puffer_ordner)
+        if z.get("typ") == AUSLASTUNG_TYP
+    ]
+
+
+def monats_datei_im_zweig(monat: str) -> str:
+    """Pfad einer Monats-Zusammenfassung auf dem Zweig ``protokoll`` (``YYYY-MM``)."""
+    return f"{PROTOKOLL_MONATE_ORDNER}/{monat}.jsonl"
+
+
+def monats_zusammenfassungen(
+    repo: Path,
+    *,
+    monat: str | None = None,
+    holen: bool = True,
+) -> list[dict[str, Any]]:
+    """Liest verdichtete Monats-Zusammenfassungen aus ``origin/protokoll`` (#904)."""
+    if not repo.is_dir():
+        return []
+    if holen:
+        protokoll_holen(repo)
+    if monat is not None:
+        monat_text = monat.strip()
+        if not _MONAT_MUSTER.fullmatch(monat_text):
+            return []
+        pfade = [monats_datei_im_zweig(monat_text)]
+    else:
+        code, ausgabe = _git(repo, "ls-tree", "--name-only", PROTOKOLL_REMOTE_REF, f"{PROTOKOLL_MONATE_ORDNER}/")
+        if code != 0 or not ausgabe:
+            return []
+        pfade = sorted(p.strip() for p in ausgabe.splitlines() if p.strip().endswith(".jsonl"))
+    ergebnis: list[dict[str, Any]] = []
+    for pfad in pfade:
+        code, text = _git(repo, "show", f"{PROTOKOLL_REMOTE_REF}:{pfad}")
+        if code != 0 or not text:
+            continue
+        for _, eintrag in _parse_rohzeilen([z.strip() for z in text.splitlines() if z.strip()], pfad):
+            ergebnis.append(eintrag)
+    return sorted(ergebnis, key=lambda e: str(e.get("monat") or ""))
+
+
+@dataclass(frozen=True)
+class PflegeErgebnis:
+    """Ergebnis eines idempotenten Pflege-Laufs (:func:`pflegen`, #904 / App #1399)."""
+
+    ok: bool
+    geaendert: bool
+    verdichtet: int
+    monate: tuple[str, ...]
+    dateien_aktualisiert: int
+    dateien_entfernt: int
+    fehler: str = ""
+
+
+def _zahl_oder_none(wert: Any) -> float | None:
+    if isinstance(wert, bool) or not isinstance(wert, (int, float)):
+        return None
+    return float(wert)
+
+
+def _monat_zusammenfuehren(
+    monat: str,
+    bestehend: dict[str, Any] | None,
+    neue_eintraege: list[dict[str, Any]],
+    bezugszeit: datetime,
+) -> dict[str, Any]:
+    """Führt eine bestehende Monats-Zusammenfassung und neu verdichtete Alt-Zeilen zusammen."""
+    nach_typ: Counter[str] = Counter()
+    tickets: set[str] = set()
+    von_dt: datetime | None = None
+    bis_dt: datetime | None = None
+    zeilen_gesamt = 0
+
+    ausl_messungen = 0
+    platte_min: float | None = None
+    speicher_min: int | None = None
+    sessions_max: int | None = None
+    sessions_gesamt_max: int | None = None
+
+    if isinstance(bestehend, dict):
+        alt_gesamt = bestehend.get("zeilen_gesamt")
+        if isinstance(alt_gesamt, int) and not isinstance(alt_gesamt, bool):
+            zeilen_gesamt = alt_gesamt
+        alt_typen = bestehend.get("nach_typ")
+        if isinstance(alt_typen, dict):
+            for k, v in alt_typen.items():
+                if isinstance(k, str) and isinstance(v, int) and not isinstance(v, bool):
+                    nach_typ[k] += v
+        alt_tickets = bestehend.get("tickets")
+        if isinstance(alt_tickets, list):
+            tickets.update(str(t) for t in alt_tickets if str(t).isdigit())
+        von_dt = _zeitpunkt(bestehend.get("von"))
+        bis_dt = _zeitpunkt(bestehend.get("bis"))
+        alt_ausl = bestehend.get("auslastung")
+        if isinstance(alt_ausl, dict):
+            if isinstance(alt_ausl.get("messungen"), int) and not isinstance(alt_ausl.get("messungen"), bool):
+                ausl_messungen = alt_ausl["messungen"]
+            platte_min = _zahl_oder_none(alt_ausl.get("platte_frei_prozent_min"))
+            sp = _zahl_oder_none(alt_ausl.get("speicher_frei_mib_min"))
+            speicher_min = int(sp) if sp is not None else None
+            se = _zahl_oder_none(alt_ausl.get("sessions_max"))
+            sessions_max = int(se) if se is not None else None
+            sg = _zahl_oder_none(alt_ausl.get("sessions_gesamt_max"))
+            sessions_gesamt_max = int(sg) if sg is not None else None
+
+    for eintrag in neue_eintraege:
+        zeilen_gesamt += 1
+        typ = str(eintrag.get("typ") or "unbekannt")
+        nach_typ[typ] += 1
+        ticket_wert = str(eintrag.get("ticket") or "").strip()
+        if ticket_wert.isdigit():
+            tickets.add(ticket_wert)
+        zeit = _zeitpunkt(eintrag.get("zeit") or eintrag.get("ts"))
+        if zeit is not None:
+            if von_dt is None or zeit < von_dt:
+                von_dt = zeit
+            if bis_dt is None or zeit > bis_dt:
+                bis_dt = zeit
+        if typ == AUSLASTUNG_TYP:
+            ausl_messungen += 1
+            pl = _zahl_oder_none(eintrag.get("platte_frei_prozent"))
+            if pl is not None:
+                platte_min = pl if platte_min is None else min(platte_min, pl)
+            sp = _zahl_oder_none(eintrag.get("speicher_frei_mib"))
+            if sp is not None:
+                sp_int = int(sp)
+                speicher_min = sp_int if speicher_min is None else min(speicher_min, sp_int)
+            se = _zahl_oder_none(eintrag.get("sessions"))
+            if se is not None:
+                se_int = int(se)
+                sessions_max = se_int if sessions_max is None else max(sessions_max, se_int)
+            sg = _zahl_oder_none(eintrag.get("sessions_gesamt"))
+            if sg is not None:
+                sg_int = int(sg)
+                sessions_gesamt_max = sg_int if sessions_gesamt_max is None else max(sessions_gesamt_max, sg_int)
+
+    ergebnis: dict[str, Any] = {
+        "typ": MONATS_ZUSAMMENFASSUNG,
+        "monat": monat,
+        "zeit": bezugszeit.astimezone(UTC).isoformat(timespec="seconds"),
+        "zeilen_gesamt": zeilen_gesamt,
+        "nach_typ": dict(sorted(nach_typ.items())),
+        "tickets": sorted(tickets, key=int),
+        "von": von_dt.astimezone(UTC).isoformat(timespec="seconds") if von_dt is not None else None,
+        "bis": bis_dt.astimezone(UTC).isoformat(timespec="seconds") if bis_dt is not None else None,
+    }
+    if ausl_messungen > 0:
+        ergebnis["auslastung"] = {
+            "messungen": ausl_messungen,
+            "platte_frei_prozent_min": platte_min,
+            "speicher_frei_mib_min": speicher_min,
+            "sessions_max": sessions_max,
+            "sessions_gesamt_max": sessions_gesamt_max,
+        }
+    return ergebnis
+
+
+def _plumbing_pflegen_einmal(
+    repo: Path,
+    grenze: datetime,
+    bezugszeit: datetime,
+) -> tuple[PflegeErgebnis, bool]:
+    """Ein atomarer Git-Plumbing-Pflege-Durchlauf auf ``refs/heads/protokoll`` (#904).
+
+    Rückgabe ``(ergebnis, konflikt)``; berührt weder Arbeitsbaum noch Repo-Index.
+    """
+    from . import gh
+
+    nutzbar, _ist_netz = _origin_darf_netz(repo)
+    if not nutzbar:
+        return PflegeErgebnis(False, False, 0, (), 0, 0, "kein erreichbares origin konfiguriert"), False
+
+    ok_ref, remote_sha, fehler_ref = gh.remote_ref_sha(repo, PROTOKOLL_REF)
+    if not ok_ref:
+        return PflegeErgebnis(False, False, 0, (), 0, 0, fehler_ref), False
+    if not remote_sha:
+        return PflegeErgebnis(True, False, 0, (), 0, 0), False
+
+    temp_ref = f"refs/to-spawn/tmp/pflege-{os.getpid()}-{threading.get_ident()}-{uuid.uuid4().hex[:8]}"
+    try:
+        c_fetch, s_fetch, e_fetch = gh._git_lauf(
+            ["fetch", "-q", "--no-tags", "origin", f"+{PROTOKOLL_REF}:{temp_ref}"],
+            repo,
+            timeout=gh.FETCH_ZEIT_S,
+        )
+        if c_fetch != 0:
+            return PflegeErgebnis(False, False, 0, (), 0, 0, gh._git_fehler_kurz(c_fetch, s_fetch, e_fetch)), False
+        c_rev, s_rev, e_rev = gh._git_lauf(
+            ["rev-parse", "--verify", f"{temp_ref}^{{commit}}"],
+            repo,
+            timeout=gh.GIT_ZEIT_S,
+        )
+        parent_sha = s_rev.strip()
+        if c_rev != 0 or not gh._GIT_SHA.fullmatch(parent_sha):
+            return PflegeErgebnis(False, False, 0, (), 0, 0, gh._git_fehler_kurz(c_rev, s_rev, e_rev)), False
+
+        c_ls, s_ls, e_ls = gh._git_lauf(
+            ["ls-tree", "--name-only", parent_sha, f"{PROTOKOLL_BAUM_ORDNER}/"],
+            repo,
+        )
+        if c_ls != 0:
+            return PflegeErgebnis(False, False, 0, (), 0, 0, gh._git_fehler_kurz(c_ls, s_ls, e_ls)), False
+
+        kandidaten = sorted(p.strip() for p in s_ls.splitlines() if p.strip().endswith(".jsonl"))
+        monate_neu: dict[str, list[dict[str, Any]]] = {}
+        datei_rest: dict[str, list[str]] = {}
+        verdichtet = 0
+
+        for baum_pfad in kandidaten:
+            c_cat, s_cat, _e_cat = gh._git_lauf(["cat-file", "-p", f"{parent_sha}:{baum_pfad}"], repo)
+            if c_cat != 0 or not s_cat:
+                continue
+            roh_zeilen = [z.strip() for z in s_cat.splitlines() if z.strip()]
+            jung: list[str] = []
+            alt_anzahl = 0
+            for roh in roh_zeilen:
+                try:
+                    eintrag = json.loads(roh)
+                except ValueError:
+                    jung.append(roh)
+                    continue
+                if not isinstance(eintrag, dict):
+                    jung.append(roh)
+                    continue
+                zeit = _zeitpunkt(eintrag.get("zeit") or eintrag.get("ts"))
+                if zeit is not None and zeit < grenze:
+                    monat = zeit.astimezone(UTC).strftime("%Y-%m")
+                    monate_neu.setdefault(monat, []).append(eintrag)
+                    alt_anzahl += 1
+                else:
+                    jung.append(roh)
+            if alt_anzahl > 0:
+                verdichtet += alt_anzahl
+                datei_rest[baum_pfad] = jung
+
+        if verdichtet == 0:
+            return PflegeErgebnis(True, False, 0, (), 0, 0), False
+
+        aktualisiert = 0
+        entfernt = 0
+        with tempfile.TemporaryDirectory(prefix="to-spawn-pflege-") as tmp_dir:
+            tmp_pfad = Path(tmp_dir)
+            index_env = {"GIT_INDEX_FILE": str(tmp_pfad / "index")}
+            c_rt, s_rt, e_rt = gh._git_lauf(["read-tree", parent_sha], repo, extra_env=index_env)
+            if c_rt != 0:
+                return PflegeErgebnis(False, False, 0, (), 0, 0, gh._git_fehler_kurz(c_rt, s_rt, e_rt)), False
+
+            for idx, (baum_pfad, jung) in enumerate(sorted(datei_rest.items())):
+                if not jung:
+                    c_rm, s_rm, e_rm = gh._git_lauf(
+                        ["update-index", "--force-remove", "--", baum_pfad],
+                        repo,
+                        extra_env=index_env,
+                    )
+                    if c_rm != 0:
+                        return PflegeErgebnis(False, False, 0, (), 0, 0, gh._git_fehler_kurz(c_rm, s_rm, e_rm)), False
+                    entfernt += 1
+                    continue
+                blob_datei = tmp_pfad / f"rest-{idx}.jsonl"
+                blob_datei.write_text("\n".join(_sortiere_rohzeilen(jung)) + "\n", encoding="utf-8", newline="\n")
+                c_hash, s_hash, e_hash = gh._git_lauf(["hash-object", "-w", "--", str(blob_datei)], repo)
+                blob_sha = s_hash.strip()
+                if c_hash != 0 or not gh._GIT_SHA.fullmatch(blob_sha):
+                    return PflegeErgebnis(False, False, 0, (), 0, 0, gh._git_fehler_kurz(c_hash, s_hash, e_hash)), False
+                c_upd, s_upd, e_upd = gh._git_lauf(
+                    ["update-index", "--add", "--cacheinfo", f"100644,{blob_sha},{baum_pfad}"],
+                    repo,
+                    extra_env=index_env,
+                )
+                if c_upd != 0:
+                    return PflegeErgebnis(False, False, 0, (), 0, 0, gh._git_fehler_kurz(c_upd, s_upd, e_upd)), False
+                aktualisiert += 1
+
+            monate_sortiert = tuple(sorted(monate_neu))
+            for monat in monate_sortiert:
+                monats_pfad = monats_datei_im_zweig(monat)
+                bestehend: dict[str, Any] | None = None
+                c_mcat, s_mcat, _e_mcat = gh._git_lauf(["cat-file", "-p", f"{parent_sha}:{monats_pfad}"], repo)
+                if c_mcat == 0 and s_mcat.strip():
+                    for roh in s_mcat.splitlines():
+                        roh = roh.strip()
+                        if not roh:
+                            continue
+                        try:
+                            geladen = json.loads(roh)
+                        except ValueError:
+                            continue
+                        if isinstance(geladen, dict):
+                            bestehend = geladen
+                            break
+                zusammen = _monat_zusammenfuehren(monat, bestehend, monate_neu[monat], bezugszeit)
+                blob_datei = tmp_pfad / f"monat-{monat}.jsonl"
+                blob_datei.write_text(json.dumps(zusammen, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+                c_hash, s_hash, e_hash = gh._git_lauf(["hash-object", "-w", "--", str(blob_datei)], repo)
+                blob_sha = s_hash.strip()
+                if c_hash != 0 or not gh._GIT_SHA.fullmatch(blob_sha):
+                    return PflegeErgebnis(False, False, 0, (), 0, 0, gh._git_fehler_kurz(c_hash, s_hash, e_hash)), False
+                c_upd, s_upd, e_upd = gh._git_lauf(
+                    ["update-index", "--add", "--cacheinfo", f"100644,{blob_sha},{monats_pfad}"],
+                    repo,
+                    extra_env=index_env,
+                )
+                if c_upd != 0:
+                    return PflegeErgebnis(False, False, 0, (), 0, 0, gh._git_fehler_kurz(c_upd, s_upd, e_upd)), False
+
+            c_tree, s_tree, e_tree = gh._git_lauf(["write-tree"], repo, extra_env=index_env)
+            tree_sha = s_tree.strip()
+            if c_tree != 0 or not gh._GIT_SHA.fullmatch(tree_sha):
+                return PflegeErgebnis(False, False, 0, (), 0, 0, gh._git_fehler_kurz(c_tree, s_tree, e_tree)), False
+
+        monate_kurz = ", ".join(monate_sortiert[:5])
+        if len(monate_sortiert) > 5:
+            monate_kurz += f" +{len(monate_sortiert) - 5}"
+        nachricht = f"protokoll: Pflege {verdichtet} Alt-Zeile(n) verdichtet ({monate_kurz})\n"
+        c_com, s_com, e_com = gh._git_lauf(
+            ["-c", "commit.gpgsign=false", "commit-tree", tree_sha, "-p", parent_sha, "-F", "-"],
+            repo,
+            eingabe=nachricht,
+            extra_env=gh._INTERN_GIT_ENV,
+        )
+        commit_sha = s_com.strip()
+        if c_com != 0 or not gh._GIT_SHA.fullmatch(commit_sha):
+            return PflegeErgebnis(False, False, 0, (), 0, 0, gh._git_fehler_kurz(c_com, s_com, e_com)), False
+
+        ok_push, konflikt, fehler_push = gh.remote_ref_cas_setzen(repo, PROTOKOLL_REF, commit_sha, parent_sha)
+        if ok_push:
+            gh._git_lauf(["update-ref", PROTOKOLL_REMOTE_REF, commit_sha], repo)
+            return PflegeErgebnis(True, True, verdichtet, monate_sortiert, aktualisiert, entfernt), False
+        return PflegeErgebnis(False, False, 0, (), 0, 0, fehler_push), konflikt
+    finally:
+        gh._git_lauf(["update-ref", "-d", temp_ref], repo)
+
+
+def pflegen(
+    repo: Path | None = None,
+    *,
+    tage: int = PFLEGE_ALTER_TAGE,
+    jetzt: datetime | None = None,
+    puffer_ordner: Path | None = None,
+) -> PflegeErgebnis:
+    """Idempotenter Pflege-Lauf für das Ereignis-Protokoll (#904 / App #1399).
+
+    Verdichtet alle Zeilen älter als ``tage`` Tage (Vorgabe 90) aus ``bau_log/*.jsonl``
+    auf ``origin/protokoll`` in Monats-Zusammenfassungen unter
+    ``bau_log/monate/<YYYY-MM>.jsonl``. Ein erneuter Lauf ohne neue Alt-Zeilen erzeugt
+    keinen Commit. Arbeitet per Git-Plumbing unter ``protokoll.lock`` ohne Eingriff in
+    Arbeitsbaum oder Index.
+    """
+    if tage <= 0:
+        raise ValueError(f"tage muss positiv sein, erhalten: {tage}")
+    ziel_repo = _protokoll_repo(repo)
+    if ziel_repo is None:
+        return PflegeErgebnis(False, False, 0, (), 0, 0, "kein Repo gefunden")
+    puffer = Path(puffer_ordner).expanduser() if puffer_ordner is not None else protokoll_puffer_ordner()
+    _pruefe_puffer_ausserhalb(puffer, ziel_repo)
+
+    bezugszeit = jetzt if jetzt is not None else datetime.now(UTC)
+    if bezugszeit.tzinfo is None:
+        bezugszeit = bezugszeit.replace(tzinfo=UTC)
+    grenze = bezugszeit - timedelta(days=tage)
+
+    push_sperre = puffer / "protokoll.lock"
+    with sperre.halte(push_sperre, warten=SPERR_WARTE_S) as gehalten:
+        if not gehalten:
+            return PflegeErgebnis(False, False, 0, (), 0, 0, f"Push-Sperre {push_sperre} belegt")
+        letztes = PflegeErgebnis(False, False, 0, (), 0, 0, "Pflege nicht ausgeführt")
+        for versuch in range(1, MAX_PUSH_VERSUCHE + 1):
+            erg, konflikt = _plumbing_pflegen_einmal(ziel_repo, grenze, bezugszeit)
+            if erg.ok:
+                return erg
+            letztes = erg
+            if not konflikt:
+                log.warning("Ereignis-Protokoll-Pflege fehlgeschlagen: %s", erg.fehler)
+                return erg
+            if versuch < MAX_PUSH_VERSUCHE:
+                time.sleep(min(0.03 * versuch, 0.25) + random.uniform(0.0, 0.05))
+        log.warning("Ereignis-Protokoll-Pflege nach %d Konflikten offen: %s", MAX_PUSH_VERSUCHE, letztes.fehler)
+        return letztes
 
 
 def _laufzeilen(repo: Path, ticket: str | int, hauptbaum: Path | None) -> list[str]:
