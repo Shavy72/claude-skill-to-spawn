@@ -424,12 +424,20 @@ def test_reopen_regeln_stimmen_mit_reopen_funde_ueberein() -> None:
     import inspect
     import re
 
+    from to_spawn import schliess_pruefer
+
     quelle = inspect.getsource(capo.reopen_funde)
     pruefer = set(re.findall(r"\b(regel_\w+)\(", quelle))
     assert pruefer, quelle
+    assert "schliess_pruefer.pruefe(" in quelle, quelle
     namen: set[str] = set()
     for name in pruefer:
         namen |= set(re.findall(r'Verstoss\(\s*ticket,\s*"(\w+)"', inspect.getsource(getattr(capo, name))))
+    pruefer_quelle = inspect.getsource(schliess_pruefer.pruefe)
+    tuer_regeln = set(re.findall(r"\b(regel_\w+)\(", pruefer_quelle)) - {"regel_gruen_auf_hauptzweig"}
+    for name in tuer_regeln:
+        funde = set(re.findall(r'Grund\(\s*regel="(\w+)"', inspect.getsource(getattr(schliess_pruefer, name))))
+        namen |= funde - {"beleg_form"}
     assert namen == set(capo.REOPEN_REGELN)
 
 
