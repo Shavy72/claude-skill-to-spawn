@@ -211,10 +211,17 @@ def schreibe(
     if schon_im_log(repo, ticket, vor):
         log.info("Vorfall steht schon im Bau-Log #%s — nicht doppelt.", ticket)
         return None
+    wer_wert = (vor.quelle or SESSION_QUELLE).strip() or SESSION_QUELLE
     return bau_log.schreibe(
-        repo,
-        ticket,
         TYP,
+        repo=repo,
+        ticket=ticket,
+        wer=wer_wert,
+        was=f"Vorfall ({vor.klasse}): {vor.symptom}",
+        session=f"{wer_wert}-{ticket}",
+        commit=bau_log.git_kopf_kurz(repo, ticket),
+        grund=vor.ursache,
+        kontextstand=0,
         klasse=vor.klasse,
         symptom=vor.symptom,
         ursache=vor.ursache,

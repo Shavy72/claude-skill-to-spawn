@@ -53,9 +53,10 @@ ALTE_ZEILE = {
 
 
 @pytest.fixture
-def worktree(tmp_path: Path) -> Path:
+def worktree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     ordner = tmp_path / f"wt-{TICKET}"
     ordner.mkdir()
+    monkeypatch.setenv("TO_SPAWN_PROTOKOLL_PUFFER", str(tmp_path / "protokoll_puffer"))
     return ordner
 
 
@@ -229,7 +230,19 @@ def test_umrechnen_ohne_transkript_meldet_luecke(worktree: Path, tmp_path: Path)
 
 
 def test_lernstoff_und_tabelle_nutzen_spitzen_kontext(worktree: Path, tmp_path: Path) -> None:
-    bau_log.schreibe(worktree, TICKET, "auftrag", schaetzung_k=60, umfang="Bau-Log Token-Anzeige")
+    bau_log.schreibe(
+        "auftrag",
+        repo=worktree,
+        ticket=TICKET,
+        wer="bau",
+        was="Bau-Log Token-Anzeige",
+        session=f"test-{TICKET}",
+        commit="-",
+        grund="Test-Auftrag",
+        kontextstand=0,
+        schaetzung_k=60,
+        umfang="Bau-Log Token-Anzeige",
+    )
     _stop(worktree, tmp_path)
 
     text = bau_log.lernstoff(worktree, grenze_k=200)
@@ -244,7 +257,7 @@ def test_lernstoff_und_tabelle_nutzen_spitzen_kontext(worktree: Path, tmp_path: 
 
 
 def test_umrechnen_haengt_nur_an_alte_zeilen_bleiben(worktree: Path, tmp_path: Path) -> None:
-    """Kein Umschreiben: ein gleichzeitig anhängender Hook verliert keine Zeile."""
+    """Kein Umschreiben: alte Datei bleibt unberührt, Nachtrag landet im Ereignis-Protokoll."""
     _alte_zeile(worktree)
     datei = worktree / bau_log.LAUF_ORDNER / f"{TICKET}.jsonl"
     vorher = datei.read_text(encoding="utf-8")
@@ -254,9 +267,9 @@ def test_umrechnen_haengt_nur_an_alte_zeilen_bleiben(worktree: Path, tmp_path: P
         tmp_path,
     )
     assert ergebnis.returncode == 0, ergebnis.stderr
-    nachher = datei.read_text(encoding="utf-8")
-    assert nachher.startswith(vorher), "alte Zeilen müssen unverändert bleiben"
-    neu = [json.loads(z) for z in nachher[len(vorher) :].splitlines() if z.strip()]
+    assert datei.read_text(encoding="utf-8") == vorher, "alte Datei darf nie umgeschrieben werden"
+    gelesen = bau_log.lese(worktree, TICKET)
+    neu = [z for z in gelesen if z.get("umgerechnet_aus")]
     assert len(neu) == 1 and neu[0]["kontext"] == {"spitze": 180199, "aufrufe": 61}
     assert neu[0]["tokens"] == ALTE_ZEILE["tokens"] and neu[0]["dauer_s"] == 2887
     assert not list(datei.parent.glob("*.tmp"))
@@ -274,9 +287,15 @@ def test_gemischtes_log_ohne_teilwert(worktree: Path, tmp_path: Path) -> None:
 def test_sessions_spalte_zeigt_einzelspitze_bei_staffel(worktree: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     for kennung in ("staffel-1", "staffel-2"):
         bau_log.schreibe(
-            worktree,
-            TICKET,
             "session_ende",
+            repo=worktree,
+            ticket=TICKET,
+            wer="hook-stop",
+            was="Session beendet.",
+            session=kennung,
+            commit="-",
+            grund="Test-Staffel",
+            kontextstand=150.0,
             session_id=kennung,
             tokens={"gesamt": 9_000_000},
             kontext={"spitze": 150_000, "aufrufe": 40},

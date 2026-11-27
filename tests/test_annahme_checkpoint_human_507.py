@@ -64,13 +64,51 @@ def test_keine_zweite_annahme_nach_ruecknahme_ohne_aufseher_zustand(
 
 
 def _bau_log_zurueckdatieren(welt: dict[str, Path], minuten: float) -> None:  # noqa: F811
-    """Die Uhr läuft weiter: alle Bau-Log-Zeilen von #902 liegen ``minuten`` früher."""
-    datei = welt["repo"] / ".to-spawn" / "bau_log" / "902.jsonl"
-    zeilen = [json.loads(z) for z in datei.read_text(encoding="utf-8").splitlines() if z.strip()]
+    """Die Uhr läuft weiter: alle Bau-Log-Zeilen von #902 auf ``origin/protokoll`` liegen ``minuten`` früher."""
+    import os
+    import subprocess
+
+    from to_spawn import bau_log
+
+    repo = welt["repo"]
+    zeilen = bau_log.lese(repo, "902")
+    assert zeilen, "Erwartete Bau-Log-Zeilen für #902 auf origin/protokoll fehlen"
     for z in zeilen:
-        zeit = datetime.fromisoformat(str(z["ts"]))
-        z["ts"] = (zeit - timedelta(minutes=minuten)).isoformat()
-    datei.write_text("".join(json.dumps(z, ensure_ascii=False) + "\n" for z in zeilen), encoding="utf-8")
+        schluessel = "zeit" if "zeit" in z else "ts"
+        zeit = datetime.fromisoformat(str(z[schluessel]))
+        z[schluessel] = (zeit - timedelta(minutes=minuten)).isoformat()
+    inhalt = "".join(json.dumps(z, ensure_ascii=False) + "\n" for z in zeilen)
+    # Per Git-Plumbing auf origin/protokoll zurückdatieren, ohne lokale Bau-Log-Dateien anzulegen.
+    tmp_blob = welt["tmp"] / "backdate_902.jsonl"
+    tmp_blob.write_text(inhalt, encoding="utf-8", newline="\n")
+    blob_sha = subprocess.check_output(["git", "hash-object", "-w", str(tmp_blob)], cwd=str(repo), text=True).strip()
+    idx = welt["tmp"] / "backdate_index"
+    idx.unlink(missing_ok=True)
+    env = {
+        **os.environ,
+        "GIT_INDEX_FILE": str(idx),
+        "GIT_AUTHOR_NAME": "Test",
+        "GIT_AUTHOR_EMAIL": "t@e",
+        "GIT_COMMITTER_NAME": "Test",
+        "GIT_COMMITTER_EMAIL": "t@e",
+    }
+    subprocess.run(
+        ["git", "update-index", "--add", "--cacheinfo", f"100644,{blob_sha},bau_log/902.jsonl"],
+        cwd=str(repo),
+        env=env,
+        check=True,
+    )
+    tree_sha = subprocess.check_output(["git", "write-tree"], cwd=str(repo), env=env, text=True).strip()
+    commit_sha = subprocess.check_output(
+        ["git", "-c", "commit.gpgsign=false", "commit-tree", tree_sha, "-m", "backdate 902"],
+        cwd=str(repo),
+        env=env,
+        text=True,
+    ).strip()
+    subprocess.run(
+        ["git", "push", "-q", "--force", "origin", f"{commit_sha}:refs/heads/protokoll"], cwd=str(repo), check=True
+    )
+    subprocess.run(["git", "update-ref", "refs/remotes/origin/protokoll", commit_sha], cwd=str(repo), check=True)
 
 
 def test_keine_zweite_annahme_77_min_nach_der_ersten(welt: dict[str, Path]) -> None:  # noqa: F811

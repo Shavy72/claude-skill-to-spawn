@@ -87,8 +87,18 @@ def test_aufseher_stand_und_einrichtung_nutzen_log_ort_fuer(tmp_path: Path) -> N
     (repo / ".to-spawn" / "config.json").write_text(
         json.dumps({"worktree_basis": wt_basis.as_posix()}), encoding="utf-8"
     )
-    wt = wt_basis / "wt-901"
-    bau_log.schreibe(wt, 901, "entscheidung", text="Probe-Text")
+    bau_log.schreibe(
+        "entscheidung",
+        repo=repo,
+        ticket=901,
+        wer="bau",
+        was="Probe-Text",
+        session="s-901",
+        commit="-",
+        grund="Test",
+        kontextstand=0,
+        text="Probe-Text",
+    )
     lage = aufseher_stand._log_lage(901, repo)
     assert lage is not None and lage[2] == "Probe-Text"
 

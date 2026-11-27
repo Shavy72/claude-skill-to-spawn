@@ -631,21 +631,36 @@ def agy_bau_log_nachtragen(
         dauer_s = max(0, int(datetime.now(UTC).timestamp() - start_ts))
     bestehende = bau_log.lese(ziel, ticket, hauptbaum=repo if ziel != repo else None)
     hat_start = any(z.get("typ") == "session_start" and z.get("session_id") == sid for z in bestehende)
+    commit_wert = bau_log.git_kopf_kurz(ziel, ticket)
     if not hat_start:
         bau_log.schreibe(
-            ziel,
-            ticket,
             "session_start",
+            repo=ziel,
+            ticket=ticket,
+            wer="agy",
+            was=f"agy-Runde {runde} gestartet",
+            session=sid,
+            commit=commit_wert,
+            grund=f"agy-Session Staffel {runde}",
+            kontextstand=0,
             session_id=sid,
             modell=verwendetes_modell,
             effort=effort,
             staffel=runde,
             runner="agy",
         )
+    spitze = daten["kontext"].get("spitze") if isinstance(daten.get("kontext"), dict) else None
+    kontextstand = round(spitze / 1000, 1) if isinstance(spitze, (int, float)) and spitze > 0 else 0
     return bau_log.schreibe(
-        ziel,
-        ticket,
         "session_ende",
+        repo=ziel,
+        ticket=ticket,
+        wer="agy",
+        was=f"agy-Runde {runde} beendet",
+        session=sid,
+        commit=commit_wert,
+        grund=f"agy-Session Staffel {runde} beendet",
+        kontextstand=kontextstand,
         session_id=sid,
         modell=verwendetes_modell,
         tokens=daten["tokens"],

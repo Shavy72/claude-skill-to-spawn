@@ -11,11 +11,8 @@ Schreib-Tür ``schreibe(typ, **felder)`` für das gemeinsame Ereignis-Protokoll:
   Offline-Puffer ohne Fehler an den Aufrufer.
 - Leser (``lese``, ``zusammenfassung``, ``alle_tickets``, ``hat_log``,
   ``letzter_session_start``, ``kontext_aktuell_k``) lesen primär aus
-  ``origin/protokoll`` und lokalem Puffer (#903).
-
-Alt-Kompatibilität für historische lokale Dateien/Aufrufer (Hooks, ``eintrag``,
-``vorfall`` und bestehende Tests) bleibt übergangsweise bestehen, bis alle
-Alt-Aufrufer und Alt-Tests umgestellt sind.
+  ``origin/protokoll`` und lokalem Puffer (#903). Historische lokale Dateien
+  werden nur noch lesend einbezogen; lokale Schreibwege existieren nicht mehr.
 """
 
 from __future__ import annotations
@@ -35,7 +32,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, overload
+from typing import Any
 
 from . import config, sperre
 
@@ -122,6 +119,8 @@ TYPEN = (
     "start_warnung",
     # Aufseher (#448): eigenes Fehl-Reopen zurückgenommen (Feld ``text``).
     "ruecknahme",
+    # Aufseher: Review-Meldung „Mensch nötig“ (Felder ``fingerprint``, ``fix_runde``).
+    "mensch_noetig",
     # Aufsicht (#436): Kontext an der Handoff-Grenze → Aufseher-Ablösung über respawn
     # (Felder ``kontext``, ``grenze``, ``exit``, ``zeile``; ``exit`` null = nicht versucht).
     "aufseher_abloesung",
@@ -155,17 +154,17 @@ _WT_MUSTER = re.compile(r"wt-(\d+)")
 
 
 def log_pfad(repo: Path, ticket: str | int) -> Path:
-    """Versionierte Datei (schreibt nur ``eintrag``)."""
+    """Historische versionierte Datei (nur noch lesend für Altbestand)."""
     return log_ordner(repo) / f"{ticket}.jsonl"
 
 
 def log_ordner(repo: Path) -> Path:
-    """Ordner der versionierten Logs aus ``pfade.bau_log`` (fehlt er: Vorgabe), unter ``repo`` wie übergeben."""
+    """Ordner historischer versionierter Logs aus ``pfade.bau_log`` (fehlt er: Vorgabe), unter ``repo`` wie übergeben."""
     return config.pfad(config.Konfig(config.lade(repo), repo / config.KONFIG_PFAD), "bau_log")
 
 
 def log_im_repo(repo: Path, ticket: str | int) -> str:
-    """Versionierte Datei als Repo-Pfad (``/``-getrennt) für ``git show`` und Texte an den Aufseher.
+    """Historische Datei als Repo-Pfad (``/``-getrennt) für ``git show`` und Hinweise.
 
     Liegt ``pfade.bau_log`` außerhalb des Repos, kommt der absolute Pfad (``git show`` findet ihn dann nicht).
     """
@@ -177,7 +176,7 @@ def log_im_repo(repo: Path, ticket: str | int) -> str:
 
 
 def lauf_pfad(repo: Path, ticket: str | int) -> Path:
-    """Unversionierte Laufdatei (schreiben Hooks und Starter)."""
+    """Historische unversionierte Laufdatei (nur noch lesend für Altbestand)."""
     return repo / LAUF_ORDNER / f"{ticket}.jsonl"
 
 
@@ -309,15 +308,13 @@ def log_rueckfall() -> Path | None:
 
 
 def log_repo(fallback: Path | None = None, *, versioniert: bool = False) -> Path | None:
-    """Wohin Hooks und ``eintrag`` schreiben (#204).
+    """Ziel-Repo für Ereignis-Protokoll-Aufrufe aus Hooks, ``eintrag`` und Aufseher (#204, #903).
 
     ``TO_SPAWN_LOG_REPO`` gesetzt (setzt ``bau.py`` auf den Ticket-Worktree) → genau
     dieser Ordner, wenn er existiert. Fehlt er (noch nicht angelegt oder schon vom
-    Launcher gelöscht), gilt für die unversionierte Laufdatei ``.to-spawn/bau_log/``
-    der Hauptbaum aus :func:`log_rueckfall` (#257) — dort ist der Ordner per
-    ``.gitignore`` unversioniert und stört keinen ``git pull``. ``versioniert=True``
-    (nur ``eintrag``, schreibt ``docs/agents/bau_log/``) weicht nie aus: eine
-    unversionierte Datei dort blockiert später jeden ``git pull`` im Hauptbaum → ``None``.
+    Launcher gelöscht), gilt ohne ``versioniert=True`` der Hauptbaum aus
+    :func:`log_rueckfall` (#257); mit ``versioniert=True`` (z. B. ``eintrag`` ohne
+    vorhandenes Ziel) bleibt es bei ``None``.
     Ohne Variable gilt ``fallback`` bzw. die Git-Wurzel des aktuellen Ordners.
     """
     ziel = os.environ.get("TO_SPAWN_LOG_REPO", "").strip()
@@ -354,15 +351,6 @@ def ticket_aus_umgebung(cwd: Path | None = None) -> str | None:
 
 def jetzt() -> str:
     return datetime.now(UTC).astimezone().isoformat(timespec="seconds")
-
-
-def _neue_zeile(ticket: str | int, typ: str, felder: dict[str, Any]) -> dict[str, Any]:
-    if typ not in TYPEN:
-        log.warning("Unbekannter Zeilen-Typ %r — wird trotzdem geschrieben.", typ)
-    zeile: dict[str, Any] = {"ts": jetzt(), "typ": typ, "ticket": str(ticket)}
-    bleibt = NULL_FELDER.get(typ, frozenset())
-    zeile.update({k: v for k, v in felder.items() if v is not None or k in bleibt})
-    return zeile
 
 
 def _haenge_an(datei: Path, rohzeilen: Iterable[str]) -> None:
@@ -1002,40 +990,22 @@ def spuele(repo: Path | None = None, *, puffer_ordner: Path | None = None) -> bo
     return _schiebe_puffer(puffer, ziel_repo)
 
 
-@overload
-def schreibe(typ: str, /, **felder: Any) -> dict[str, Any]: ...
-
-
-@overload
-def schreibe(repo: Path, ticket: str | int, typ: str, /, **felder: Any) -> dict[str, Any]: ...
-
-
-def schreibe(*args: Any, **felder: Any) -> dict[str, Any]:
-    """Einzige Schreib-Tür für das Ereignis-Protokoll: ``schreibe(typ, **felder)`` (#902).
+def schreibe(typ: str | None = None, /, **felder: Any) -> dict[str, Any]:
+    """Einzige Schreib-Tür für das Ereignis-Protokoll: ``schreibe(typ, **felder)`` (#902, #903).
 
     Prüft alle Pflichtfelder (``zeit``, ``ticket``, ``wer``, ``was``, ``session``,
     ``commit``, ``grund``, ``kontextstand``), sperrt lokal über :mod:`to_spawn.sperre`,
     puffert unter ``~/.local/state/to-spawn/protokoll`` (nie im Worktree) und schiebt
     gebündelt per Git-Plumbing auf ``protokoll`` (mit Rebase/Retry bei Konflikt und
     Offline-Puffer ohne Fehler an den Aufrufer).
-
-    Übergangsweise (bis #903) wird der alte 3-Argumente-Aufruf
-    ``schreibe(repo, ticket, typ, **felder)`` weiter an die lokale Laufdatei geleitet.
     """
-    if len(args) == 3 and isinstance(args[0], (Path, os.PathLike)):
-        repo = Path(args[0])
-        ticket = args[1]
-        typ = str(args[2])
-        zeile = _neue_zeile(ticket, typ, felder)
-        _haenge_an(lauf_pfad(repo, ticket), [json.dumps(zeile, ensure_ascii=False)])
-        return zeile
-
-    if len(args) == 1:
-        typ_wert = args[0]
-    elif len(args) == 0 and "typ" in felder:
-        typ_wert = felder.pop("typ")
+    if typ is None:
+        if "typ" in felder:
+            typ_wert = felder.pop("typ")
+        else:
+            raise TypeError("schreibe() erwartet schreibe(typ, **felder).")
     else:
-        raise TypeError("schreibe() erwartet schreibe(typ, **felder) oder alt schreibe(repo, ticket, typ, **felder).")
+        typ_wert = typ
 
     repo_vorgabe = felder.pop("repo", None) if isinstance(felder.get("repo"), (Path, os.PathLike)) else None
     puffer_vorgabe = felder.pop("puffer_ordner", None)
@@ -1523,44 +1493,6 @@ def pflegen(
         return letztes
 
 
-def _laufzeilen(repo: Path, ticket: str | int, hauptbaum: Path | None) -> list[str]:
-    """Rohzeilen der Laufdatei im ``repo`` plus der Rückfall-Laufdatei im ``hauptbaum`` (#257)."""
-    zeilen = rohzeilen(lauf_pfad(repo, ticket))
-    if hauptbaum is not None and hauptbaum.resolve() != repo.resolve():
-        zeilen += rohzeilen(lauf_pfad(hauptbaum, ticket))
-    return zeilen
-
-
-def eintrag_schreiben(
-    repo: Path, ticket: str | int, typ: str, *, hauptbaum: Path | None = None, **felder: Any
-) -> dict[str, Any]:
-    """Nur für den CLI-Befehl ``eintrag``: fehlende Laufdatei-Zeilen und die neue
-    Zeile an die versionierte Datei anhängen (danach committet die Session sie).
-    ``hauptbaum`` = Ort der Rückfall-Laufdatei (Zeilen vor dem Worktree, #257)."""
-    zeile = _neue_zeile(ticket, typ, felder)
-    fest = log_pfad(repo, ticket)
-    fehlend = _fehlende(rohzeilen(fest), _laufzeilen(repo, ticket, hauptbaum))
-    if fehlend:
-        log.info("Bau-Log #%s: %d Zeile(n) aus der Laufdatei übertragen.", ticket, len(fehlend))
-    _haenge_an(fest, [*fehlend, json.dumps(zeile, ensure_ascii=False)])
-    return zeile
-
-
-def spiegel_in_laufdatei(repo: Path, ticket: str | int, zeile: dict[str, Any]) -> None:
-    """Eine schon versionierte Zeile zusätzlich in die Laufdatei legen (#286).
-
-    Der Aufseher liest die versionierte Datei über ``git show origin/<Hauptzweig>`` —
-    bis Commit und Push sieht er die Zeile nicht. Die Laufdatei liest er direkt von
-    der Platte. Weil die Rohzeile identisch ist, zählt :func:`lese` sie trotzdem nur
-    einmal, und ``eintrag`` überträgt sie später nicht noch einmal.
-    """
-    roh = json.dumps(zeile, ensure_ascii=False)
-    lauf = lauf_pfad(repo, ticket)
-    if roh in rohzeilen(lauf):
-        return
-    _haenge_an(lauf, [roh])
-
-
 def _parse_rohzeilen(roh_liste: Iterable[str], quelle: str) -> list[tuple[str, dict[str, Any]]]:
     paare: list[tuple[str, dict[str, Any]]] = []
     for roh in roh_liste:
@@ -1578,8 +1510,13 @@ def _lese_datei(datei: Path) -> list[tuple[str, dict[str, Any]]]:
     return _parse_rohzeilen(rohzeilen(datei), str(datei))
 
 
+def zeitstempel(zeile: dict[str, Any]) -> Any:
+    """Zeitstempel einer Bau-Log-/Protokoll-Zeile (``zeit`` oder historisch ``ts``)."""
+    return zeile.get("zeit") or zeile.get("ts")
+
+
 def _sortier_zeit(zeile: dict[str, Any]) -> datetime:
-    return _zeitpunkt(zeile.get("zeit") or zeile.get("ts")) or datetime.min.replace(tzinfo=UTC)
+    return _zeitpunkt(zeitstempel(zeile)) or datetime.min.replace(tzinfo=UTC)
 
 
 def lese(

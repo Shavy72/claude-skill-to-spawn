@@ -67,10 +67,9 @@ def _labels(welt: dict[str, Path], nummer: str) -> list[str]:
 
 
 def _bau_log(welt: dict[str, Path], nummer: str) -> list[dict]:
-    datei = welt["repo"] / ".to-spawn" / "bau_log" / f"{nummer}.jsonl"
-    if not datei.is_file():
-        return []
-    return [json.loads(z) for z in datei.read_text(encoding="utf-8").splitlines() if z.strip()]
+    from to_spawn import bau_log
+
+    return bau_log.lese(welt["repo"], nummer)
 
 
 def _entscheidungen(welt: dict[str, Path]) -> str:

@@ -460,44 +460,77 @@ def test_weg_aufseher_wiedereroeffnen_schliessen_uebergabe_idempotent(
 
 
 def test_grep_kein_direkter_lokaler_bau_log_schreibweg() -> None:
-    """Kein Modul außerhalb von ``bau_log.py`` schreibt direkt in ``bau_log``-Dateien,
-    und Aufpasser/Spawn/Aufseher-Pflichtereignisse nutzen ausschließlich ``bau_log.schreibe()``."""
+    """Kein Modul in ``to_spawn/`` oder ``skripte/`` (inkl. ``bau_log.py``) schreibt noch lokal in
+    ``.to-spawn/bau_log`` oder ``docs/agents/bau_log`` oder nutzt die alte 3-Argumente-API (#903)."""
     direkt_schreiben = re.compile(r"\.(?:open\([^)]*['\"][aw]|write_text\(|write_bytes\()")
     bau_log_pfad_ref = re.compile(r"(?:\.to-spawn/bau_log|docs/agents/bau_log|lauf_pfad\(|log_pfad\()")
     verstoesse: list[str] = []
+    alt_schreibe_verstoesse: list[str] = []
+    alt_helfer_verstoesse: list[str] = []
+    pflicht_zaehler: dict[str, int] = {
+        "to_spawn/aufpasser.py": 0,
+        "to_spawn/spawn.py": 0,
+        "to_spawn/befund.py": 0,
+        "to_spawn/leiter.py": 0,
+    }
 
     for ordner in (SKILL / "to_spawn", SKILL / "skripte"):
         for datei in sorted(ordner.rglob("*.py")):
             rel = datei.relative_to(SKILL).as_posix()
-            if rel == "to_spawn/bau_log.py":
-                continue
             text = datei.read_text(encoding="utf-8")
             for nr, zeile in enumerate(text.splitlines(), 1):
                 if bau_log_pfad_ref.search(zeile) and direkt_schreiben.search(zeile):
                     verstoesse.append(f"{rel}:{nr}: {zeile.strip()}")
-    assert verstoesse == [], "Direkter Schreibzugriff auf lokale Bau-Log-Dateien gefunden:\n" + "\n".join(verstoesse)
+            if "eintrag_schreiben" in text:
+                alt_helfer_verstoesse.append(f"{rel}: eintrag_schreiben")
+            if "spiegel_in_laufdatei" in text:
+                alt_helfer_verstoesse.append(f"{rel}: spiegel_in_laufdatei")
 
-    # Pflicht-Ereignis-Module dürfen weder alte lokale Schreibfunktionen noch 3-Arg-schreibe nutzen.
-    for rel in ("to_spawn/aufpasser.py", "to_spawn/spawn.py", "to_spawn/befund.py", "to_spawn/leiter.py"):
-        pfad = SKILL / rel
-        quelltext = pfad.read_text(encoding="utf-8")
-        assert "bau_log.eintrag_schreiben" not in quelltext, rel
-        assert "bau_log.spiegel_in_laufdatei" not in quelltext, rel
-        baum = ast.parse(quelltext, filename=rel)
-        schreibe_aufrufe = 0
-        for knoten in ast.walk(baum):
-            if (
-                isinstance(knoten, ast.Call)
-                and isinstance(knoten.func, ast.Attribute)
-                and knoten.func.attr == "schreibe"
-                and isinstance(knoten.func.value, ast.Name)
-                and knoten.func.value.id == "bau_log"
-            ):
-                schreibe_aufrufe += 1
-                assert len(knoten.args) <= 1, (
-                    f"{rel}:{knoten.lineno}: alter 3-Argumente-Aufruf von bau_log.schreibe() gefunden"
-                )
-        assert schreibe_aufrufe >= 1, f"{rel} schreibt kein Pflicht-Ereignis über bau_log.schreibe()"
+            baum = ast.parse(text, filename=rel)
+            for knoten in ast.walk(baum):
+                if isinstance(knoten, ast.Call):
+                    # Kein 3-Arg-Aufruf von bau_log.schreibe(...) in irgendeinem Produktivmodul.
+                    if (
+                        isinstance(knoten.func, ast.Attribute)
+                        and knoten.func.attr == "schreibe"
+                        and isinstance(knoten.func.value, ast.Name)
+                        and knoten.func.value.id == "bau_log"
+                    ):
+                        if rel in pflicht_zaehler:
+                            pflicht_zaehler[rel] += 1
+                        if len(knoten.args) > 1:
+                            alt_schreibe_verstoesse.append(
+                                f"{rel}:{knoten.lineno}: alter {len(knoten.args)}-Argumente-Aufruf von bau_log.schreibe()"
+                            )
+                    # Auch in to_spawn/bau_log.py selbst darf _haenge_an nie auf lauf_pfad/log_pfad zielen.
+                    if (
+                        rel == "to_spawn/bau_log.py"
+                        and isinstance(knoten.func, ast.Name)
+                        and knoten.func.id == "_haenge_an"
+                        and knoten.args
+                    ):
+                        ziel_src = ast.unparse(knoten.args[0])
+                        if any(wort in ziel_src for wort in ("lauf_pfad", "log_pfad", "LAUF_ORDNER", "LOG_ORDNER")):
+                            verstoesse.append(f"{rel}:{knoten.lineno}: _haenge_an({ziel_src})")
+
+    assert verstoesse == [], "Direkter Schreibzugriff auf lokale Bau-Log-Dateien gefunden:\n" + "\n".join(verstoesse)
+    assert alt_helfer_verstoesse == [], "Verbotene lokale Bau-Log-Schreibhelfer gefunden:\n" + "\n".join(
+        alt_helfer_verstoesse
+    )
+    assert alt_schreibe_verstoesse == [], "Alte 3-Argumente-Aufrufe von bau_log.schreibe() gefunden:\n" + "\n".join(
+        alt_schreibe_verstoesse
+    )
+    for rel, anzahl in pflicht_zaehler.items():
+        assert anzahl >= 1, f"{rel} schreibt kein Pflicht-Ereignis über bau_log.schreibe()"
+
+    # bau_log.py selbst darf keine lokale 3-Arg-Überladung in schreibe() mehr enthalten.
+    bau_log_text = (SKILL / "to_spawn" / "bau_log.py").read_text(encoding="utf-8")
+    bau_log_baum = ast.parse(bau_log_text, filename="to_spawn/bau_log.py")
+    schreibe_defs = [k for k in bau_log_baum.body if isinstance(k, ast.FunctionDef) and k.name == "schreibe"]
+    assert all(len(fn.args.posonlyargs) + len(fn.args.args) <= 1 for fn in schreibe_defs), (
+        "to_spawn/bau_log.py enthält noch eine lokale Mehr-Argumente-Überladung für schreibe()"
+    )
+    assert "lauf_pfad(repo, ticket)" not in ast.get_source_segment(bau_log_text, schreibe_defs[-1])  # type: ignore[operator]
 
     # aufseher_stand.py greift nicht direkt auf lokale bau_log-Pfade zu.
     stand_text = (SKILL / "to_spawn" / "aufseher_stand.py").read_text(encoding="utf-8")
@@ -505,6 +538,64 @@ def test_grep_kein_direkter_lokaler_bau_log_schreibweg() -> None:
     assert "docs/agents/bau_log" not in stand_text
     assert "bau_log.lauf_pfad" not in stand_text
     assert "bau_log.log_pfad" not in stand_text
+
+    # Rest-Leser (waechter_takt.py und capo.py tick) nutzen bau_log.lese statt laufdateien()/log_vom_ref.
+    wt_takt_text = (SKILL / "to_spawn" / "waechter_takt.py").read_text(encoding="utf-8")
+    assert "capo.laufdateien(" not in wt_takt_text
+    assert "capo.log_vom_ref(" not in wt_takt_text
+    capo_text = (SKILL / "to_spawn" / "capo.py").read_text(encoding="utf-8")
+    capo_baum = ast.parse(capo_text, filename="to_spawn/capo.py")
+    tick_fn = next(k for k in capo_baum.body if isinstance(k, ast.FunctionDef) and k.name == "tick")
+    tick_src = ast.get_source_segment(capo_text, tick_fn) or ""
+    assert "laufdateien(" not in tick_src, "capo.tick liest noch direkt über laufdateien()"
+    assert "log_vom_ref(" not in tick_src, "capo.tick liest noch direkt über log_vom_ref()"
+
+
+def test_alter_lokaler_schreibweg_entfernt_und_restleser_lesen_origin_protokoll(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Alte lokale Schreib-API ist entfernt; Vorfall/Deploy/Warten/Wächter schreiben über
+    ``origin/protokoll``, und ``waechter_takt._zeilen`` liest im zweiten Klon ohne lokale Dateien (#903)."""
+    from to_spawn import deploy_status, vorfall, waechter_lauf, waechter_takt, warten
+
+    bare, klon_a = _bare_und_klon(tmp_path, "klon_a")
+    _, klon_b = _bare_und_klon(tmp_path, "klon_b")
+    monkeypatch.setenv("TO_SPAWN_PROTOKOLL_PUFFER", str(tmp_path / "puffer_a"))
+
+    assert not hasattr(bau_log, "eintrag_schreiben")
+    assert not hasattr(bau_log, "spiegel_in_laufdatei")
+    with pytest.raises(TypeError):
+        bau_log.schreibe(klon_a, TICKET, "start")  # type: ignore[call-overload]
+
+    vorfall.schreibe(
+        klon_a,
+        TICKET,
+        klasse="skill",
+        symptom="Probe-Symptom",
+        ursache="Probe-Ursache",
+        loesung="Probe-Lösung",
+    )
+    deploy_status.uebernimm(
+        klon_a,
+        str(TICKET),
+        [{"lauf": "903-1", "phase": "pytest", "sek": 5, "marker": "Gate grün"}],
+    )
+    warten._blockiert_melden(klon_a, TICKET, versuche=3, grund="Abbruch", frei_mib=2048)
+    waechter_lauf._log_zeile(klon_a, TICKET, "waechter_modell", von="opus", nach="sonnet", grund="Limit")
+
+    _keine_lokalen_bau_logs(klon_a)
+    remote = _protokoll_zeilen(bare, TICKET)
+    assert {z["typ"] for z in remote} >= {"vorfall", "deploy_phase", "blockiert", "waechter_modell"}
+    for eintrag in remote:
+        for feld in bau_log.PFLICHTFELDER:
+            assert feld in eintrag, (feld, eintrag)
+
+    # Zweiter Klon mit leerem Puffer: waechter_takt._zeilen liest aus origin/protokoll.
+    monkeypatch.setenv("TO_SPAWN_PROTOKOLL_PUFFER", str(tmp_path / "puffer_b"))
+    _keine_lokalen_bau_logs(klon_b)
+    gelesen = waechter_takt._zeilen(klon_b, "origin/main", TICKET, str(tmp_path / "wts"))
+    assert {z["typ"] for z in gelesen} >= {"vorfall", "deploy_phase", "blockiert", "waechter_modell"}
+    _keine_lokalen_bau_logs(klon_b)
 
 
 # --- 8. Regression #903: monkeypatch auf aufpasser.time.sleep darf subprocess nicht treffen ---

@@ -104,11 +104,13 @@ def test_zusatz_nicht_utf8_warnt_und_startet(tmp_path: Path) -> None:
 
 
 def test_start_warnungen_stehen_im_bau_log(tmp_path: Path) -> None:
+    from to_spawn import bau_log
+
     repo = _repo(tmp_path, zusatz_datei="../draussen.md", alte_kopie=True)
     lauf = _lauf(repo, tmp_path, dry_run=False)
     assert lauf.returncode == 0, lauf.stderr
-    datei = repo / ".to-spawn" / "bau_log" / "7.jsonl"
-    zeilen = [json.loads(z) for z in datei.read_text(encoding="utf-8").splitlines() if z.strip()]
+    assert not (repo / ".to-spawn" / "bau_log" / "7.jsonl").exists()
+    zeilen = bau_log.lese(repo, "7")
     warnungen = [z for z in zeilen if z["typ"] == "start_warnung"]
     texte = " | ".join(z["text"] for z in warnungen)
     assert "wird ignoriert" in texte, texte
@@ -116,11 +118,14 @@ def test_start_warnungen_stehen_im_bau_log(tmp_path: Path) -> None:
 
 
 def test_probelauf_schreibt_kein_bau_log(tmp_path: Path) -> None:
+    from to_spawn import bau_log
+
     repo = _repo(tmp_path, zusatz_datei="../draussen.md", alte_kopie=True)
     lauf = _lauf(repo, tmp_path)
     assert lauf.returncode == 0, lauf.stderr
     assert "wird ignoriert" in lauf.stderr
     assert not (repo / ".to-spawn" / "bau_log").exists()
+    assert bau_log.lese(repo, "7") == []
 
 
 # --- Punkt 6: Reihenfolge der Ersetzung -----------------------------------------------------

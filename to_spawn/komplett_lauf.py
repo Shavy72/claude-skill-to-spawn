@@ -168,8 +168,20 @@ def _ablehnung_ablegen(spec: int | None, weg: str) -> None:
     if repo is None:
         return
     try:
-        bau_log.schreibe(repo, ticket, bau_log.KOMPLETT_ABGELEHNT, spec=spec, weg=weg)
-    except OSError as fehler:
+        bau_log.schreibe(
+            bau_log.KOMPLETT_ABGELEHNT,
+            repo=repo,
+            ticket=ticket,
+            wer="komplett_lauf",
+            was=f"Komplett-Prüfung aus Bau-Ticket abgelehnt ({weg})",
+            session=f"bau-{ticket}",
+            commit=bau_log.git_kopf_kurz(repo, ticket),
+            grund=f"TO_SPAWN_TICKET gesetzt ({weg})",
+            kontextstand=0,
+            spec=spec,
+            weg=weg,
+        )
+    except (OSError, ValueError, TimeoutError) as fehler:
         log.warning("komplett_lauf: Ablehnung nicht ins Bau-Log #%s: %s", ticket, fehler)
 
 

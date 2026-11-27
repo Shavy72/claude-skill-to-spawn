@@ -94,6 +94,7 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     _git(arbeit, "commit", "-m", "Start")
     for name in ("TO_SPAWN_REPO", "TO_SPAWN_TICKET", "TO_SPAWN_LOG_REPO", "TO_SPAWN_START"):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("TO_SPAWN_PROTOKOLL_PUFFER", str(tmp_path / "protokoll_puffer"))
     monkeypatch.chdir(arbeit)
     return arbeit
 

@@ -850,8 +850,10 @@ def test_eintrag_schreibt_blockiert_und_entscheidung(tmp_path: Path) -> None:
             check=False,
         )
         assert fertig.returncode == 0, fertig.stdout + fertig.stderr
-    datei = ziel / "docs" / "agents" / "bau_log" / "902.jsonl"
-    zeilen = [json.loads(z) for z in datei.read_text(encoding="utf-8").splitlines()]
+    from to_spawn import bau_log
+
+    assert not (ziel / "docs" / "agents" / "bau_log" / "902.jsonl").exists()
+    zeilen = bau_log.lese(ziel, "902")
     assert zeilen[0]["typ"] == "blockiert" and zeilen[0]["grund"] == "Handy aus"
     assert (zeilen[1]["frage"], zeilen[1]["wahl"], zeilen[1]["grund"]) == (
         "Welche Tabelle",
@@ -888,8 +890,10 @@ def test_eintrag_blockiert_mit_frage_wahl_grund(tmp_path: Path) -> None:
         check=False,
     )
     assert fertig.returncode == 0, fertig.stdout + fertig.stderr
-    datei = ziel / "docs" / "agents" / "bau_log" / "903.jsonl"
-    zeile = json.loads(datei.read_text(encoding="utf-8").splitlines()[0])
+    from to_spawn import bau_log
+
+    assert not (ziel / "docs" / "agents" / "bau_log" / "903.jsonl").exists()
+    zeile = bau_log.lese(ziel, "903")[0]
     assert (zeile["typ"], zeile["ticket"]) == ("blockiert", "903")
     assert (zeile["frage"], zeile["wahl"], zeile["grund"]) == ("Darf ich löschen", "warte", "Klasse 3")
 

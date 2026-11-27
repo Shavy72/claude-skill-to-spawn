@@ -189,8 +189,20 @@ def start_warnung(text: str) -> None:
     if START_WARNUNG_TICKET is None:
         return
     try:
-        bau_log.schreibe(REPO, START_WARNUNG_TICKET, "start_warnung", text=text)
-    except OSError as exc:
+        kurz = text.strip() or "Start-Warnung"
+        bau_log.schreibe(
+            "start_warnung",
+            repo=REPO,
+            ticket=START_WARNUNG_TICKET,
+            wer="bau",
+            was=f"Start-Warnung: {kurz[:120]}",
+            session=f"bau-{START_WARNUNG_TICKET}",
+            commit=bau_log.git_kopf_kurz(REPO, START_WARNUNG_TICKET),
+            grund=kurz,
+            kontextstand=0,
+            text=text,
+        )
+    except (OSError, ValueError, TimeoutError) as exc:
         log.warning("Bau-Log nicht beschreibbar (%s) — Warnung nur im Fenster.", exc)
 
 
@@ -1399,16 +1411,23 @@ def main() -> int:
                     offen = stand_daten is not None and not ticket_zustand.fertig_gebaut(stand_daten)
                 if offen:
                     wt_pfad = Path(worktree_pfad(ticket)).expanduser()
+                    ziel_repo = wt_pfad if wt_pfad.is_dir() else REPO
                     try:
                         bau_log.schreibe(
-                            wt_pfad if wt_pfad.is_dir() else REPO,
-                            ticket,
                             "handoff",
+                            repo=ziel_repo,
+                            ticket=ticket,
+                            wer="bau",
+                            was=f"Handoff geschrieben: {h_pfad.name}",
+                            session=f"bau-{ticket}-staffel-{runde}",
+                            commit=bau_log.git_kopf_kurz(ziel_repo, ticket),
+                            grund=f"Staffel {runde} Übergabe ({h_pfad.name})",
+                            kontextstand=bau_log.kontextstand_aktuell(ziel_repo, ticket),
                             datei=h_pfad.name,
                             staffel=runde,
                             runner="agy",
                         )
-                    except OSError as fehler:
+                    except (OSError, ValueError, TimeoutError) as fehler:
                         log.warning("agy-Handoff-Zeile #%s nicht geschrieben: %s", ticket, fehler)
                     uebergabe = {"handoff": str(h_pfad), "fingerabdruck": h_fp}
         if uebergabe is None:

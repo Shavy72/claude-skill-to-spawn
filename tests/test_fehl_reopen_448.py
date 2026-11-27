@@ -303,7 +303,18 @@ def test_probelauf_schliesst_nichts(
 def test_stand_zeigt_ruecknahme(repo: Path, ordner: Path) -> None:  # noqa: F811
     w = FakeWelt()
     w.ticket(N, zu=True)
-    bau_log.schreibe(repo, N, "ruecknahme", text="Fehl-Reopen zurückgenommen: test_ersetzt")
+    bau_log.schreibe(
+        "ruecknahme",
+        repo=repo,
+        ticket=N,
+        wer="aufseher",
+        was="Fehl-Reopen zurückgenommen",
+        session="capo",
+        commit="-",
+        grund="test_ersetzt",
+        kontextstand=0,
+        text="Fehl-Reopen zurückgenommen: test_ersetzt",
+    )
 
     ausgabe = aufseher_stand.stand(STAND_SPEC, w.quellen(repo), ordner=ordner, alle=True)
 

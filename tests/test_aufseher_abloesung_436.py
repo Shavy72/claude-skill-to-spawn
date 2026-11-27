@@ -10,7 +10,6 @@ Fake-Werkzeug mit virtueller Uhr hinein — wie ``test_respawn_431*.py``.
 from __future__ import annotations
 
 import json
-import os
 import re
 import sys
 import time
@@ -157,6 +156,7 @@ if ziel:
             break
         time.sleep(0.1)
     def _blockiert():
+        import subprocess
         for pfad in filter(None, os.environ.get("FAKE_ENDE_NACH_LOG", "").split(os.pathsep)):
             datei = Path(pfad)
             if not datei.is_file():
@@ -167,8 +167,25 @@ if ziel:
                         return True
                 except ValueError:  # halb geschriebene Zeile
                     continue
+        spec_nr = os.environ.get("FAKE_ENDE_NACH_PROTOKOLL_SPEC", "").strip()
+        if spec_nr:
+            erg = subprocess.run(
+                ["git", "show", f"refs/remotes/origin/protokoll:bau_log/{spec_nr}.jsonl"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+            if erg.returncode == 0:
+                for z in erg.stdout.splitlines():
+                    try:
+                        if json.loads(z).get("typ") == "blockiert":
+                            return True
+                    except ValueError:
+                        continue
         return False
-    while os.environ.get("FAKE_ENDE_NACH_LOG") and time.monotonic() < ende and not _blockiert():
+    while (os.environ.get("FAKE_ENDE_NACH_LOG") or os.environ.get("FAKE_ENDE_NACH_PROTOKOLL_SPEC")) and time.monotonic() < ende and not _blockiert():
         time.sleep(0.1)
     time.sleep(float(os.environ.get("FAKE_NACHLAUF_S", "5")))
     Path(os.environ["FAKE_PROTOKOLL"]).with_suffix(".ende").write_text("regulär")
@@ -584,8 +601,6 @@ def test_abloese_faden_stoppt_bei_session_ende_vor_tippen(tmp_path: Path, monkey
 
 def test_exit_2_ueber_echte_aufsicht_kein_nachfolger(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
     """Befund 4: Aufseher schreibt nichts (Exit 2) → kein Nachfolger, alter läuft weiter, sichtbar."""
-    from to_spawn import bau_log
-
     env = _abloese_welt(welt, monkeypatch)
     env.update(
         {
@@ -596,9 +611,10 @@ def test_exit_2_ueber_echte_aufsicht_kein_nachfolger(welt: dict[str, Path], monk
             # wird er bis dahin von außen beendet, steht die Marke „.beendet“.
             "TO_SPAWN_AUFSICHT_TAKT": "0.5",
             "FAKE_ENDE_NACH_GETIPPT": "4",
-            "FAKE_ENDE_NACH_LOG": os.pathsep.join(
-                str(pfad(welt["repo"], SPEC)) for pfad in (bau_log.log_pfad, bau_log.lauf_pfad)
+            "FAKE_ENDE_NACH_LOG": str(
+                Path(env["HOME"]) / ".local" / "state" / "to-spawn" / "protokoll" / f"{SPEC}.jsonl"
             ),
+            "FAKE_ENDE_NACH_PROTOKOLL_SPEC": SPEC,
             "FAKE_NACHLAUF_S": "3",
             "TO_SPAWN_ABLOESE_WARTE_S": "1",
             "TO_SPAWN_ABLOESE_ABSTAND_S": "1",

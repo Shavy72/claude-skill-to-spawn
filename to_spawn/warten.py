@@ -380,14 +380,19 @@ def _blockiert_melden(
     )
     try:
         bau_log.schreibe(
-            ziel,
-            ticket,
             "blockiert",
+            repo=ziel,
+            ticket=ticket,
+            wer="warten",
+            was=meldung,
+            session=f"warten-{ticket}",
+            commit=bau_log.git_kopf_kurz(ziel, ticket),
             grund=meldung,
+            kontextstand=0,
             versuche=versuche,
             frei_mib=frei_mib,
         )
-    except OSError as fehler:
+    except (OSError, ValueError, TimeoutError) as fehler:
         log.warning("Bau-Log #%s nicht beschreibbar (%s) — blockiert nur in Zustandsdatei.", ticket, fehler)
 
 

@@ -750,11 +750,11 @@ def eintrag_aus_bau_log(ticket: str | int, z: dict[str, Any]) -> dict[str, str]:
     frage, wahl, grund = bau_log.entscheidung_felder(z)
     return {
         "ticket": nummer,
-        "ts": str(z.get("ts", "")),
+        "ts": str(z.get("zeit") or z.get("ts") or ""),
         "wer": "Bau-Session",
         "was": _was(frage, wahl),
         "warum": grund,
-        "beleg": f"Bau-Log #{nummer} {z.get('ts', '')}".rstrip(),
+        "beleg": f"Bau-Log #{nummer} {z.get('zeit') or z.get('ts') or ''}".rstrip(),
         "ueberholt_durch": str(z.get("ueberholt_durch") or ""),  # #529: Rundschau-Grafik
     }
 
@@ -765,7 +765,10 @@ def _log_entscheidungen(repo: Path, nummer: str, basis: Path, ref: str | None) -
     if ref and nummer.isdigit():
         gesehen = {json.dumps(z, sort_keys=True) for z in zeilen}
         zeilen += [z for z in bau_log.log_vom_ref(repo, ref, nummer) if json.dumps(z, sort_keys=True) not in gesehen]
-    return sorted((z for z in zeilen if z.get("typ") == "entscheidung"), key=lambda z: str(z.get("ts", "")))
+    return sorted(
+        (z for z in zeilen if z.get("typ") == "entscheidung"),
+        key=lambda z: str(z.get("zeit") or z.get("ts") or ""),
+    )
 
 
 def liste(

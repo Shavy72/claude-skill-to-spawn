@@ -520,17 +520,20 @@ def test_aufsicht_warnt_wenn_transkript_fehlt(tmp_path: Path, caplog: pytest.Log
 
 
 def test_wechsel_schreibt_versioniertes_log(welt: dict[str, Path]) -> None:
+    from to_spawn import bau_log
+
     ergebnis = _wache(welt["repo"], env=_wache_welt(welt))
     assert ergebnis.returncode == 0, _text(ergebnis)
-    fest = welt["repo"] / "docs" / "agents" / "bau_log" / f"{SPEC}.jsonl"
-    zeilen = [json.loads(z) for z in fest.read_text(encoding="utf-8").splitlines()]
+    assert not (welt["repo"] / "docs" / "agents" / "bau_log" / f"{SPEC}.jsonl").exists()
+    zeilen = bau_log.lese(welt["repo"], SPEC)
     assert "waechter_modell" in [z["typ"] for z in zeilen]
 
 
 def test_wechsel_scheitert_nie_am_log(welt: dict[str, Path]) -> None:
-    # Versioniertes Log nicht schreibbar (Ordner statt Datei) → Neustart trotzdem.
-    (welt["repo"] / "docs" / "agents" / "bau_log" / f"{SPEC}.jsonl").mkdir(parents=True)
-    ergebnis = _wache(welt["repo"], env=_wache_welt(welt))
+    # Protokoll-Puffer nicht zulässig (im Arbeitsordner) → Neustart trotzdem.
+    env = _wache_welt(welt)
+    env["TO_SPAWN_PROTOKOLL_PUFFER"] = str(welt["repo"] / ".to-spawn" / "protokoll")
+    ergebnis = _wache(welt["repo"], env=env)
     assert ergebnis.returncode == 0, _text(ergebnis)
     assert len(_aufrufe(welt)) == 2
     assert [m["art"] for m in _mails(welt)] == ["waechter_ausweich"]

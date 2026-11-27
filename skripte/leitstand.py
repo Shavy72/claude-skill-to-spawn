@@ -344,10 +344,10 @@ def aus_bau_log(ticket: str, zeilen: list[dict[str, Any]]) -> list[Ereignis]:
     ergebnis: list[Ereignis] = []
     nr = int(ticket)
     for z in zeilen:
-        typ, zeit = z.get("typ"), lokal_iso(z.get("ts"))
+        typ, zeit = z.get("typ"), lokal_iso(roh := bau_log.zeitstempel(z))
         if not zeit:
             continue
-        quelle = f"bau_log|{ticket}|{z.get('ts')}|{typ}"
+        quelle = f"bau_log|{ticket}|{roh}|{typ}"
         if typ == "blockiert":
             grund = kurz(z.get("grund") or z.get("text"), 160) or "ohne Grund"
             ergebnis.append(
@@ -441,7 +441,7 @@ def ticket_stand(
     letzte = wichtig[-1] if wichtig else None
     if letzte and letzte.get("typ") == "deploy_phase" and _ist_rot(letzte):
         return "fehler", kurz(f"Deploy rot: {felder_text(letzte, ('phase', 'grund'))}", 40)
-    aktiv = [t for t in (als_zeit(z.get("ts")) for z in zeilen if z.get("typ") in AKTIVITAET) if t]
+    aktiv = [t for z in zeilen if z.get("typ") in AKTIVITAET and (t := als_zeit(bau_log.zeitstempel(z)))]
     if mensch_zeiten and (not aktiv or max(mensch_zeiten) > max(aktiv)):
         return "braucht_mensch", "Wartet auf den Menschen"
     phase = None
@@ -475,7 +475,7 @@ def gebaut_um(issue: dict[str, Any], zeilen: list[dict[str, Any]]) -> str | None
         for k in knoten
         if isinstance(k, dict) and (k.get("label") or {}).get("name") == ticket_zustand.STAGING_FERTIG_LABEL
     ]
-    aktiv = [als_zeit(z.get("ts")) for z in zeilen if z.get("typ") in AKTIVITAET]
+    aktiv = [als_zeit(bau_log.zeitstempel(z)) for z in zeilen if z.get("typ") in AKTIVITAET]
     if not (zeiten := [t for t in gesetzt if t]):
         zeiten = [t for t in aktiv if t]
         quelle = "Ersatz aus Bau-Log" if zeiten else "unbekannt (auch kein Bau-Log)"
@@ -505,11 +505,11 @@ def berechne(
         kommentare = aus_kommentaren(nr, issue, spec)
         ereignisse += kommentare + ohne_doppelte_mensch(aus_bau_log(nr, zeilen), kommentare)
         mensch = [t for t in (als_zeit(e.zeit) for e in kommentare if e.art in MENSCH_ARTEN) if t]
-        mensch += [t for t in (als_zeit(z.get("ts")) for z in zeilen if z.get("typ") == "mensch_noetig") if t]
+        mensch += [t for z in zeilen if z.get("typ") == "mensch_noetig" and (t := als_zeit(bau_log.zeitstempel(z)))]
         stand, phase = ticket_stand(nr, prozesse.get(nr, "aus"), issue, zeilen, mensch, zustand)
         if stand in ("läuft", "fertig", *BRAUCHT_MENSCH_ZUSTAENDE) and nr not in start:
-            erster = min((z.get("ts") for z in zeilen if z.get("typ") == "session_start"), default=None)
-            start[nr] = lokal_iso(erster) or jetzt_iso()
+            starts = [t for z in zeilen if z.get("typ") in ("session_start", "start") and (t := bau_log.zeitstempel(z))]
+            start[nr] = lokal_iso(min(starts, default=None)) or jetzt_iso()
         gelesen = "state" in issue  # Lesefehler: letzten bekannten Wert behalten, nichts raten
         if gelesen and not ticket_zustand.endgueltig_zu(issue):  # „fertig gebaut“ ist kein Ende (#279)
             ende.pop(nr, None)
