@@ -28,7 +28,7 @@ def test_spawn_srv_ruft_regularien_statt_pruefen_auf() -> None:
     """``skripte/spawn_srv.sh`` nutzt den aktuellen Unterbefehl ``regularien``."""
     text = SPAWN_SRV.read_text(encoding="utf-8")
     assert 'PRUEF_ARGS=(regularien "$SPEC")' in text
-    assert 'PRUEF_ARGS=(pruefen ' not in text
+    assert "PRUEF_ARGS=(pruefen " not in text
 
 
 def test_befund_nennt_regularien_statt_pruefen() -> None:
