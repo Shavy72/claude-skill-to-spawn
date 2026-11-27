@@ -16,6 +16,7 @@ Deckt alle verbleibenden Bausteine von #1184 auf dem Stand von ``origin/main`` a
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import types
@@ -28,7 +29,7 @@ SKILL = Path(__file__).resolve().parent.parent
 NEST = SKILL / "nest"
 DOCS = SKILL / "docs"
 
-from to_spawn import auswahl, config, speicher, startstelle, ticket_zustand, tmux_aufruf, wiederaufnahme
+from to_spawn import auswahl, config, speicher, starter, startstelle, ticket_zustand, tmux_aufruf, wiederaufnahme
 
 # -- 1. Wiederaufnahme nach Neustart -------------------------------------------
 
@@ -132,6 +133,58 @@ def test_aufseher_starten_fremde_sitzung_verweigert(tmp_path: Path, monkeypatch:
     klon.mkdir()
     monkeypatch.setattr(tmux_aufruf, "sitzung_aufloesen", lambda _k, _s: ("spec-app-55", "WEIGERUNG: fremdes Repo"))
     assert wiederaufnahme.aufseher_starten("55", klon, trocken=False) is False
+
+
+def test_aufseher_starten_geht_durch_start_tuer_ohne_sitzungs_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#887 / #1406: ``aufseher_starten`` startet tmux durch ``starter.starte`` (Start-Tür)
+    und reicht die um Claude-Sitzungs-Variablen bereinigte Umgebung weiter."""
+    klon = tmp_path / "app-77"
+    klon.mkdir()
+    monkeypatch.delenv("TO_SPAWN_TMUX", raising=False)
+    monkeypatch.setenv("PATH", str(tmp_path))  # ohne Attrappe sperrt die Tür statt echtem Start
+    with pytest.raises(starter.StartGesperrt, match="echter Start im Test verboten"):
+        wiederaufnahme.aufseher_starten("77", klon, sitzung="spec-app-77", trocken=False)
+
+    beleg = tmp_path / "tmux_aufruf.json"
+    fake_tmux = Path(os.environ[starter.TEST_BIN_ENV]) / "fake_tmux_wiederaufnahme.py"
+    fake_tmux.write_text(
+        "import json, os, pathlib, sys\n"
+        f"pathlib.Path({str(beleg)!r}).write_text(\n"
+        "    json.dumps({'argv': sys.argv[1:], 'claudecode': 'CLAUDECODE' in os.environ,\n"
+        "                'child': 'CLAUDE_CODE_CHILD_SESSION' in os.environ}),\n"
+        "    encoding='utf-8',\n"
+        ")\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TO_SPAWN_TMUX", json.dumps([sys.executable, str(fake_tmux)]))
+    monkeypatch.setenv("CLAUDECODE", "1")
+    monkeypatch.setenv("CLAUDE_CODE_CHILD_SESSION", "1")
+    assert wiederaufnahme.aufseher_starten("77", klon, sitzung="spec-app-77", trocken=False) is True
+    daten = json.loads(beleg.read_text(encoding="utf-8"))
+    assert daten["argv"][:8] == ["new-session", "-d", "-s", "spec-app-77", "-n", "wache 77", "-c", str(klon)]
+    assert daten["claudecode"] is False
+    assert daten["child"] is False
+
+
+def test_sitzung_da_prueft_ueber_tmux_aufruf(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``sitzung_da`` nutzt den zentralen Helfer ``tmux_aufruf.aufrufen``."""
+    aufrufe: list[tuple[tuple[str, ...], bool]] = []
+
+    def ok(*args: str, start: bool = False, **_kw: object) -> str:
+        aufrufe.append((args, start))
+        return ""
+
+    monkeypatch.setattr(tmux_aufruf, "aufrufen", ok)
+    assert wiederaufnahme.sitzung_da("spec-app-77") is True
+    assert aufrufe == [(("has-session", "-t", "=spec-app-77"), False)]
+
+    def fehlt(*_a: str, **_kw: object) -> str:
+        raise tmux_aufruf.TmuxFehler("has-session", "can't find session")
+
+    monkeypatch.setattr(tmux_aufruf, "aufrufen", fehlt)
+    assert wiederaufnahme.sitzung_da("spec-app-77") is False
 
 
 def test_tmux_dienst_abwarten_ausserhalb_linux_sofort(monkeypatch: pytest.MonkeyPatch) -> None:

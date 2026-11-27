@@ -34,7 +34,6 @@ from pathlib import Path
 from to_spawn import (
     aufpasser,
     auswahl,
-    capo,
     config,
     prozessbaum,
     sitzung_env,
@@ -110,23 +109,6 @@ def offene_specs(
     return sorted(gefunden, key=lambda t: t[1])
 
 
-def _tmux(*args: str) -> subprocess.CompletedProcess[str]:
-    befehl = [*capo._tmux_befehl(), *args]
-    try:
-        return subprocess.run(
-            befehl,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-            env=sitzung_env.ohne_sitzung(),
-            **prozessbaum.fensterlos(),
-        )
-    except OSError as fehler:
-        return subprocess.CompletedProcess(befehl, 127, "", str(fehler))
-
-
 def tmux_dienst_abwarten(
     warten_s: float = 120,
     takt_s: float = 5,
@@ -157,7 +139,11 @@ def tmux_dienst_abwarten(
 
 def sitzung_da(sitzung: str) -> bool:
     """Läuft die tmux-Sitzung ``sitzung`` schon auf dem Server?"""
-    return _tmux("has-session", "-t", f"={sitzung}").returncode == 0
+    try:
+        tmux_aufruf.aufrufen("has-session", "-t", f"={sitzung}", env=sitzung_env.ohne_sitzung())
+    except tmux_aufruf.TmuxFehler:
+        return False
+    return True
 
 
 def aufseher_starten(
@@ -181,19 +167,22 @@ def aufseher_starten(
     if trocken:
         print(f"[trocken] {ziel}: Fenster „wache {spec}“ in {cwd}: {befehl}")
         return True
-    lauf = _tmux(
-        "new-session",
-        "-d",
-        "-s",
-        ziel,
-        "-n",
-        f"wache {spec}",
-        "-c",
-        str(cwd),
-        f"bash -lc {shlex.quote(befehl)}",
-    )
-    if lauf.returncode != 0:
-        log.error("%s: tmux new-session fehlgeschlagen: %s", ziel, lauf.stderr.strip())
+    try:
+        tmux_aufruf.aufrufen(
+            "new-session",
+            "-d",
+            "-s",
+            ziel,
+            "-n",
+            f"wache {spec}",
+            "-c",
+            str(cwd),
+            f"bash -lc {shlex.quote(befehl)}",
+            start=True,
+            env=sitzung_env.ohne_sitzung(),
+        )
+    except tmux_aufruf.TmuxFehler as fehler:
+        log.error("%s: tmux new-session fehlgeschlagen: %s", ziel, fehler.stderr.strip() or str(fehler))
         return False
     log.info("%s: Aufseher %s", ziel, f"fortgesetzt ({sid[:8]}…)" if sid else "frisch gestartet")
     return True
