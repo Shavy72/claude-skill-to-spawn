@@ -1831,6 +1831,58 @@ def _zustand_datei(repo: Path, gh_repo: str, spec: int) -> Path:
     return melder.zustand_ordner() / f"{melder.repo_kennung(repo, gh_repo)}_{spec}.json"
 
 
+def fertig_urteil(repo: Path, spec: int, gh_repo: str = "") -> str | None:
+    """capos Urteil „Spec fertig“ für Aufrufer außerhalb des Ticks (#889).
+
+    ``None`` = capo führt die Spec nicht (keine Zustandsdatei, z. B. Handlauf) · ``""`` = capo führt
+    sie, meldet aber (noch) nicht fertig · sonst der Zeitpunkt ``spec_fertig_seit``. Das Urteil
+    selbst fällt nur :func:`tick` (``erg.fertig``); hier wird es nur gelesen.
+    """
+    datei = _zustand_datei(repo, gh_repo, spec)
+    if not datei.is_file():
+        _fremder_zustand_melden(datei, spec)
+        return None
+    return str(melder.lade_json(datei).get("spec_fertig_seit") or "")
+
+
+def fertig_luecke(repo: Path, spec: int, gh_repo: str = "") -> tuple[Path, str] | None:
+    """Warum capo die Spec (noch) nicht fertig meldet — für die Sperre in ``abschluss_paket.py`` (#889).
+
+    ``None`` = keine Sperre (capo führt die Spec nicht oder meldet fertig) · sonst
+    ``(Zustandsdatei, Grund)``. Kaputt oder unklar zählt als „nicht fertig“ (sichere Seite):
+    Grund „nicht lesbar …“ bei kaputtem JSON, „Feld spec_fertig_seit fehlt“ sonst.
+    """
+    urteil = fertig_urteil(repo, spec, gh_repo)
+    if urteil is None or urteil:
+        return None
+    datei = _zustand_datei(repo, gh_repo, spec)
+    try:
+        daten = json.loads(datei.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as fehler:
+        return datei, f"nicht lesbar ({type(fehler).__name__})"
+    if not isinstance(daten, dict):
+        return datei, "nicht lesbar (kein JSON-Objekt)"
+    return datei, "Feld spec_fertig_seit fehlt"
+
+
+def _fremder_zustand_melden(datei: Path, spec: int) -> None:
+    """Liegt capos Zustand der Spec unter anderem Repo-Namen (``--gh-repo`` ≠ origin), Log-Zeile (#889).
+
+    Ohne Meldung fiele die Sperre still weg; gesperrt wird nicht, weil die Nummer auch zu einem
+    anderen Repo gehören kann.
+    """
+    if not datei.parent.is_dir():
+        return
+    fremde = sorted(p.name for p in datei.parent.glob(f"*_{spec}.json"))
+    if fremde:
+        log.warning(
+            "capo-Zustand %s fehlt, aber %s liegt da — Repo-Name weicht ab (--gh-repo ≠ origin?); "
+            "keine Fertig-Sperre (#889).",
+            datei,
+            ", ".join(fremde),
+        )
+
+
 @contextlib.contextmanager
 def sperre(datei: Path, warten_s: float = SPERRE_S) -> Iterator[bool]:
     """Sperre ``<datei>.lock`` für einen Tick; liefert ``False``, wenn ein anderer Lauf sie hält.
@@ -2672,6 +2724,7 @@ def _tick(
             )
         if not dry_run and not zustand.get("spec_fertig_seit"):
             zustand["spec_fertig_seit"] = jetzt.astimezone().isoformat(timespec="seconds")
+            sichern()  # abschluss_paket.py liest das Urteil aus der Datei (#889) — noch in diesem Tick
         if not zustand.get("staging_schalter_erledigt"):
             # Staging-Hauptschalter der Spec AN (#563, Spec #548 E3) — Live nie automatisch.
             try:
