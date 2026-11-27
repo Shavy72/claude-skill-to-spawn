@@ -80,6 +80,7 @@ import argparse
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import shlex
@@ -158,7 +159,7 @@ def _als_zahl(wert: Any) -> float | None:
         zahl = float(wert)
     except (TypeError, ValueError):
         return None
-    return zahl if zahl == zahl and abs(zahl) != float("inf") else None
+    return zahl if math.isfinite(zahl) else None
 
 
 def _probe_gueltig(eintrag: dict[str, Any], jetzt: float) -> bool:
