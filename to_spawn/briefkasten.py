@@ -281,9 +281,7 @@ def live_fragen_freigeben(
         inhalt = _lies(datei)
         if _sperrgruende(datei, inhalt):
             continue
-        offen_ids = [
-            str(f["id"]) for f in (inhalt.daten or {}).get("fragen", []) if not _gilt(f) and ist_live_frage(f)
-        ]
+        offen_ids = [str(f["id"]) for f in (inhalt.daten or {}).get("fragen", []) if not _gilt(f) and ist_live_frage(f)]
         for fid in offen_ids:
             try:
                 nutzer_antworten(nummer, fid, "ja", [beleg], grund, hauptbaum=hauptbaum)

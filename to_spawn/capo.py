@@ -3118,9 +3118,7 @@ def _live_nach_abnahme_passt(
         return False
     if hat_live_fragen:
         try:
-            beantwortet = briefkasten.live_fragen_freigeben(
-                alle_tickets, n, kommentar.get("id", ""), hauptbaum=repo
-            )
+            beantwortet = briefkasten.live_fragen_freigeben(alle_tickets, n, kommentar.get("id", ""), hauptbaum=repo)
         except (briefkasten.Verweigert, OSError, TimeoutError) as fehler:
             log.warning("Briefkasten-Live-Fragen Spec #%s nach Abnahme #%s nicht freigegeben: %s", spec, n, fehler)
         else:
