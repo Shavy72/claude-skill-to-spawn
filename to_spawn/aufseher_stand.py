@@ -93,6 +93,11 @@ TMUX_ZEIT_S = 15
 #: Bau-Log-Typ → Phase in der Kurz-Zeile. Andere Typen (Aufseher-eigene wie
 #: ``waechter_pause``) zählen nicht als Phase des Tickets.
 PHASEN = {
+    "start": "Start",
+    "uebergabe": "Übergabe",
+    "schliessen": "Geschlossen",
+    "wiedereroeffnen": "Wiedereröffnet",
+    "hindernis": "Hindernis",
     "auftrag": "Auftrag",
     "session_start": "Start",
     "entscheidung": "Entscheidung",
@@ -548,7 +553,11 @@ def _log_lage(n: int, repo: Path) -> tuple[str, str, str, int] | None:
                 phase = f"{phase} {extra}".strip()
             break
     aussage = next(
-        (str(z["text"]) for z in reversed(zeilen) if str(z.get("text") or "").strip()),
+        (
+            str(text)
+            for z in reversed(zeilen)
+            if (text := str(z.get("text") or z.get("was") or z.get("grund") or "").strip())
+        ),
         STRICH,
     )
     return kontext, phase, aussage, komplett_lauf.ablehnungen(zeilen)
@@ -583,6 +592,7 @@ def sammeln(spec: int, q: Quellen, vorher: _Vorher) -> _Ergebnis:
     auswahl_stand = auswahl.lesen(q.repo, spec)
     if auswahl_stand is not None:
         kinder = auswahl.filtere_issues(kinder, auswahl_stand)
+    bau_log.protokoll_holen(q.repo)
     jetzt = q.jetzt()
     fenster = None if q.pc_still else _fenster_liste(spec, q.tmux, repo=q.repo)
     lagen: list[TicketLage] = []

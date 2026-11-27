@@ -2114,6 +2114,15 @@ class Aufpasser:
             return haupt
         return repo
 
+    def _protokoll_schreiben(self, typ: str, *, repo: Path, **felder: Any) -> None:
+        """Pflicht-Ereignis ins Ereignis-Protokoll schreiben — Fehler kippen nie den Aufpasser (#903)."""
+        if self.e.trocken:
+            return
+        try:
+            bau_log.schreibe(typ, repo=repo, **felder)
+        except (OSError, ValueError, TimeoutError) as fehler:
+            log.warning("Ereignis-Protokoll (%s) nicht geschrieben: %s", typ, fehler)
+
     def vorfall_notieren(
         self, spec: str, repo: Path, fenster: str, ereignis: str, text: str, *, beispiel: str = ""
     ) -> None:
@@ -2778,6 +2787,20 @@ class Aufpasser:
             )
             return False
         self.stand.fenster.pop(schluessel, None)
+        self._protokoll_schreiben(
+            "uebergabe",
+            repo=repo,
+            ticket=ticket,
+            wer="aufpasser",
+            was=f"Folge-Session ab Handoff {treffer.datei} gestartet",
+            session=f"bau-{ticket}",
+            commit=bau_log.git_kopf_kurz(repo, ticket),
+            grund=f"Eigener Handoff {treffer.datei} nach {treffer.still_min(self.jetzt)} min Stille",
+            kontextstand=bau_log.kontextstand_aktuell(repo, ticket),
+            ausloeser="eigener_handoff",
+            handoff=treffer.datei,
+            idempotenz_schluessel=f"uebergabe:{ticket}:handoff:{treffer.datei}",
+        )
         self.melden(
             f.spec,
             repo,
@@ -2917,6 +2940,19 @@ class Aufpasser:
             return
         if not self.e.trocken:
             self.stand.fenster.pop(schluessel, None)
+            commit_wert = bau_log.git_kopf_kurz(repo)
+            self._protokoll_schreiben(
+                "schliessen",
+                repo=repo,
+                ticket=f.spec,
+                wer="aufpasser",
+                was=f"Fenster „{f.name}“ geschlossen ({ende})",
+                session=f"spec-{f.spec}",
+                commit=commit_wert,
+                grund=f"Spec #{f.spec} {grund}",
+                kontextstand=bau_log.kontextstand_aktuell(repo, f.spec),
+                idempotenz_schluessel=f"schliessen:aufpasser:spec:{f.spec}:{f.name}:{grund}:{commit_wert}",
+            )
         self.melden(
             f.spec,
             repo,
@@ -3323,6 +3359,19 @@ class Aufpasser:
             return
         if not self.e.trocken:
             self.stand.fenster.pop(schluessel, None)
+            commit_wert = sha[:7] if sha else bau_log.git_kopf_kurz(repo, ticket)
+            self._protokoll_schreiben(
+                "schliessen",
+                repo=repo,
+                ticket=ticket,
+                wer="aufpasser",
+                was=f"Fenster „{f.name}“ geschlossen ({ende})",
+                session=info.session_id if info else f"bau-{ticket}",
+                commit=commit_wert,
+                grund=grund,
+                kontextstand=bau_log.kontextstand_aktuell(repo, ticket),
+                idempotenz_schluessel=f"schliessen:aufpasser:{ticket}:{grund}:{commit_wert}",
+            )
         zusatz = f" Änderungen auf sicherung/{ticket} gesichert ({sha[:7]})." if sha else ""
         if ende == "exit":
             zusatz += " Per /exit beendet, Kette läuft weiter."
@@ -3436,6 +3485,21 @@ class Aufpasser:
             return
         if not self.e.trocken:
             e.update(hash=pane_hash(text_neu))
+            ziel_ticket = ticket if ticket is not None else f.spec
+            commit_wert = sha[:7] if sha else bau_log.git_kopf_kurz(repo, ticket)
+            self._protokoll_schreiben(
+                "uebergabe",
+                repo=repo,
+                ticket=ziel_ticket,
+                wer="aufpasser",
+                was=f"Session {sid[:8]}… in „{neu.name}“ fortgesetzt",
+                session=sid,
+                commit=commit_wert,
+                grund=f"Nach Anstupsen weiter still — {gesichert}",
+                kontextstand=bau_log.kontextstand_aktuell(repo, ziel_ticket),
+                ausloeser="stillstand_fortsetzen",
+                idempotenz_schluessel=f"uebergabe:{ziel_ticket}:fortsetzen:{sid}:{commit_wert}",
+            )
         e.update(stufe=2, eingriff=self.jetzt, seit=self.jetzt)
         self.melden(
             f.spec,
@@ -3578,6 +3642,22 @@ class Aufpasser:
             )
             return
         wie = f"mit Gespräch {sid[:8]}… fortgesetzt." if sid else "gestartet."
+        if not self.e.trocken:
+            ziel_ticket = ticket if ticket is not None else spec
+            commit_wert = bau_log.git_kopf_kurz(repo, ticket)
+            self._protokoll_schreiben(
+                "start",
+                repo=repo,
+                ticket=ziel_ticket,
+                wer="aufpasser",
+                was=f"{wer} {was}, {wie}",
+                session=sid or (f"bau-{ticket}" if ticket is not None else f"wache-{spec}"),
+                commit=commit_wert,
+                grund=f"Fehlendes Fenster „{name}“ gestartet",
+                kontextstand=bau_log.kontextstand_aktuell(repo, ziel_ticket),
+                ausloeser="fehlendes_fenster",
+                idempotenz_schluessel=f"start:aufpasser:{spec}:{ziel_ticket}:{sid or 'frisch'}:{commit_wert}",
+            )
         self.melden(spec, repo, f"{sitzung}/{name}", "gestartet", f"{wer} {was}, {wie}")
 
     def offene_blocker_von(self, ticket: int, repo: Path, gh_repo: str) -> list[int]:

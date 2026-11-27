@@ -2409,7 +2409,7 @@ def _tick(
                     sichern()
             if not neu_funde:
                 continue
-            aktionen += _wieder_oeffnen(n, gh_repo, neu_funde, dry_run)
+            aktionen += _wieder_oeffnen(n, gh_repo, neu_funde, dry_run, repo=repo)
             if aktionen[-1] == f"#{n} wieder geöffnet":
                 erledigt.update(f"{n}|{f.regel}|{geschlossen}" for f in neu_funde)
                 erledigt.update(f"geoeffnet|{verstoss_kennung(n, f)}" for f in neu_funde)
@@ -2465,7 +2465,7 @@ def _tick(
                     f"{', '.join(regeln)} beim Schließen {stempel} trifft nicht mehr zu "
                     "(Regeln jetzt grün, kein neuer Ticket-Commit seitdem)."
                 )
-                rueck = befund.zuruecknehmen(n, gh_repo, grund, dry_run)
+                rueck = befund.zuruecknehmen(n, gh_repo, grund, dry_run, repo=repo)
                 aktionen += rueck.zeilen
                 if rueck.ok:
                     erledigt.update({f"ruecknahme|{n}|{stempel}", f"ruecknahme|{n}"})
@@ -2890,9 +2890,16 @@ def _gh_ok(args: list[str]) -> bool:
     return gh.lauf(args)[0] == 0
 
 
-def _wieder_oeffnen(n: int, gh_repo: str, funde: list[Verstoss], dry_run: bool) -> list[str]:
+def _wieder_oeffnen(
+    n: int,
+    gh_repo: str,
+    funde: list[Verstoss],
+    dry_run: bool,
+    *,
+    repo: Path | None = None,
+) -> list[str]:
     """Ticket einmal wieder öffnen (Regel lebt in :mod:`befund`); Verstöße sind immer rot."""
-    return befund.wieder_oeffnen(n, gh_repo, [(f.regel, f.text) for f in funde], dry_run)
+    return befund.wieder_oeffnen(n, gh_repo, [(f.regel, f.text) for f in funde], dry_run, repo=repo)
 
 
 #: ``nachsehen`` ruft den Wirkungskreis (bis 600 s) — Luft darüber für Mail und Start.

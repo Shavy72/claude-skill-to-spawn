@@ -477,6 +477,37 @@ def _plane(u: Umwelt, spec: int, ticket: int) -> Ergebnis:
     return Ergebnis(EXIT_OK, _zeile(ticket, text))
 
 
+def _protokoll_uebergabe(
+    repo: Path,
+    ticket: int,
+    *,
+    ausloeser: str,
+    was: str,
+    grund: str,
+    kontextstand: float,
+    idempotenz_schluessel: str,
+    handoff: str | None = None,
+) -> None:
+    """Übergabe-Pflichtereignis des Aufsehers ins Ereignis-Protokoll schreiben (#903)."""
+    try:
+        bau_log.schreibe(
+            "uebergabe",
+            repo=repo,
+            ticket=ticket,
+            wer="aufseher",
+            was=was,
+            session=f"bau-{ticket}",
+            commit=bau_log.git_kopf_kurz(repo, ticket),
+            grund=grund,
+            kontextstand=kontextstand,
+            ausloeser=ausloeser,
+            handoff=handoff,
+            idempotenz_schluessel=idempotenz_schluessel,
+        )
+    except (OSError, ValueError, TimeoutError) as fehler:
+        log.warning("leiter #%s: Ereignis-Protokoll (uebergabe) nicht geschrieben: %s", ticket, fehler)
+
+
 def _schritt(u: Umwelt, repo: Path, spec: int, ticket: int) -> Ergebnis:
     gemerkt, lage, schritt, jetzt = _lies(u, spec, ticket)
     log.info("leiter #%s: %s → %s (%s)", ticket, gemerkt, schritt.aktion, schritt.grund)
@@ -499,6 +530,16 @@ def _schritt(u: Umwelt, repo: Path, spec: int, ticket: int) -> Ergebnis:
             return Ergebnis(
                 EXIT_FEHLER, _zeile(ticket, f"Neustart ab Handoff gescheitert (Exit {code}) — {schritt.grund}")
             )
+        _protokoll_uebergabe(
+            repo,
+            ticket,
+            ausloeser="eigener_handoff",
+            was=f"Folge-Session ab Handoff {lage.eigener_handoff.datei} gestartet",
+            grund=schritt.grund,
+            kontextstand=(lage.kontext_k if lage.kontext_k is not None else bau_log.kontextstand_aktuell(repo, ticket)),
+            handoff=lage.eigener_handoff.datei,
+            idempotenz_schluessel=f"uebergabe:{ticket}:handoff:{lage.eigener_handoff.datei}",
+        )
         return Ergebnis(EXIT_OK, _zeile(ticket, f"Stufe 0 {_WORT[schritt.aktion]} — {schritt.grund}"))
     if schritt.aktion in ("entscheider", "mensch"):
         return _frage_weitergeben(u, spec, ticket, gemerkt, lage, schritt)
@@ -608,6 +649,15 @@ def _respawn(u: Umwelt, repo: Path, spec: int, ticket: int, gemerkt: Gemerkt, je
         text = f"Stufe 3 abgelöst, Abschluss nicht gemerkt — {fehler}"
         return Ergebnis(EXIT_FEHLER, _zeile(ticket, text))
     grund = "Start-Prompt-Datei da" if pc_fenster.kann_tippen(u.werkzeug()) else PC_VERMERK
+    _protokoll_uebergabe(
+        repo,
+        ticket,
+        ausloeser="leiter_respawn",
+        was=f"Ticket #{ticket} per Leiter-Respawn übergeben",
+        grund=grund,
+        kontextstand=bau_log.kontextstand_aktuell(repo, ticket),
+        idempotenz_schluessel=f"uebergabe:{ticket}:leiter_respawn:{int(gemerkt.seit or jetzt)}",
+    )
     text = f"Stufe 0 {_WORT['respawn']} — {grund}"
     return Ergebnis(EXIT_OK, _zeile(ticket, text))
 
