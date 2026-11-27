@@ -17,7 +17,9 @@ Weg-Tests analog ``tests/test_pc_fenster_501.py`` und ``tests/test_taktgeber_140
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Callable
@@ -27,10 +29,35 @@ from typing import Any
 import pytest
 
 SKILL = Path(__file__).resolve().parent.parent
+TESTS_DIR = Path(__file__).resolve().parent
 if str(SKILL) not in sys.path:
     sys.path.insert(0, str(SKILL))
+if str(TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(TESTS_DIR))
 
-from to_spawn import bau_log, capo, gh, pc_fenster, prozessbaum, spawn, sperre, startstelle, taktgeber
+from test_taktgeber_1402 import (
+    _commit_mit_beleg,
+    _gh_stand,
+    _git,
+    _issue_aus_stand,
+    _vorlage_issue,
+    _vorlage_kommentar,
+    _welt_bauen,
+)
+
+from to_spawn import (
+    bau_log,
+    capo,
+    gh,
+    pc_fenster,
+    prozessbaum,
+    spawn,
+    sperre,
+    starter,
+    startstelle,
+    taktgeber,
+    ticket_zustand,
+)
 
 WINDOWS = sys.platform == "win32"
 CREATE_NO_WINDOW = 0x08000000
@@ -412,6 +439,242 @@ def test_pc_taktgeber_lauf_weckt_wiedereroeffnetes_ticket_als_tab_und_protokolli
     assert erg2.ok is True
     assert erg2.aktionen[0].aktion == "unveraendert"
     assert len(wt.aufrufe) == 1
+
+
+# --- 2b. Lauf-Log unter pythonw.exe, Isolation von pc_fenster.subprocess.run & Anmelde-Weg-Test ---
+
+
+def test_cli_lauf_schreibt_lauf_log_bei_pythonw_ohne_stdout_stderr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#907: Unter ``pythonw.exe`` (``sys.stdout = sys.stderr = None``) schreibt ``cli_lauf()`` nach ``log_datei(spec)``."""
+    log_ordner = tmp_path / "taktgeber-logs"
+    monkeypatch.setenv("TO_SPAWN_TAKTGEBER_LOG", str(log_ordner))
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    # 1) Normaler Lauf mit Aktionen + Trockenlauf mit 0 Tickets
+    monkeypatch.setattr(
+        taktgeber,
+        "lauf",
+        lambda *_a, **_kw: taktgeber.LaufErgebnis(
+            True,
+            [taktgeber.TicketAktion(530, "geweckt", "#530 geweckt im Tab „bau 530“")],
+        ),
+    )
+    args_ok = argparse.Namespace(
+        befehl="taktgeber", spec=907, repo_dir=str(repo), gh_repo="test-org/beispiel-app", dry_run=False
+    )
+    assert taktgeber.cli_lauf(args_ok) == 0
+
+    log_pfad = log_ordner / "907.log"
+    assert log_pfad.is_file(), "pythonw.exe-Lauf hat kein Lauf-Log unter log_datei(spec) erzeugt"
+    inhalt = log_pfad.read_text(encoding="utf-8")
+    assert re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", inhalt), inhalt
+    assert "#907" in inhalt
+    assert "#530: geweckt" in inhalt
+
+    # 2) Leerer Trockenlauf erzeugt ebenfalls einen nachvollziehbaren Log-Eintrag
+    monkeypatch.setattr(taktgeber, "lauf", lambda *_a, **_kw: taktgeber.LaufErgebnis(True, []))
+    args_probe = argparse.Namespace(
+        befehl="taktgeber", spec=907, repo_dir=str(repo), gh_repo="test-org/beispiel-app", dry_run=True
+    )
+    assert taktgeber.cli_lauf(args_probe) == 0
+    inhalt_probe = log_pfad.read_text(encoding="utf-8")
+    assert "Probe" in inhalt_probe or "dry-run" in inhalt_probe, inhalt_probe
+
+    # 3) Lauf-Fehler (erg.ok == False) steht mit Zeitstempel im Lauf-Log
+    monkeypatch.setattr(
+        taktgeber,
+        "lauf",
+        lambda *_a, **_kw: taktgeber.LaufErgebnis(False, [], "Sub-Issues nicht lesbar (gh)"),
+    )
+    assert taktgeber.cli_lauf(args_ok) == 1
+    inhalt_fehler = log_pfad.read_text(encoding="utf-8")
+    assert "FEHLER" in inhalt_fehler and "Sub-Issues nicht lesbar (gh)" in inhalt_fehler, inhalt_fehler
+
+    # 4) Fehlendes GitHub-Repo (Exit 2) steht ebenfalls im Lauf-Log
+    monkeypatch.setattr(gh, "repo_aus_origin", lambda *_a, **_kw: "")
+    args_ohne_repo = argparse.Namespace(befehl="taktgeber", spec=907, repo_dir=str(repo), gh_repo="", dry_run=False)
+    assert taktgeber.cli_lauf(args_ohne_repo) == 2
+    assert "GitHub-Repo unbekannt" in log_pfad.read_text(encoding="utf-8")
+
+    # 5) Unerwartete Ausnahme (z. B. RuntimeError) geht nicht still verloren, sondern landet im Lauf-Log
+    def _kaputt(*_a: Any, **_kw: Any) -> Any:
+        raise RuntimeError("Netzwerk abgebrochen")
+
+    monkeypatch.setattr(taktgeber, "lauf", _kaputt)
+    assert taktgeber.cli_lauf(args_ok) == 1
+    assert "Netzwerk abgebrochen" in log_pfad.read_text(encoding="utf-8")
+
+
+def test_pc_wecke_ticket_ohne_wt_kein_unsichtbarer_hintergrundstart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#907: Am PC ohne ``wt`` darf ``wecke_ticket()`` nicht unsichtbar im Hintergrund starten."""
+    _simuliere_windows(monkeypatch)
+    monkeypatch.setenv("TO_SPAWN_START_SPERREN", str(tmp_path / "sperren"))
+
+    repo = tmp_path / "repo"
+    skript = repo / "scripts" / "bau.py"
+    skript.parent.mkdir(parents=True)
+    skript.write_text("# test-bau\n", encoding="utf-8")
+
+    gestartet: list[list[str]] = []
+    monkeypatch.setattr(starter, "starte", lambda cmd, **_kw: gestartet.append(list(cmd)))
+
+    assert pc_fenster.am_pc() is True
+    assert pc_fenster.wt_verfuegbar() is False
+
+    ok, meldung = taktgeber.wecke_ticket(repo, 293, 530, "test-org/beispiel-app", "Befund")
+    assert ok is False, f"Ohne wt am PC darf kein Hintergrundstart erfolgen: {meldung}"
+    assert "wt" in meldung.lower(), meldung
+    assert gestartet == [], f"Unsichtbarer Hintergrundstart trotz fehlendem wt: {gestartet}"
+
+    ok_probe, meldung_probe = taktgeber.wecke_ticket(repo, 293, 530, "test-org/beispiel-app", "Befund", dry_run=True)
+    assert ok_probe is False, meldung_probe
+    assert "wt" in meldung_probe.lower(), meldung_probe
+    assert gestartet == []
+
+
+def test_pc_fenster_subprocess_patch_isoliert_git_und_bau_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#907: Patch auf ``pc_fenster.subprocess.run`` bleibt lokal — ``git``/``bau_log.lese()`` zählen nicht als ``wt``."""
+    _wt_attrappe()
+    wt = _WtAufnahme()
+    monkeypatch.setattr(pc_fenster.subprocess, "run", wt)
+
+    repo = tmp_path / "git-repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "master")
+    bau_log.schreibe(repo, 530, "taktgeber", wer="taktgeber", aktion="geweckt", grund="Test")
+
+    # bau_log.lese() ruft über config.repo_wurzel() echte git-Subprozesse auf — diese dürfen nie bei wt landen
+    zeilen = bau_log.lese(repo, 530)
+    assert any(z.get("wer") == "taktgeber" and z.get("aktion") == "geweckt" for z in zeilen), zeilen
+    assert wt.aufrufe == [], f"git-Subprozesse wurden fälschlich als wt-Aufruf gezählt: {wt.aufrufe}"
+
+    # Erst der echte Tab-Start über pc_fenster landet bei wt
+    pc_fenster.tab_starten(repo, 530, "Befund")
+    assert len(wt.aufrufe) == 1
+
+
+def test_pc_anmelde_lauf_holt_liegengebliebene_tickets_nach_mit_gh_aufzeichnung(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#907 Weg-Test: Anmelde-Lauf mit aufgezeichneten GitHub-Antworten holt alle liegengebliebenen Zustände nach.
+
+    - #601: 4 Regeln + live gemeldet → geschlossen
+    - #602: 4 Regeln + nur Staging → Label ``staging:fertig``, bleibt offen
+    - #603: wiedereröffnet → genau ein sichtbarer ``wt``-Tab ``bau 603`` (fensterlos gestartet)
+    - Zweiter Lauf bei aktiver Start-Sperre für #603 → kein zweiter Tab, keine weiteren GitHub-Schreibaufrufe
+    """
+    welt = _welt_bauen(
+        tmp_path,
+        issues=[
+            _vorlage_issue(601),
+            _vorlage_issue(602),
+            _vorlage_issue(
+                603,
+                state="open",
+                state_reason="reopened",
+                closed_at="2026-11-27T09:50:00Z",
+            ),
+        ],
+        kommentare={},
+        konfig={"hauptzweig": "master", "live": {"ohne": False, "befehl": "python deploy.py live"}},
+    )
+    sha_601 = _commit_mit_beleg(welt["repo"], 601, mit_beleg=True, mit_nummer=True)
+    sha_602 = _commit_mit_beleg(welt["repo"], 602, mit_beleg=True, mit_nummer=True)
+    sha_603_alt = _commit_mit_beleg(welt["repo"], 603, mit_beleg=True, mit_nummer=True)
+
+    stand = _gh_stand(welt)
+    stand["kommentare"] = {
+        "601": [
+            _vorlage_kommentar(f"Deploy-Schlange: grün auf master · {sha_601}"),
+            _vorlage_kommentar(f"Deploy-Schlange: ist live · {sha_601}", created_at="2026-11-27T10:05:00Z"),
+        ],
+        "602": [
+            _vorlage_kommentar(f"Deploy-Schlange: grün auf master · {sha_602}"),
+            _vorlage_kommentar("Hinweis: fertig auf Staging, wartet auf Live.", created_at="2026-11-27T10:01:00Z"),
+        ],
+        "603": [
+            _vorlage_kommentar(f"Deploy-Schlange: grün auf master · {sha_603_alt}", created_at="2026-11-27T09:40:00Z"),
+            _vorlage_kommentar(
+                "Aufseher: Belegseite — Klickweg nach Abmeldung nachholen", created_at="2026-11-27T10:00:00Z"
+            ),
+        ],
+    }
+    welt["zustand"].write_text(json.dumps(stand, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # PC (Windows) + aufgezeichneter gh-Stub + isolierte wt-Aufnahme + eigenes Lauf-Log
+    _simuliere_windows(monkeypatch)
+    attrappe = _wt_attrappe()
+    wt = _WtAufnahme()
+    monkeypatch.setattr(pc_fenster.subprocess, "run", wt)
+    log_ordner = tmp_path / "taktgeber-logs"
+    monkeypatch.setenv("TO_SPAWN_GH_STUB", welt["env"]["TO_SPAWN_GH_STUB"])
+    monkeypatch.setenv("GH_TAKTGEBER_ZUSTAND", welt["env"]["GH_TAKTGEBER_ZUSTAND"])
+    monkeypatch.setenv("TO_SPAWN_START_SPERREN", welt["env"]["TO_SPAWN_START_SPERREN"])
+    monkeypatch.setenv("TO_SPAWN_TEST_FERN_SPERRE_AUS", "1")
+    monkeypatch.setenv("TO_SPAWN_TAKTGEBER_LOG", str(log_ordner))
+
+    args = argparse.Namespace(
+        befehl="taktgeber",
+        spec=293,
+        repo_dir=str(welt["repo"]),
+        gh_repo="test-org/beispiel-app",
+        dry_run=False,
+    )
+
+    # Lauf 1 (Anmelde-Lauf): holt alle drei liegengebliebenen Zustände auf einmal nach
+    assert taktgeber.cli_lauf(args) == 0
+
+    nach1 = _gh_stand(welt)
+    assert _issue_aus_stand(nach1, 601)["state"] == "closed"
+    assert _issue_aus_stand(nach1, 602)["state"] == "open"
+    assert ticket_zustand.STAGING_FERTIG_LABEL in ticket_zustand.label_namen(_issue_aus_stand(nach1, 602))
+    assert _issue_aus_stand(nach1, 603)["state"] == "open"
+
+    # Genau ein sichtbarer wt-Tab für #603, fensterlos gestartet
+    assert len(wt.aufrufe) == 1, wt.aufrufe
+    befehl, kw = wt.aufrufe[0]
+    assert befehl[0] == str(attrappe)
+    assert "--title" in befehl and "bau 603" in befehl
+    flags = int(kw.get("creationflags") or 0)
+    assert flags & CREATE_NO_WINDOW
+    assert flags & CREATE_NEW_PROCESS_GROUP
+    assert not (flags & DETACHED_PROCESS)
+
+    # Alle drei Handlungen im Bau-Log; bau_log.lese() zählt nicht als wt-Aufruf
+    assert any(
+        z.get("wer") == "taktgeber" and z.get("aktion") == "geschlossen" for z in bau_log.lese(welt["repo"], 601)
+    )
+    assert any(
+        z.get("wer") == "taktgeber" and z.get("aktion") == "label_gesetzt" for z in bau_log.lese(welt["repo"], 602)
+    )
+    assert any(z.get("wer") == "taktgeber" and z.get("aktion") == "geweckt" for z in bau_log.lese(welt["repo"], 603))
+    assert len(wt.aufrufe) == 1
+
+    # Lauf-Log des Windows-Anmeldelaufs enthält alle drei Tickets mit Zeitstempel
+    log_text = (log_ordner / "293.log").read_text(encoding="utf-8")
+    assert "#601: geschlossen" in log_text
+    assert "#602: label_gesetzt" in log_text
+    assert "#603: geweckt" in log_text
+
+    aufrufe_nach1 = list(nach1["aufrufe"])
+
+    # Lauf 2 (nächster Takt) bei aktiver Start-Sperre für #603: kein zweiter Tab, keine neuen GitHub-Schreibaufrufe
+    haupt_sperre = startstelle.sperr_datei("603", "test-org/beispiel-app")
+    with sperre.halte(haupt_sperre) as frei:
+        assert frei is True
+        assert taktgeber.cli_lauf(args) == 0
+
+    nach2 = _gh_stand(welt)
+    assert len(wt.aufrufe) == 1, "Zweiter Lauf bei laufender Session darf keinen zweiten Tab öffnen"
+    assert nach2["aufrufe"] == aufrufe_nach1
 
 
 # --- 3. Echter schtasks-Lauf unter Windows (CI / PC) ---
