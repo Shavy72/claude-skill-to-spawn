@@ -16,6 +16,7 @@ concurrency:
 
 jobs:
   pipeline-stufe-0-1:
+    if: ${{ github.event_name != 'pull_request' || !(startsWith(github.head_ref, 'ticket/') && contains(github.head_ref, '-welle')) }}
     uses: ./.github/workflows/pipeline-stufe-0-1.yml
     with:
       python-version: "3.13"
