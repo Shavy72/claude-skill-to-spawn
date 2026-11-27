@@ -14,6 +14,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from conftest import attrappe
+
 SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL))
 
@@ -176,9 +178,7 @@ def _aufpasser_attrappe(pfade: list[Path]) -> SimpleNamespace:
     )
 
 
-def test_takt_je_repo_einmal_und_grund_nur_bei_wechsel(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_takt_je_repo_einmal_und_grund_nur_bei_wechsel(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     _, klon = _aufbau(tmp_path)
     (klon / "unter").mkdir()
     datei = klon / ".to-spawn" / "config.json"
@@ -187,9 +187,7 @@ def test_takt_je_repo_einmal_und_grund_nur_bei_wechsel(
     with caplog.at_level(logging.INFO, logger="aufpasser"):
         aufpasser.Aufpasser.klone_nachziehen(selbst)
         aufpasser.Aufpasser.klone_nachziehen(selbst)
-    zeilen = [
-        r.getMessage() for r in caplog.records if "übersprungen" in r.getMessage()
-    ]
+    zeilen = [r.getMessage() for r in caplog.records if "übersprungen" in r.getMessage()]
     assert len(zeilen) == 1, zeilen
     # Grund weg (sauber) → nachgezogen, Merk-Eintrag gelöscht
     _git(klon, "checkout", "-q", "--", ".to-spawn/config.json")
@@ -244,9 +242,15 @@ def test_b4_fetch_laesst_fetch_head_der_session_stehen(tmp_path: Path) -> None:
 def test_b5_zeitgrenze_beendet_ganze_prozessgruppe(tmp_path: Path) -> None:
     _, klon = _aufbau(tmp_path)
     pid_datei = tmp_path / "helfer.pid"
-    helfer = tmp_path / "haeng.sh"
-    helfer.write_text(f"#!/bin/sh\necho $$ > {pid_datei}\nexec sleep 30\n")
-    helfer.chmod(0o755)
+    helfer = attrappe(
+        tmp_path,
+        "haeng",
+        f"""
+        import os, pathlib, time
+        pathlib.Path({str(pid_datei)!r}).write_text(str(os.getpid()), encoding="utf-8")
+        time.sleep(30)
+        """,
+    )
     with pytest.raises(RuntimeError, match="Zeitgrenze"):
         aufpasser._git(
             klon,
@@ -257,12 +261,7 @@ def test_b5_zeitgrenze_beendet_ganze_prozessgruppe(tmp_path: Path) -> None:
             zeitgrenze=2,
         )
     pid = int(pid_datei.read_text().strip())
-    lebt = (
-        subprocess.run(
-            ["kill", "-0", str(pid)], capture_output=True, check=False
-        ).returncode
-        == 0
-    )
+    lebt = subprocess.run(["kill", "-0", str(pid)], capture_output=True, check=False).returncode == 0
     if lebt:
         subprocess.run(["kill", "-9", str(pid)], check=False)
     assert not lebt, "Remote-Helfer überlebt die Zeitgrenze"

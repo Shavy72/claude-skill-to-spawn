@@ -1493,9 +1493,7 @@ def session_finden(pane_pid: int, window_id: str, pane_id: str, heim: Path | Non
     return None
 
 
-def _git(
-    cwd: Path, *args: str, env: dict[str, str] | None = None, zeitgrenze: int = 300
-) -> str:
+def _git(cwd: Path, *args: str, env: dict[str, str] | None = None, zeitgrenze: int = 300) -> str:
     # Eigene Prozessgruppe: nach der Zeitgrenze stirbt die ganze Gruppe, auch
     # Remote-Helfer (ssh, remote-ext), nicht nur git selbst (#1497, B5).
     try:
@@ -1596,9 +1594,7 @@ def _nachziehen_einstellung(wurzel: Path, haupt: str) -> dict[str, Any] | None:
     return einstellung if isinstance(einstellung, dict) else None
 
 
-def klon_nachziehen(
-    ordner: Path, fenster_texte: Callable[[], Iterable[str]] | None = None
-) -> str:
+def klon_nachziehen(ordner: Path, fenster_texte: Callable[[], Iterable[str]] | None = None) -> str:
     """Klon einer laufenden Session auf ``origin/<Hauptzweig>`` vorspulen (#897, #1497).
 
     Ohne diesen Schritt zieht nur der Spawn einen Klon nach; Hooks und Skripte, die
@@ -1648,11 +1644,7 @@ def klon_nachziehen(
             return f"übersprungen: {grund}"
         vorher = _git(wurzel, "rev-parse", "HEAD").strip()
         _git(wurzel, "merge", "-q", "--ff-only", f"origin/{haupt}")
-        ergebnis = (
-            "aktuell"
-            if _git(wurzel, "rev-parse", "HEAD").strip() == vorher
-            else "nachgezogen"
-        )
+        ergebnis = "aktuell" if _git(wurzel, "rev-parse", "HEAD").strip() == vorher else "nachgezogen"
     except RuntimeError as fehler:
         return f"übersprungen: {fehler}"
     danach = einstellung.get("danach")
@@ -1663,6 +1655,8 @@ def klon_nachziehen(
                 cwd=str(wurzel),
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=120,
                 check=False,
                 **prozessbaum.fensterlos(),
@@ -2241,9 +2235,7 @@ class Aufpasser:
         """Jeden Ordner, in dem irgendein tmux-Pane steht (auch Leit-Sessions außerhalb
         ``spec-<S>``), per :func:`klon_nachziehen` vorspulen (#897, #1497)."""
         try:
-            zeilen = self.tmux(
-                "list-panes", "-a", "-F", "#{pane_current_path}\t#{pane_id}"
-            ).splitlines()
+            zeilen = self.tmux("list-panes", "-a", "-F", "#{pane_current_path}\t#{pane_id}").splitlines()
         except RuntimeError as fehler:
             log.warning("Panes nicht lesbar — kein Nachziehen: %s", fehler)
             return

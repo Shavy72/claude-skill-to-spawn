@@ -149,6 +149,11 @@ KEIN_START = frozenset(
             "<modul>",
         ),  # Test-Hilfe #122: startet Git-Bash-Kind (sleep) als Session-Ersatz
         ("to_spawn/aufpasser.py", "Aufpasser.sh"),  # Lese-Befehle (tmux list/capture); start=True → Tür
+        ("to_spawn/aufpasser.py", "_git"),  # git-Aufrufe in eigener Prozessgruppe für Zeitlimit-Abbruch, wartet (#897)
+        (
+            "to_spawn/aufpasser.py",
+            "klon_nachziehen",
+        ),  # nachziehen.danach (Hook-Installer aus origin-Konfig), wartet, keine Session (#897)
         ("to_spawn/aufseher_stand.py", "_tmux_echt"),  # tmux lesen
         # bash-Tür (#186): einzige subprocess-Stelle für bash; Aufrufer startklar._standard_laeufer
         # (Hook-/Trockenlauf-Probe, Ausgabe gelesen) und stand._lauf (Stand-Check/Push), keine Session
