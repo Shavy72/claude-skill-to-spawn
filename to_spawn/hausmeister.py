@@ -381,6 +381,8 @@ PLATZNOT_ANTEIL = 0.15
 ZWEIGE_SCHALTER = "TO_SPAWN_HAUSMEISTER_ZWEIGE_LOESCHEN"
 #: Grund/Log-Text, wenn der Schalter fehlt (eine Formulierung für Takt, Zweig-Tür und Senke).
 ZWEIGE_AUS = f"Zweig-Löschen aus ({ZWEIGE_SCHALTER}=1 fehlt)"
+#: #888: Tägliche lesende Zweig-/Issue-Prüfung im Hausmeister-Takt nur mit ``=1`` (:func:`zweig_pruefung_an`).
+ZWEIG_PRUEFUNG_SCHALTER = "TO_SPAWN_HAUSMEISTER_ZWEIG_PRUEFUNG"
 #: Unter diesem Anteil freier Platte startet keine neue Session.
 STARTSPERRE_ANTEIL = 0.05
 #: Ab diesem belegten Inode-Anteil der Temp-Wurzel warnt und räumt der Hausmeister (#355);
@@ -724,6 +726,7 @@ def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> Rundgang:
     _pt_reste_im_takt(loeschen=loeschen, jetzt=jetzt)  # #355: tote markierte pt-*-Reste räumen (Linux)
     _temp_inodes_im_takt()  # #355: Datei-Zähler (Inodes) der Temp-Wurzel prüfen
     _zweige_im_takt(loeschen, jetzt)
+    _zweig_pruefung_im_takt(jetzt)
     # L5 #145: Netz für vergessene Ablösungen, wirft nie; Probelauf schreibt/lädt nichts (#169).
     uebergabe_sichern.sichern(trocken=not loeschen)
     return Rundgang(True, "", tuple(ergebnisse))
@@ -739,6 +742,29 @@ def zweige_loeschen_an() -> bool:
     entfernten Worktrees (:func:`_loeschen`, vorher gesichert) und der reine Probelauf.
     """
     return os.environ.get(ZWEIGE_SCHALTER, "").strip() == "1"
+
+
+def zweig_pruefung_an() -> bool:
+    """#888: Läuft die tägliche lesende Zweig-Prüfung im Hausmeister-Takt? Nur mit ``=1``."""
+    return os.environ.get(ZWEIG_PRUEFUNG_SCHALTER, "").strip() == "1"
+
+
+def _zweig_pruefung_im_takt(jetzt: float | None) -> None:
+    """#888: Tägliche lesende Zweig-/Issue-Prüfung im Hausmeister-Takt; löscht nie, wirft nie."""
+    if not zweig_pruefung_an():
+        return
+    zeit = time.time() if jetzt is None else float(jetzt)
+    if not _sicherung_takt_faellig("zweig_pruefung", zeit):
+        return
+    try:
+        from to_spawn import zweig_pruefung
+
+        log_ziel = _log_pfad().with_name(zweig_pruefung.LOG_DATEINAME)
+        for repo in _hauptrepos():
+            zweig_pruefung.pruefe_repo(repo, log_datei=log_ziel, jetzt=zeit)
+        _sicherung_takt_merken("zweig_pruefung", zeit)
+    except Exception:  # Vertrag: wirft nie — Ordner-Ergebnisse gehen vor
+        log.exception("Hausmeister: Zweig-Prüfung gescheitert")
 
 
 def _zweige_im_takt(loeschen: bool, jetzt: float | None) -> None:

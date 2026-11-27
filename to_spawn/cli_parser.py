@@ -38,6 +38,7 @@ from to_spawn import (
     warten,
     wecker,
     werkzeug,
+    zweig_pruefung,
 )
 from to_spawn import einreichen as einreichen_modul
 from to_spawn.pruefplan import Moment
@@ -511,6 +512,8 @@ def baue_parser() -> _Parser:
     ort_wahl.richte_parser_ein(unter)
     # Regel-Prüfung (#584, E20/E21): doppelte to-spawn-Ablauf-Texte außerhalb des Skills.
     regel_pruefung.richte_parser_ein(unter)
+    # Lesende Zweig- und Issue-Prüfung (#888, aus App #1208).
+    zweig_pruefung.richte_parser_ein(unter)
     # Warten auf fremden Lauf ohne Selbst-Treffer (#870 / #1456, Fehlerkatalog S16/P16).
     p_warte = unter.add_parser(
         "warte-lauf",

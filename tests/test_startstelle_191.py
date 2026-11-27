@@ -947,14 +947,19 @@ def test_fern_sperre_heartbeat_verlaengert_aktive_lease(tmp_path: Path) -> None:
     halte_pc = tmp_path / "halte_pc"
     ref = startstelle.fern_sperr_ref("19125")
 
+    # Unter Windows (xdist-Last) kostet jeder git-Aufruf deutlich mehr Zeit als unter Linux;
+    # eine TTL von 1,5 s läge sonst schon unter der Dauer eines Heartbeat-Umlaufs samt Lesen.
+    ttl_s = 15.0 if sys.platform == "win32" else 2.0
+    takt_s = 1.5 if sys.platform == "win32" else 0.3
+
     env_pc = _rechner_env(
         tmp_path,
         klon_pc,
         "pc-win",
         extra={
             "BAU_LAUF_97_HALTE_DATEI": str(halte_pc),
-            startstelle.FERN_SPERRE_TTL_ENV: "1.5",
-            startstelle.FERN_SPERRE_TAKT_ENV: "0.3",
+            startstelle.FERN_SPERRE_TTL_ENV: str(ttl_s),
+            startstelle.FERN_SPERRE_TAKT_ENV: str(takt_s),
         },
     )
     env_srv = _rechner_env(tmp_path, klon_srv, "bau-server", extra={"BAU_LAUF_97_SCHLAF_S": "0"})
@@ -977,8 +982,8 @@ def test_fern_sperre_heartbeat_verlaengert_aktive_lease(tmp_path: Path) -> None:
         ok_1, sha_1, _ = gh.remote_ref_sha(klon_srv, ref)
         assert ok_1 and sha_1
 
-        # Länger warten als die Erst-TTL (1,5 s): Heartbeat muss den SHA fortgeschrieben haben.
-        time.sleep(2.0)
+        # Länger warten als die Erst-TTL: Heartbeat muss den SHA fortgeschrieben haben.
+        time.sleep(ttl_s + 0.5)
         ok_2, sha_2, _ = gh.remote_ref_sha(klon_srv, ref)
         assert ok_2 and sha_2 and sha_2 != sha_1, "Heartbeat hat die Lease nicht verlängert"
 
@@ -992,7 +997,8 @@ def test_fern_sperre_heartbeat_verlaengert_aktive_lease(tmp_path: Path) -> None:
             timeout=30,
             check=False,
         )
-        assert srv.returncode == 0 and "läuft schon" in (srv.stdout + srv.stderr)
+        ausgabe = srv.stdout + srv.stderr
+        assert srv.returncode == 0 and "läuft schon" in ausgabe, (srv.returncode, ausgabe)
     finally:
         halte_pc.write_text("ende", encoding="utf-8")
         pc.communicate(timeout=30)
@@ -1083,3 +1089,49 @@ def test_fern_sperre_gleicher_rechner_uebernimmt_verwaiste_lease_nach_absturz(
         assert ok_sha and neu_sha and neu_sha != alt_sha
     finally:
         startstelle.alle_fern_sperren_freigeben()
+
+
+def test_fern_sperre_langsames_lesen_laesst_aktive_lease_nicht_ablaufen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#191: Dauert das Lesen der Remote-Lease länger als die Rest-TTL, gilt die beim Lese-Start aktive Lease weiter."""
+    _bare, _klon_pc, klon_srv = _zwei_rechner_welt(tmp_path)
+    monkeypatch.delenv(startstelle.TEST_FERN_SPERRE_AUS_ENV, raising=False)
+    monkeypatch.setenv("TO_SPAWN_RECHNER", "bau-server")
+    monkeypatch.setenv(startstelle.SPERR_ORDNER_ENV, str(tmp_path / "sperren-srv"))
+
+    zeit = [1000.0]
+
+    def _uhr() -> float:
+        return zeit[0]
+
+    aktive_lease = startstelle.FernSperre(
+        ticket="19129",
+        rechner="pc-win",
+        pid=4242,
+        token="aktiv-token",
+        beginn=999.0,
+        erneuert=999.5,
+        ablauf=1001.0,
+        ttl_s=1.5,
+        sha="a" * 40,
+    )
+
+    def _langsames_lesen(
+        _repo: Path, _ticket: str, *, timeout: float
+    ) -> tuple[bool, startstelle.FernSperre | None, str]:
+        _ = timeout
+        # Simuliert langsames git fetch/log (z. B. unter Windows-Last): Lese-Start war 1000.0 (< 1001.0),
+        # bei Rückkehr steht die Uhr bereits hinter ablauf (1001.5).
+        zeit[0] = 1001.5
+        return True, aktive_lease, ""
+
+    monkeypatch.setattr(startstelle.time, "time", _uhr)
+    monkeypatch.setattr(startstelle, "_fern_sperre_lesen", _langsames_lesen)
+    monkeypatch.setattr(gh, "commit_mit_nachricht", lambda *_a, **_k: (True, "b" * 40, ""))
+    monkeypatch.setattr(gh, "remote_ref_cas_setzen", lambda *_a, **_k: (False, True, "stale info"))
+
+    e = startstelle.betreten("19129", "test-org/test-repo", klon_srv, pruefer=lambda _t, _c: True)
+    assert not e.erlaubt
+    assert e.exit_code == 0, e
+    assert "läuft schon" in e.grund and "pc-win" in e.grund, e.grund
