@@ -194,14 +194,17 @@ def test_hausmeister_hauptrepo_namen_ohne_heimordner(monkeypatch: pytest.MonkeyP
 
 
 def test_cli_ohne_heim_befehl_ohne_heimbedarf_laeuft_durch(tmp_path: Path) -> None:
-    """Echter Prozess: ``to_spawn.py --help`` und ``to_spawn.py eintrag`` brauchen keinen
-    Heimat-Ordner und laufen ohne ``HOME``/``USERPROFILE`` mit Exit 0 durch."""
+    """Echter Prozess: ``to_spawn.py --help`` und ``to_spawn.py eintrag`` (mit gesetztem
+    Protokoll-Puffer) brauchen keinen Heimat-Ordner und laufen ohne ``HOME``/``USERPROFILE`` mit Exit 0 durch."""
+    from to_spawn import bau_log
+
     hilfe = _cli(tmp_path, "--help", env=_env_ohne_heim())
     assert hilfe.returncode == 0, hilfe.stdout + hilfe.stderr
     assert "eintrag" in hilfe.stdout
 
     repo = tmp_path / "repo"
     repo.mkdir()
+    puffer = tmp_path / "protokoll_puffer"
     eintrag = _cli(
         repo,
         "eintrag",
@@ -217,10 +220,12 @@ def test_cli_ohne_heim_befehl_ohne_heimbedarf_laeuft_durch(tmp_path: Path) -> No
         "Path.home beim Import",
         "--loesung",
         "erst bei Gebrauch bestimmen",
-        env=_env_ohne_heim(TO_SPAWN_REPO=str(repo)),
+        env=_env_ohne_heim(TO_SPAWN_REPO=str(repo), TO_SPAWN_PROTOKOLL_PUFFER=str(puffer)),
     )
     assert eintrag.returncode == 0, eintrag.stdout + eintrag.stderr
-    assert (repo / "docs" / "agents" / "bau_log" / "212.jsonl").is_file()
+    assert not (repo / "docs" / "agents" / "bau_log" / "212.jsonl").exists()
+    zeilen = bau_log.lese(repo, "212", puffer_ordner=puffer)
+    assert len(zeilen) == 1 and zeilen[0]["typ"] == "vorfall"
 
 
 def test_cli_ohne_heim_befehl_mit_heimbedarf_meldet_klar_was_fehlt(tmp_path: Path) -> None:

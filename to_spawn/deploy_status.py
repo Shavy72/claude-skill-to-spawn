@@ -93,8 +93,23 @@ def uebernimm(repo: Path, ticket: str, zeilen: list[dict[str, Any]]) -> int:
         schluessel = _schluessel(zeile)
         if schluessel in schon_da:
             continue
-        felder = {name: zeile.get(name) for name in _FELDER}
-        bau_log.schreibe(repo, ticket, "deploy_phase", **felder)
+        phase = str(zeile.get("phase") or "deploy").strip() or "deploy"
+        marker = str(zeile.get("marker") or phase).strip() or phase
+        grund_wert = str(zeile.get("grund") or "").strip() or marker
+        felder = {name: zeile.get(name) for name in _FELDER if name != "grund"}
+        commit_wert = str(zeile.get("sha") or "").strip() or bau_log.git_kopf_kurz(repo, ticket)
+        bau_log.schreibe(
+            "deploy_phase",
+            repo=repo,
+            ticket=ticket,
+            wer="deploy_status",
+            was=f"Deploy-Phase {phase}: {marker}",
+            session=f"deploy-{zeile.get('lauf') or ticket}",
+            commit=commit_wert,
+            grund=grund_wert,
+            kontextstand=0,
+            **felder,
+        )
         schon_da.add(schluessel)
         neu += 1
     return neu

@@ -80,7 +80,19 @@ def repo(tmp_path: Path) -> Path:
     }
     (r / "docs" / "agents" / "manifests").mkdir(parents=True)
     (r / "docs" / "agents" / "manifests" / f"spec-{SPEC}.json").write_text(json.dumps(manifest), encoding="utf-8")
-    bau_log.schreibe(r, 2, "entscheidung", frage="Welche Tabelle", wahl="SQLite", grund="schon da")
+    bau_log.schreibe(
+        "entscheidung",
+        repo=r,
+        ticket=2,
+        wer="bau",
+        was="SQLite",
+        session="s-2",
+        commit="-",
+        grund="schon da",
+        kontextstand=0,
+        frage="Welche Tabelle",
+        wahl="SQLite",
+    )
     fid = briefkasten.einwerfen("3", "Blocker erledigt?", "weiterbauen", 3, [], hauptbaum=r)
     briefkasten.antworten("3", fid, "weiterbauen", ["Lastenheft A46"], "Blocker sind zu", hauptbaum=r)
     return r
@@ -140,8 +152,32 @@ def test_abschluss_text_enthaelt_alle_entscheidungen_mit_zahl_475(repo: Path, tm
         "force-with-lease auf eigenen ticket/14-unbekannte-adressen",
     )
     for i in range(4):
-        bau_log.schreibe(repo, 2, "entscheidung", frage=f"Frage {i}", wahl=f"Wahl {i}", grund="g")
-    bau_log.schreibe(repo, 3, "entscheidung", frage=echt[0], wahl=echt[1], grund="Klasse 1 · Rebase")
+        bau_log.schreibe(
+            "entscheidung",
+            repo=repo,
+            ticket=2,
+            wer="bau",
+            was=f"Wahl {i}",
+            session="s-2",
+            commit="-",
+            grund="g",
+            kontextstand=0,
+            frage=f"Frage {i}",
+            wahl=f"Wahl {i}",
+        )
+    bau_log.schreibe(
+        "entscheidung",
+        repo=repo,
+        ticket=3,
+        wer="bau",
+        was=echt[1],
+        session="s-3",
+        commit="-",
+        grund="Klasse 1 · Rebase",
+        kontextstand=0,
+        frage=echt[0],
+        wahl=echt[1],
+    )
     assert _unter("ablegen", repo, tmp_path, *_LINKS, "--spec-fertig", _FERTIG).returncode == 0
     zeilen = [z for z in _datei(repo).read_text(encoding="utf-8").splitlines() if z.startswith("| #")]
     assert len(zeilen) == 7, zeilen
@@ -159,28 +195,50 @@ def test_ohne_manifest_keine_fremden_bau_logs_und_unvollstaendig_markiert_445(
     r = tmp_path / "projekt_ohne_manifest"
     r.mkdir()
     # Fremde Tickets ohne Spec-Bezug bzw. mit fremder Spec dürfen nicht auftauchen.
-    bau_log.schreibe(r, 999, "entscheidung", frage="Fremdes Thema", wahl="Fremde Wahl", grund="andere Spec")
     bau_log.schreibe(
-        r,
-        888,
         "entscheidung",
+        repo=r,
+        ticket=999,
+        wer="bau",
+        was="Fremde Wahl",
+        session="s-999",
+        commit="-",
+        grund="andere Spec",
+        kontextstand=0,
+        frage="Fremdes Thema",
+        wahl="Fremde Wahl",
+    )
+    bau_log.schreibe(
+        "entscheidung",
+        repo=r,
+        ticket=888,
+        wer="bau",
+        was="Andere Wahl",
+        session="s-888",
+        commit="-",
+        grund="Spec 888",
+        kontextstand=0,
         spec="888",
         frage="Anderes Spec-Thema",
         wahl="Andere Wahl",
-        grund="Spec 888",
     )
     fid = briefkasten.einwerfen("999", "Fremde Briefkasten-Frage?", "nein", 3, [], hauptbaum=r)
     briefkasten.antworten("999", fid, "nein", ["Quelle"], "fremd", hauptbaum=r)
 
     # Ticket mit ausdrücklichem Spec-Bezug im Bau-Log darf enthalten sein.
     bau_log.schreibe(
-        r,
-        422,
         "entscheidung",
+        repo=r,
+        ticket=422,
+        wer="bau",
+        was="Eigene Wahl",
+        session="s-422",
+        commit="-",
+        grund="gehört zu 421",
+        kontextstand=0,
         spec=str(SPEC),
         frage="Eigenes Spec-Thema",
         wahl="Eigene Wahl",
-        grund="gehört zu 421",
     )
 
     lauf = _unter(
@@ -210,7 +268,19 @@ def test_ohne_manifest_und_ohne_spec_tag_leere_unvollstaendige_liste_445(
     """Ohne Manifest und ohne Spec-Zuordnung im Bau-Log bleibt die Liste frei von Fremd-Tickets (#445)."""
     r = tmp_path / "projekt_nur_fremd"
     r.mkdir()
-    bau_log.schreibe(r, 777, "entscheidung", frage="Nur fremd", wahl="X", grund="gehört nicht zu 421")
+    bau_log.schreibe(
+        "entscheidung",
+        repo=r,
+        ticket=777,
+        wer="bau",
+        was="X",
+        session="s-777",
+        commit="-",
+        grund="gehört nicht zu 421",
+        kontextstand=0,
+        frage="Nur fremd",
+        wahl="X",
+    )
     lauf = _unter(
         "ablegen",
         r,

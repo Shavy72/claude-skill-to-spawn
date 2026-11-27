@@ -228,7 +228,19 @@ def _repo_anlegen(tmp_path: Path, *, mit_beleg_902: bool) -> Path:
         (vh / "902.md").write_text("# Belegseite #902\n**ABNAHME: ABGENOMMEN**\nKlickweg geprüft.\n", encoding="utf-8")
     _commit(r, "feat: Export und Status (#901, #902)")
 
-    bau_log.schreibe(r, 901, "entscheidung", frage="Trennzeichen", wahl="Semikolon", grund="Excel-Standard")
+    bau_log.schreibe(
+        "entscheidung",
+        repo=r,
+        ticket=901,
+        wer="bau",
+        was="Semikolon",
+        session="s-901",
+        commit="-",
+        grund="Excel-Standard",
+        kontextstand=0,
+        frage="Trennzeichen",
+        wahl="Semikolon",
+    )
     fid = briefkasten.einwerfen("902", "Status-Text?", "ok", 3, [], hauptbaum=r)
     briefkasten.antworten("902", fid, "ok", ["Lastenheft A57"], "kurz", hauptbaum=r)
     return r

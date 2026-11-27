@@ -211,7 +211,19 @@ def _repo_anlegen(tmp_path: Path, *, mit_staging: bool = True) -> tuple[Path, Pa
     (r / "docs" / "agents" / "manifests" / f"spec-{SPEC}.json").write_text(
         json.dumps(manifest, indent=2), encoding="utf-8"
     )
-    bau_log.schreibe(r, 901, "entscheidung", frage="Farbe?", wahl="Grün", grund="klar")
+    bau_log.schreibe(
+        "entscheidung",
+        repo=r,
+        ticket=901,
+        wer="bau",
+        was="Grün",
+        session="s-901",
+        commit="-",
+        grund="klar",
+        kontextstand=0,
+        frage="Farbe?",
+        wahl="Grün",
+    )
     _git(r, "add", "docs")
     _git(r, "commit", "-q", "-m", "Basis Spec 370")
     postfach = _mail_konfig(r, tmp_path, mit_staging=mit_staging)

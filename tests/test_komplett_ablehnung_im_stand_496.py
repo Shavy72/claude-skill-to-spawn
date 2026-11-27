@@ -10,7 +10,6 @@ Echt ohne Attrappen: App-Repo mit eigenem Komplett-Skript, beide Skill-Wege (Pr√
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -83,7 +82,9 @@ def test_pruef_tuer_nennt_die_spec_aus_der_umgebung(
     urteil = pruef.pruefen(repo, "base", "HEAD", art="komplett")
     meldung = urteil.zeile["fehler_kurz"]
     assert f"komplett {SPEC} --moment vor-live" in meldung and "<S>" not in meldung, meldung
-    zeilen = [json.loads(z) for p in repo.rglob("*.jsonl") for z in p.read_text(encoding="utf-8").splitlines()]
+    assert not (repo / ".to-spawn" / "bau_log").exists()
+    assert not (repo / "docs" / "agents" / "bau_log").exists()
+    zeilen = bau_log.lese(repo, TICKET)
     abgelehnt = [z for z in zeilen if z.get("typ") == bau_log.KOMPLETT_ABGELEHNT]
     assert abgelehnt and abgelehnt[0].get("spec") == SPEC, zeilen
 

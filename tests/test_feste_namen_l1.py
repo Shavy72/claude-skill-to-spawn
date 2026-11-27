@@ -184,11 +184,6 @@ AUSNAHMEN: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
         ("ife gehört dem Skill — ``scripts/bau.py`` im Projekt-Repo bleibt",),
         _DOKU,
     ),
-    ("to_spawn/bau_log.py", "bau-log-ordner"): (
-        ("``eintrag``, schreibt ``docs/agents/bau_log/``) weicht nie aus: eine",),
-        _DOKU,
-    ),
-    ("to_spawn/waechter_lauf.py", "bau-log-ordner"): (("oniert=True)  # schreibt docs/agents/bau_log/ (#257)",), _DOKU),
     ("skripte/bau.py", "repo-skript"): (
         ("Aufruf: ``python scripts/bau.py <N> [--dry-run] [--model",),
         "Aufruf-Docstring der Weiterleitung",

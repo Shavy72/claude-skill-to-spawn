@@ -373,12 +373,20 @@ def _hook_stop(strom: TextIO, ausgabe: TextIO) -> None:
     modell = modell_aus(haupt) or konfig.get("modelle", {}).get("ticket")
     effort = os.environ.get("TO_SPAWN_EFFORT") or konfig.get("effort", {}).get("ticket")
 
+    commit_wert = bau_log.git_kopf_kurz(repo, ticket)
+    session_wert = str(session_id) if session_id else f"hook-{ticket}"
     # Stop feuert am Ende jeder Runde — session_start nur beim ersten Mal je Session.
     if session_id and not _hat_zeile(repo, ticket, "session_start", str(session_id)):
         bau_log.schreibe(
-            repo,
-            ticket,
             "session_start",
+            repo=repo,
+            ticket=ticket,
+            wer="hook-stop",
+            was="Session gestartet.",
+            session=session_wert,
+            commit=commit_wert,
+            grund="Stop-Hook erster Lauf",
+            kontextstand=0,
             session_id=session_id,
             staffel=_staffel(),
             modell=modell,
@@ -387,19 +395,29 @@ def _hook_stop(strom: TextIO, ausgabe: TextIO) -> None:
             beginn=_erster_zeitpunkt(eintraege),
             text="Session gestartet.",
         )
+    kontext_daten = kontext(haupt)
+    spitze = kontext_daten.get("spitze") if isinstance(kontext_daten, dict) else None
+    kontextstand = round(spitze / 1000, 1) if isinstance(spitze, (int, float)) and spitze > 0 else 0
+    ende_text = _text(daten.get("last_assistant_message"), "Session beendet.")
     bau_log.schreibe(
-        repo,
-        ticket,
         "session_ende",
+        repo=repo,
+        ticket=ticket,
+        wer="hook-stop",
+        was=ende_text[:200] or "Session beendet.",
+        session=session_wert,
+        commit=commit_wert,
+        grund="Stop-Hook Runden-Ende",
+        kontextstand=kontextstand,
         session_id=session_id,
         staffel=_staffel(),
         modell=modell,
         effort=effort,
         runner=konfig.get("runner"),
         tokens=summiere(haupt),
-        kontext=kontext(haupt),
+        kontext=kontext_daten,
         dauer_s=dauer_sekunden(eintraege),
-        text=_text(daten.get("last_assistant_message"), "Session beendet."),
+        text=ende_text,
     )
     _starte_takt(repo, ticket)
 
@@ -412,9 +430,15 @@ def _hook_stop(strom: TextIO, ausgabe: TextIO) -> None:
     marker.write_text(str(handoff), encoding="utf-8")
     if not (session_id and _hat_zeile(repo, ticket, "handoff", str(session_id))):
         bau_log.schreibe(
-            repo,
-            ticket,
             "handoff",
+            repo=repo,
+            ticket=ticket,
+            wer="hook-stop",
+            was=f"Handoff geschrieben: {handoff.name}",
+            session=session_wert,
+            commit=commit_wert,
+            grund=f"Handoff geschrieben: {handoff.name} — Folge-Session übernimmt.",
+            kontextstand=kontextstand,
             session_id=session_id,
             staffel=_staffel(),
             text=f"Handoff geschrieben: {handoff.name} — Folge-Session übernimmt.",
@@ -586,11 +610,22 @@ def _hook_subagent_stop(strom: TextIO) -> None:
         zeit_kette = kette
 
     eltern = daten.get("session_id")
+    sub_id = _subagent_kennung(daten, zeit_kette)
+    sub_kontext = kontext(kette)
+    sub_spitze = sub_kontext.get("spitze") if isinstance(sub_kontext, dict) else None
+    sub_kontextstand = round(sub_spitze / 1000, 1) if isinstance(sub_spitze, (int, float)) and sub_spitze > 0 else 0
+    sub_text = _text(daten.get("last_assistant_message"), "Subagent beendet.")
     bau_log.schreibe(
-        repo,
-        ticket,
         "subagent_ende",
-        session_id=_subagent_kennung(daten, zeit_kette),
+        repo=repo,
+        ticket=ticket,
+        wer="hook-subagent-stop",
+        was=sub_text[:200] or "Subagent beendet.",
+        session=str(sub_id or eltern or f"subagent-{ticket}"),
+        commit=bau_log.git_kopf_kurz(repo, ticket),
+        grund="SubagentStop-Hook",
+        kontextstand=sub_kontextstand,
+        session_id=sub_id,
         eltern_session=eltern,
         vermerk=f"Subagent von Session {eltern}" if eltern else None,
         staffel=_staffel(),
@@ -598,10 +633,10 @@ def _hook_subagent_stop(strom: TextIO) -> None:
         effort=os.environ.get("TO_SPAWN_EFFORT"),
         runner=konfig.get("runner"),
         tokens=summiere(kette),
-        kontext=kontext(kette),
+        kontext=sub_kontext,
         # Nur die eigene Kette — TO_SPAWN_START ist der Start der ganzen Session.
         dauer_s=dauer_aus_zeitstempeln(zeit_kette),
-        text=_text(daten.get("last_assistant_message"), "Subagent beendet."),
+        text=sub_text,
     )
 
 
@@ -680,9 +715,21 @@ def umrechnen(repo: Path, ticket: str, transkripte: Path) -> tuple[int, int]:
         if wert is None:
             ohne += 1
             continue
-        felder = {k: v for k, v in zeile.items() if k not in ("ts", "typ", "ticket")}
+        felder = {k: v for k, v in zeile.items() if k not in ("ts", "zeit", "typ", "ticket")}
+        if not str(felder.get("wer") or "").strip():
+            felder["wer"] = "umrechnen"
+        if not str(felder.get("was") or "").strip():
+            felder["was"] = f"Spitzen-Kontext nachgetragen ({pfad.name})"
+        if not str(felder.get("session") or "").strip():
+            felder["session"] = str(zeile.get("session_id") or f"umrechnen-{ticket}")
+        if not str(felder.get("commit") or "").strip():
+            felder["commit"] = bau_log.git_kopf_kurz(repo, ticket)
+        if not str(felder.get("grund") or "").strip():
+            felder["grund"] = f"Spitzen-Kontext aus {pfad.name} nachgetragen"
+        spitze = wert.get("spitze") if isinstance(wert, dict) else None
+        felder["kontextstand"] = round(spitze / 1000, 1) if isinstance(spitze, (int, float)) and spitze > 0 else 0
         felder.update(kontext=wert, umgerechnet_aus=pfad.name)
-        bau_log.schreibe(repo, ticket, str(zeile["typ"]), **felder)
+        bau_log.schreibe(str(zeile["typ"]), repo=repo, ticket=ticket, **felder)
         umgerechnet += 1
     return umgerechnet, ohne
 

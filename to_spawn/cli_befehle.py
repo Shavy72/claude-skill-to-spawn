@@ -515,27 +515,58 @@ def _eintrag(args: argparse.Namespace) -> int:
         except ValueError as fehler:
             log.error("%s", fehler)
             return 2
-    # Einzige Stelle, die die versionierte Datei schreibt: überträgt fehlende
-    # Laufdatei-Zeilen der Hooks gleich mit (Fixrunde #204) — auch die aus dem
-    # Hauptbaum, die vor dem Anlegen des Worktrees dort landeten (#257).
-    zeile = bau_log.eintrag_schreiben(
-        repo,
-        str(ticket).strip(),
+    # Alle Einträge laufen über die einzige Schreib-Tür bau_log.schreibe() Richtung origin/protokoll (#903).
+    ticket_nr = str(ticket).strip()
+    was_text = next(
+        (
+            str(w).strip()
+            for w in (
+                args.text,
+                args.umfang,
+                args.wahl,
+                args.frage,
+                zusatz.get("symptom"),
+                args.grund,
+            )
+            if str(w or "").strip()
+        ),
+        f"Bau-Log-Eintrag ({args.typ})",
+    )
+    grund_text = next(
+        (
+            str(g).strip()
+            for g in (
+                args.grund,
+                zusatz.get("ursache"),
+                args.text,
+                args.umfang,
+                was_text,
+            )
+            if str(g or "").strip()
+        ),
+        was_text,
+    )
+    zeile = bau_log.schreibe(
         args.typ,
-        hauptbaum=bau_log.log_rueckfall(),
+        repo=repo,
+        ticket=ticket_nr,
+        wer="bau",
+        was=was_text,
+        session=f"cli-{ticket_nr}",
+        commit=bau_log.git_kopf_kurz(repo, ticket_nr),
+        grund=grund_text,
+        kontextstand=bau_log.kontextstand_aktuell(repo, ticket_nr),
         umfang=args.umfang,
         schwierigkeiten=args.schwierigkeiten,
         entscheidungen=args.entscheidungen,
         text=args.text,
         frage=args.frage,
         wahl=args.wahl,
-        grund=args.grund,
         **zusatz,
     )
-    if args.typ == "vorfall":
-        # Damit der Aufseher den Vorfall schon vor Commit + Push sieht (#286).
-        bau_log.spiegel_in_laufdatei(repo, zeile["ticket"], zeile)
-    print(f"Bau-Log #{zeile['ticket']}: {args.typ} → {bau_log.log_pfad(repo, zeile['ticket'])}")
+    print(
+        f"Bau-Log #{zeile['ticket']}: {args.typ} → {bau_log.PROTOKOLL_ZWEIG}:{bau_log.protokoll_datei_im_zweig(zeile['ticket'])}"
+    )
     return 0
 
 

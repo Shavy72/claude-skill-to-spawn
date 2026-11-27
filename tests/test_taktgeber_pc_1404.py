@@ -549,7 +549,18 @@ def test_pc_fenster_subprocess_patch_isoliert_git_und_bau_log(tmp_path: Path, mo
     repo = tmp_path / "git-repo"
     repo.mkdir()
     _git(repo, "init", "-q", "-b", "master")
-    bau_log.schreibe(repo, 530, "taktgeber", wer="taktgeber", aktion="geweckt", grund="Test")
+    bau_log.schreibe(
+        "taktgeber",
+        repo=repo,
+        ticket=530,
+        wer="taktgeber",
+        was="Ticket #530 geweckt",
+        session="taktgeber",
+        commit="-",
+        grund="Test",
+        kontextstand=0,
+        aktion="geweckt",
+    )
 
     # bau_log.lese() ruft über config.repo_wurzel() echte git-Subprozesse auf — diese dürfen nie bei wt landen
     zeilen = bau_log.lese(repo, 530)

@@ -34,7 +34,19 @@ def test_briefkasten_antwort_steht_in_der_datei(tmp_path: Path) -> None:
 
 
 def test_spalten_und_bau_log_quelle(tmp_path: Path) -> None:
-    bau_log.schreibe(tmp_path, 7, "entscheidung", frage="Welche Tabelle", wahl="SQLite", grund="schon da")
+    bau_log.schreibe(
+        "entscheidung",
+        repo=tmp_path,
+        ticket=7,
+        wer="bau",
+        was="SQLite",
+        session="s-7",
+        commit="-",
+        grund="schon da",
+        kontextstand=0,
+        frage="Welche Tabelle",
+        wahl="SQLite",
+    )
     text = capo.uebersicht(tmp_path, 3, [7]).read_text(encoding="utf-8")
     assert KOPF in text
     (zeile,) = [z for z in text.splitlines() if z.startswith("| #7")]
@@ -74,7 +86,19 @@ def test_anhaengen_und_abschluss_gleiches_format(tmp_path: Path) -> None:
 
 def test_lange_frage_behaelt_die_wahl(tmp_path: Path) -> None:
     frage = "Welche Tabelle nehmen wir " + "sehr " * 40 + "lange?"
-    bau_log.schreibe(tmp_path, 7, "entscheidung", frage=frage, wahl="SQLite", grund="schon da")
+    bau_log.schreibe(
+        "entscheidung",
+        repo=tmp_path,
+        ticket=7,
+        wer="bau",
+        was="SQLite",
+        session="s-7",
+        commit="-",
+        grund="schon da",
+        kontextstand=0,
+        frage=frage,
+        wahl="SQLite",
+    )
     (zeile,) = _zeilen(capo.uebersicht(tmp_path, 3, [7]))
     was = zeile.split(" | ")[1]
     assert was.endswith("… → SQLite"), was

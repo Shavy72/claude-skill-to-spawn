@@ -107,12 +107,12 @@ def test_weg_hooks_lassen_worktree_sauber_eintrag_uebertraegt(repo: Path, tmp_pa
 
     assert _status(worktree) == "", "Hooks dürfen den Worktree nie dirty machen"
     versioniert = bau_log.log_pfad(worktree, TICKET)
-    assert not versioniert.exists(), "nur eintrag schreibt die versionierte Datei"
-    lauf = _roh(_laufdatei(worktree))
-    assert lauf, "Hooks schreiben in die Laufdatei"
+    assert not versioniert.exists(), "keine lokale Datei unter docs/agents/bau_log/"
+    assert not _laufdatei(worktree).exists(), "keine lokale Datei unter .to-spawn/bau_log/"
 
     # Token-Summen trotz Teilzeilen mit gleicher message.id/requestId (Fix 1).
     zeilen = bau_log.lese(worktree, TICKET)
+    assert zeilen, "Hooks schreiben über bau_log.schreibe() ins Ereignis-Protokoll"
     enden = [z for z in zeilen if z["typ"] == "session_ende"]
     assert enden[-1]["tokens"] == HAUPT_TOKENS
     subs = [z for z in zeilen if z["typ"] == "subagent_ende"]
@@ -129,31 +129,26 @@ def test_weg_hooks_lassen_worktree_sauber_eintrag_uebertraegt(repo: Path, tmp_pa
         "--typ",
         "zusammenfassung",
         "--umfang",
-        "Laufdatei gebaut.",
+        "Protokoll-Tür gebaut.",
         "--schwierigkeiten",
         "Worktree wurde dirty.",
         "--entscheidungen",
-        "Nur eintrag schreibt versioniert.",
+        "Alles über origin/protokoll.",
     ]
     lauf1 = _lauf(eintrag, worktree, umgebung)
     assert lauf1.returncode == 0, lauf1.stderr
-    fest = _roh(versioniert)
-    for zeile in lauf:
-        assert zeile in fest, f"Laufdatei-Zeile fehlt in der versionierten Datei: {zeile}"
-    assert json.loads(fest[-1])["typ"] == "zusammenfassung"
-    assert len(fest) == len(lauf) + 1
+    assert not versioniert.exists(), "eintrag legt keine lokale Bau-Log-Datei im Worktree an"
+    assert _status(worktree) == "", "eintrag darf den Worktree nie dirty machen"
+    nach1 = bau_log.lese(worktree, TICKET)
+    assert nach1[-1]["typ"] == "zusammenfassung"
+    assert len(nach1) == len(zeilen) + 1
 
-    # Zweiter eintrag überträgt nichts doppelt; lese() zählt jede Zeile einmal.
+    # Zweiter eintrag hängt an; lese() zählt jede Zeile einmal, Worktree bleibt sauber.
     lauf2 = _lauf([*eintrag[:-1], "Zweite Runde."], worktree, umgebung)
     assert lauf2.returncode == 0, lauf2.stderr
-    fest2 = _roh(versioniert)
-    assert len(fest2) == len(lauf) + 2
-    assert len(bau_log.lese(worktree, TICKET)) == len(lauf) + 2
+    nach2 = bau_log.lese(worktree, TICKET)
+    assert len(nach2) == len(zeilen) + 2
     assert bau_log.zusammenfassung(worktree, TICKET)["verbrauch_k"] == 62.6  # #238
-
-    # Nach dem Commit der versionierten Datei ist der Worktree wieder sauber.
-    _git(worktree, "add", str(versioniert))
-    _git(worktree, "commit", "-m", "Bau-Log")
     assert _status(worktree) == ""
 
 

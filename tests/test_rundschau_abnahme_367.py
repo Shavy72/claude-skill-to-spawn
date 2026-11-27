@@ -74,7 +74,19 @@ def repo(tmp_path: Path) -> Path:
     }
     (r / "docs" / "agents" / "manifests").mkdir(parents=True)
     (r / "docs" / "agents" / "manifests" / f"spec-{SPEC}.json").write_text(json.dumps(manifest), encoding="utf-8")
-    bau_log.schreibe(r, 10, "entscheidung", frage="Trennzeichen", wahl="Semikolon", grund="Excel-Standard")
+    bau_log.schreibe(
+        "entscheidung",
+        repo=r,
+        ticket=10,
+        wer="bau",
+        was="Semikolon",
+        session="s-10",
+        commit="-",
+        grund="Excel-Standard",
+        kontextstand=0,
+        frage="Trennzeichen",
+        wahl="Semikolon",
+    )
     fid = briefkasten.einwerfen("11", "Dateiname?", "export.csv", 3, [], hauptbaum=r)
     briefkasten.antworten("11", fid, "export.csv", ["Lastenheft A51"], "kurz und klar", hauptbaum=r)
     return r

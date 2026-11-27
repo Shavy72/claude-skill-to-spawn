@@ -706,11 +706,11 @@ def regel_verwaist(
         return None  # #279: fertig gebaut hat zu Recht keine Spur mehr
     if checkpoint and checkpoint in label_namen(issue):
         return None  # Checkpoint-Ticket wartet absichtlich auf einen Menschen
-    datiert = [(t, z) for z in log_zeilen if (t := _zeit(z.get("ts")))]
+    datiert = [(t, z) for z in log_zeilen if (t := _zeit(z.get("zeit") or z.get("ts")))]
     if datiert and max(datiert, key=lambda paar: paar[0])[1].get("typ") == "blockiert":
         return None  # Session hat „blockiert“ gemeldet — wartet, ist nicht tot
     spuren: list[datetime] = [datetime.fromtimestamp(c.zeit, timezone.utc) for c in eigene]
-    spuren += [t for t in (_zeit(z.get("ts")) for z in log_zeilen) if t]
+    spuren += [t for t in (_zeit(z.get("zeit") or z.get("ts")) for z in log_zeilen) if t]
     if wt_zeit is not None:
         spuren.append(datetime.fromtimestamp(wt_zeit, timezone.utc))
     if not spuren:
@@ -804,7 +804,7 @@ def verdichte(ticket: int, z: dict[str, Any]) -> str:
         inhalt = " ".join(str(z.get(k)) for k in ("phase", "status", "ergebnis", "grund") if z.get(k))
     else:
         inhalt = next((str(z[k]) for k in ("grund", "text", "umfang", "nach") if z.get(k)), "")
-    return _kurz(f"#{ticket} {_uhr(z.get('ts'))} {typ}: {inhalt}".rstrip(": "), 200)
+    return _kurz(f"#{ticket} {_uhr(z.get('zeit') or z.get('ts'))} {typ}: {inhalt}".rstrip(": "), 200)
 
 
 def ist_gate_rot(z: dict[str, Any]) -> bool:
@@ -968,7 +968,7 @@ def morgen_bericht(
             art = "Checkpoint" if checkpoint in label_namen(issue) else "noch offen"
             wartet.append(f"#{n} {art}: {titel}")
         for z in log_vom_ref(repo, ref, n) if ref else []:
-            zeit = _zeit(z.get("ts"))
+            zeit = _zeit(z.get("zeit") or z.get("ts"))
             wann = zeit.astimezone().strftime("%d.%m. %H:%M") if zeit else "-"
             if z.get("typ") == "entscheidung":
                 frage, wahl, grund = entscheidung_teile(z)
@@ -1572,7 +1572,7 @@ def checkpoint_vorschlag(zeilen: list[dict[str, Any]], kommentare: list[dict[str
         if not _ist_session_zeile(z, ("entscheidung",)):
             continue
         frage, wahl, grund = entscheidung_teile(z)
-        zeit = _zeit(z.get("ts"))
+        zeit = _zeit(z.get("zeit") or z.get("ts"))
         if wahl and zeit:
             kandidaten.append(Vorschlag(frage, wahl, grund, zeit))
     for eintrag in kommentare:
@@ -1601,7 +1601,9 @@ def checkpoint_frage_zeit(zeilen: list[dict[str, Any]], kommentare: list[dict[st
     keine Frage (#451) — sonst meldet capo „Checkpoint wartet“ für ein Ticket, an dem
     nie eine Session gebaut hat. Ohne Spur wartet niemand, das Label allein löst nichts aus.
     """
-    zeiten = [_zeit(z.get("ts")) for z in zeilen if _ist_session_zeile(z, ("blockiert", "entscheidung"))]
+    zeiten = [
+        _zeit(z.get("zeit") or z.get("ts")) for z in zeilen if _ist_session_zeile(z, ("blockiert", "entscheidung"))
+    ]
     for eintrag in kommentare:
         _, text, zeit = _kommentar_teile(eintrag)
         if _ist_session_kommentar(text):
@@ -1762,7 +1764,19 @@ def _checkpoint(
         f" · {vorschlag.grund}" if vorschlag.grund else ""
     )
     frage = vorschlag.frage or f"Checkpoint #{n}"
-    bau_log.schreibe(repo, n, "entscheidung", frage=frage, wahl=vorschlag.wahl, grund=grund)
+    bau_log.schreibe(
+        "entscheidung",
+        repo=repo,
+        ticket=n,
+        wer="aufseher",
+        was=f"Checkpoint-Annahme: {_kurz(vorschlag.wahl, 120)}",
+        session="capo",
+        commit=bau_log.git_kopf_kurz(repo, n),
+        grund=grund,
+        kontextstand=bau_log.kontextstand_aktuell(repo, n),
+        frage=frage,
+        wahl=vorschlag.wahl,
+    )
     datei = entscheidung_anhaengen(repo, spec, n, frage, vorschlag.wahl, grund, jetzt)
     ausgabe = [f"#{n} Checkpoint-Annahme nach {wartet:.0f} min: {_kurz(vorschlag.wahl)} (Bau-Log + {datei.name})"]
     ausgabe += _melde(
@@ -2445,36 +2459,21 @@ def _tick(
         zu = ticket_zustand.endgueltig_zu(issue)
         offen += 0 if zu else 1
         eigene = ticket_commits(commits, n)
-        log_zeilen = log_vom_ref(repo, ref, n)
         wt = worktree_ordner(n, wt_basis, repo)
         wt_zeit, wt_info = worktree_spur(wt, ref)
-        lauf: list[tuple[str, list[dict[str, Any]]]] = []
-        for quelle, pfad in laufdateien(repo, wt, n):
-            zeilen = lauf_zeilen(pfad)
-            if zeilen is not None:
-                lauf.append((quelle, zeilen))
-        alle_zeilen = log_zeilen + [z for _, zeilen in lauf for z in zeilen]
+        ort = wt if wt.is_dir() else repo
+        alle_zeilen = bau_log.lese(ort, n, hauptbaum=repo)
         gelernt += vorfall.aus_zeilen(alle_zeilen)  # was Sessions selbst meldeten
         wer = ",".join(a.get("login", "?") for a in issue.get("assignees") or []) or "-"
         commit = eigene[0].sha[:7] if eigene else "-"
-        lauf_info = f" lauf:{sum(len(z) for _, z in lauf)}" if lauf else ""
-        stand.append(
-            f"#{n} {'zu ' if zu else 'OFF'} {wer:<10} commit:{commit} {wt_info:<10} log:{len(log_zeilen)}{lauf_info}"
-        )
+        stand.append(f"#{n} {'zu ' if zu else 'OFF'} {wer:<10} commit:{commit} {wt_info:<10} log:{len(alle_zeilen)}")
 
-        # B: Delta der Bau-Log-Zeilen — je Quelle eigener Zähler
-        im_lauf = {_roh(z) for _, zeilen in lauf for z in zeilen}
-        neu_je_quelle: list[tuple[bool, list[dict[str, Any]]]] = []
-        for quelle, zeilen in [("ref", log_zeilen), *lauf]:
-            schluessel = str(n) if quelle == "ref" else f"{n}|{quelle}"
-            schon = int(gelesen.get(schluessel, -1))
-            neu = zeilen[max(schon, 0) :] if 0 <= schon <= len(zeilen) else zeilen
-            if quelle == "ref":
-                # Schon aus der Laufdatei bekannt (später versioniert) → nicht doppelt.
-                neu = [z for z in neu if _roh(z) not in im_lauf]
-            gelesen[schluessel] = len(zeilen)
-            neu_je_quelle.append((schon < 0, neu))
-        neu_alle = [z for _, neu in neu_je_quelle for z in neu]
+        # B: Delta der Bau-Log-Zeilen aus origin/protokoll (+ Puffer, #903)
+        schluessel = str(n)
+        schon = int(gelesen.get(schluessel, -1))
+        neu_alle = alle_zeilen[max(schon, 0) :] if 0 <= schon <= len(alle_zeilen) else alle_zeilen
+        gelesen[schluessel] = len(alle_zeilen)
+        neu_je_quelle: list[tuple[bool, list[dict[str, Any]]]] = [(schon < 0, neu_alle)]
         sichtbar = [z for z in neu_alle if z.get("typ") not in LEISE_TYPEN]
         for z in sichtbar[-MAX_DELTA_ZEILEN:]:
             delta.append(verdichte(n, z))
@@ -2484,7 +2483,7 @@ def _tick(
             delta.append(f"#{n} (+{len(neu_alle) - len(sichtbar)} Hook-Zeilen)")
         for erstmals, neu in neu_je_quelle:
             for z in neu:
-                alt = _zeit(z.get("ts"))
+                alt = _zeit(z.get("zeit") or z.get("ts"))
                 if erstmals and (alt is None or jetzt - alt > timedelta(hours=stunden)):
                     continue  # Altlast beim ersten Blick: zeigen ja, Alarm nein
                 if ist_gate_rot(z):
@@ -2504,7 +2503,7 @@ def _tick(
                         "gate_rot",
                         f"Gate rot bei #{n}",
                         f"Ticket #{n}: {verdichte(n, z)}",
-                        f"gate_rot|{n}|{z.get('ts')}|{z.get('lauf')}",
+                        f"gate_rot|{n}|{z.get('zeit') or z.get('ts')}|{z.get('lauf')}",
                     )
                 elif z.get("typ") == "blockiert":
                     erg.verstoesse.append(Verstoss(n, "live_beweis_blockiert", _kurz(z.get("grund")), True))
@@ -2647,9 +2646,15 @@ def _tick(
                     erledigt.update({f"ruecknahme|{n}|{stempel}", f"ruecknahme|{n}"})
                     sichern()
                     bau_log.schreibe(
-                        repo,
-                        n,
                         "ruecknahme",
+                        repo=repo,
+                        ticket=n,
+                        wer="aufseher",
+                        was=f"Fehl-Reopen zurückgenommen: #{n}",
+                        session="capo",
+                        commit=bau_log.git_kopf_kurz(repo, n),
+                        grund=grund,
+                        kontextstand=bau_log.kontextstand_aktuell(repo, n),
                         text=f"Fehl-Reopen zurückgenommen: {grund}",
                     )
                     continue
@@ -2735,13 +2740,10 @@ def _tick(
                 )
 
     # Der Aufpasser meldet Vorfälle eines Aufseher-Fensters auf die Spec-Nummer —
-    # die steht nicht in der Kinderliste und käme sonst nie in den Katalog (#286).
+    # die steht nicht in der Kinderliste und käme sonst nie in den Katalog (#286, #903).
     spec_wt = worktree_ordner(spec, wt_basis, repo)
-    spec_zeilen = log_vom_ref(repo, ref, spec)
-    for _, pfad_lauf in laufdateien(repo, spec_wt, spec):
-        spec_lauf = lauf_zeilen(pfad_lauf)
-        if spec_lauf is not None:
-            spec_zeilen += spec_lauf
+    spec_ort = spec_wt if spec_wt.is_dir() else repo
+    spec_zeilen = bau_log.lese(spec_ort, spec, hauptbaum=repo)
     gelernt += vorfall.aus_zeilen(spec_zeilen)
 
     if not dry_run:
@@ -2804,9 +2806,15 @@ def _tick(
             aktionen.append(f"#{ziel} FEHLER: kommentieren gescheitert (Mensch nötig)")
             continue
         bau_log.schreibe(
-            repo,
-            ziel,
             "mensch_noetig",
+            repo=repo,
+            ticket=ziel,
+            wer="aufseher",
+            was=f"Mensch nötig: {was}",
+            session="capo",
+            commit=bau_log.git_kopf_kurz(repo, ziel),
+            grund=was,
+            kontextstand=bau_log.kontextstand_aktuell(repo, ziel),
             fingerprint=fp,
             fix_runde=eintrag.get("fix_runde"),
         )

@@ -52,6 +52,7 @@ from . import (
     anleitung,
     aufseher_stand,
     auswahl,
+    bau_log,
     befugnis,
     befund,
     briefkasten,
@@ -160,11 +161,11 @@ def _abschluss_paket() -> ModuleType:
 
 
 def _zeilen(repo: Path, ref: str | None, ticket: int, wt_basis: str) -> list[dict[str, Any]]:
-    """Bau-Log-Zeilen des Tickets: Hauptzweig + Laufdateien (Worktree, Repo)."""
-    zeilen = capo.log_vom_ref(repo, ref, ticket) if ref else []
-    for _quelle, pfad in capo.laufdateien(repo, capo.worktree_ordner(ticket, wt_basis, repo), ticket):
-        zeilen += capo.lauf_zeilen(pfad) or []
-    return zeilen
+    """Bau-Log-Zeilen des Tickets aus ``origin/protokoll`` (+ Puffer, #903)."""
+    del ref
+    wt = capo.worktree_ordner(ticket, wt_basis, repo)
+    ort = wt if wt.is_dir() else repo
+    return bau_log.lese(ort, ticket, hauptbaum=repo)
 
 
 def _briefkasten_offen(repo: Path, nummern: list[int]) -> list[tuple[Eintrag, bool]]:

@@ -524,7 +524,7 @@ def _log_repo(repo: Path) -> Path | None:
     """Bau-Log-Ziel: Regel des Skills (``TO_SPAWN_LOG_REPO``, fehlt der Ordner → ``None``)."""
     regel = getattr(bau_log, "log_repo", None)
     if callable(regel):
-        ziel = regel(repo, versioniert=True)  # schreibt docs/agents/bau_log/ (#257)
+        ziel = regel(repo, versioniert=True)  # Ziel-Repo fürs Ereignis-Protokoll (#257, #903)
         return ziel if isinstance(ziel, Path) else None
     return repo
 
@@ -545,23 +545,33 @@ def _melde_wechsel(repo: Path, spec: int, sid: str, modell: str, ausweich: str, 
 
 
 def _log_zeile(repo: Path, spec: int, typ: str, **felder: Any) -> None:
-    """Eine Zeile ins versionierte Bau-Log — nie ein Grund, den Aufseher zu stoppen."""
-    ziel = _log_repo(repo)
+    """Eine Zeile ins Ereignis-Protokoll — nie ein Grund, den Aufseher zu stoppen (#903)."""
+    ziel = _log_repo(repo) or bau_log.log_rueckfall() or repo
+    daten = dict(felder)
+    grund_wert = str(daten.pop("grund", "") or "").strip()
+    zeile_text = str(daten.get("zeile") or "").strip()
+    was_text = grund_wert or zeile_text or f"Aufseher-Ereignis {typ}"
+    grund_text = grund_wert or zeile_text or f"Aufseher #{spec}: {typ}"
+    kontext_roh = daten.get("kontext")
+    kontextstand: float | int = (
+        round(kontext_roh / 1000, 1)
+        if isinstance(kontext_roh, (int, float)) and not isinstance(kontext_roh, bool) and kontext_roh > 0
+        else 0
+    )
     try:
-        if ziel is not None:
-            bau_log.eintrag_schreiben(ziel, spec, typ, **felder)
-            return
-        # Versionierte Datei nicht erreichbar (#257: Worktree weg) — die Zeile darf
-        # trotzdem nicht verschwinden, also in die unversionierte Laufdatei (F4).
-        rueckfall = bau_log.log_rueckfall() or repo
-        bau_log.schreibe(rueckfall, spec, typ, **felder)
-        log.warning(
-            "Aufseher #%s: Zeile %s nur in der Laufdatei unter %s (kein versioniertes Ziel).",
-            spec,
+        bau_log.schreibe(
             typ,
-            rueckfall,
+            repo=ziel,
+            ticket=spec,
+            wer="aufseher",
+            was=was_text,
+            session=f"waechter-{spec}",
+            commit=bau_log.git_kopf_kurz(ziel, spec),
+            grund=grund_text,
+            kontextstand=kontextstand,
+            **daten,
         )
-    except (OSError, ValueError) as fehler:
+    except (OSError, ValueError, TimeoutError) as fehler:
         log.warning(
             "Aufseher #%s: Bau-Log-Zeile %s nicht geschrieben (%s) — Aufseher läuft weiter.",
             spec,

@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from to_spawn import deploy_status, prozessbaum
+from to_spawn import bau_log, deploy_status, prozessbaum
 
 SKILL = Path(__file__).resolve().parent.parent
 CLI = SKILL / "to_spawn.py"
@@ -96,11 +96,8 @@ def _cli(repo: Path, *args: str, env: dict[str, str] | None = None) -> subproces
 
 
 def _log_zeilen(repo: Path, ticket: str = TICKET) -> list[dict[str, Any]]:
-    # Seit #204 schreiben Hooks und deploy-status in die unversionierte Laufdatei.
-    datei = repo / ".to-spawn" / "bau_log" / f"{ticket}.jsonl"
-    if not datei.is_file():
-        return []
-    return [json.loads(z) for z in datei.read_text(encoding="utf-8").splitlines() if z.strip()]
+    # Seit #903 schreiben Hooks und deploy-status ausschließlich über bau_log.schreibe() ins Protokoll.
+    return bau_log.lese(repo, ticket)
 
 
 def test_laufender_deploy_meldet_exit_3_und_die_phase(repo: Path) -> None:

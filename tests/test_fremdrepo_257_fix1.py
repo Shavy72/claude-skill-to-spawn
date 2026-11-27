@@ -316,6 +316,18 @@ def test_bau_log_lese_und_eintrag_schreiben_mit_hauptbaum(tmp_path: Path) -> Non
     gelesen = bau_log.lese(worktree, "99", hauptbaum=hauptbaum)
     assert len(gelesen) == 2, gelesen
 
-    bau_log.eintrag_schreiben(worktree, "99", "zusammenfassung", hauptbaum=hauptbaum, umfang="x")
-    fest = bau_log.log_pfad(worktree, "99").read_text(encoding="utf-8").splitlines()
-    assert len(fest) == 3, fest  # 2 aus den Laufdateien übertragen + die neue Zeile
+    bau_log.schreibe(
+        "zusammenfassung",
+        repo=worktree,
+        ticket="99",
+        wer="bau",
+        was="Abschluss",
+        session="cli-99",
+        commit="-",
+        grund="fertig",
+        kontextstand=0,
+        umfang="x",
+    )
+    assert not bau_log.log_pfad(worktree, "99").exists()
+    alle = bau_log.lese(worktree, "99", hauptbaum=hauptbaum)
+    assert len(alle) == 3, alle  # 2 historische Altzeilen + die neue Protokoll-Zeile

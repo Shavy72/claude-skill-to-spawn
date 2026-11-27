@@ -110,9 +110,15 @@ def run_ticket(
             basis.update(umgebung)
 
         bau_log.schreibe(
-            wurzel,
-            ticket,
             "session_start",
+            repo=wurzel,
+            ticket=ticket,
+            wer="bau_loop",
+            was=f"Session {staffel}/{grenze} gestartet.",
+            session=f"bau-loop-{ticket}-s{staffel}",
+            commit=bau_log.git_kopf_kurz(wurzel, ticket),
+            grund=f"Staffel {staffel}/{grenze} Start",
+            kontextstand=0,
             staffel=staffel,
             modell=einstellungen.get("modelle", {}).get("ticket"),
             effort=einstellungen.get("effort", {}).get("ticket"),
@@ -148,17 +154,29 @@ def run_ticket(
 
         if not _hat_handoff_zeile(wurzel, ticket, staffel):
             bau_log.schreibe(
-                wurzel,
-                ticket,
                 "handoff",
+                repo=wurzel,
+                ticket=ticket,
+                wer="bau_loop",
+                was=f"Handoff geschrieben: {handoff.name}",
+                session=f"bau-loop-{ticket}-s{staffel}",
+                commit=bau_log.git_kopf_kurz(wurzel, ticket),
+                grund=f"Handoff geschrieben: {handoff.name} — Folge-Session übernimmt.",
+                kontextstand=bau_log.kontextstand_aktuell(wurzel, ticket),
                 staffel=staffel,
                 text=f"Handoff geschrieben: {handoff.name} — Folge-Session übernimmt.",
             )
         if staffel == grenze:
             bau_log.schreibe(
-                wurzel,
-                ticket,
                 "staffel_limit",
+                repo=wurzel,
+                ticket=ticket,
+                wer="bau_loop",
+                was=f"Staffel-Grenze {grenze} erreicht",
+                session=f"bau-loop-{ticket}-s{staffel}",
+                commit=bau_log.git_kopf_kurz(wurzel, ticket),
+                grund=f"Staffel-Grenze {grenze} erreicht — Ticket bleibt offen, Mensch nötig.",
+                kontextstand=bau_log.kontextstand_aktuell(wurzel, ticket),
                 staffel=staffel,
                 text=f"Staffel-Grenze {grenze} erreicht — Ticket bleibt offen, Mensch nötig.",
             )

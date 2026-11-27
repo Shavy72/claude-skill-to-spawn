@@ -86,10 +86,7 @@ def _abschnitt(text: str, kopf: str) -> list[str]:
 
 
 def _lauf_zeilen(repo: Path, ticket: int | str) -> list[dict]:
-    pfad = bau_log.lauf_pfad(repo, ticket)
-    if not pfad.is_file():
-        return []
-    return [json.loads(z) for z in pfad.read_text(encoding="utf-8").splitlines() if z.strip()]
+    return bau_log.lese(repo, ticket)
 
 
 def _vorfaelle(repo: Path, ticket: int | str) -> list[dict]:
@@ -258,7 +255,8 @@ def test_eintrag_cli_schreibt_vorfall_in_die_versionierte_datei(
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
-    (repo / "docs" / "agents" / "bau_log").mkdir(parents=True)
+    repo.mkdir(parents=True)
+    puffer = tmp_path / "protokoll_puffer"
     ergebnis = subprocess.run(
         [
             sys.executable,
@@ -282,16 +280,20 @@ def test_eintrag_cli_schreibt_vorfall_in_die_versionierte_datei(
         text=True,
         encoding="utf-8",
         # USERPROFILE: Windows-Gegenstück zum pwd-Rückfall von Path.home() unter Linux (#68).
-        env={"TO_SPAWN_REPO": str(repo), "PATH": "/usr/bin:/bin", "USERPROFILE": str(tmp_path / "heim")},
+        env={
+            "TO_SPAWN_REPO": str(repo),
+            "TO_SPAWN_PROTOKOLL_PUFFER": str(puffer),
+            "PATH": "/usr/bin:/bin",
+            "HOME": str(tmp_path / "heim"),
+            "USERPROFILE": str(tmp_path / "heim"),
+        },
         timeout=60,
         check=False,
     )
     assert ergebnis.returncode == 0, ergebnis.stdout + ergebnis.stderr
-    zeilen = [
-        json.loads(z)
-        for z in (repo / "docs" / "agents" / "bau_log" / "286.jsonl").read_text(encoding="utf-8").splitlines()
-        if z.strip()
-    ]
+    assert not (repo / "docs" / "agents" / "bau_log" / "286.jsonl").exists()
+    assert not (repo / ".to-spawn" / "bau_log" / "286.jsonl").exists()
+    zeilen = bau_log.lese(repo, "286", puffer_ordner=puffer)
     assert zeilen[-1]["typ"] == "vorfall"
     assert zeilen[-1]["klasse"] == "skill"
     assert zeilen[-1]["symptom"] == "Fenster steht"

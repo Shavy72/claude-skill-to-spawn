@@ -436,8 +436,7 @@ def test_capo_tick_fasst_nur_auswahl_an_und_schliesst_spec_nicht(
     monkeypatch.setattr(capo, "haupt_ref", lambda _r: "origin/main")
     monkeypatch.setattr(capo, "kinder", lambda _g, _s: kinder)
     monkeypatch.setattr(capo, "alle_commits", lambda _r, _ref: [])
-    monkeypatch.setattr(capo, "log_vom_ref", lambda *_a: [])
-    monkeypatch.setattr(capo, "laufdateien", lambda *_a: [])
+    monkeypatch.setattr(capo.bau_log, "lese", lambda *_a, **_k: [])
     monkeypatch.setattr(
         befund,
         "kommentiere",
@@ -530,11 +529,12 @@ def test_teilstart_takt_fasst_fremde_tickets_nicht_an(tmp_path: Path, monkeypatc
     monkeypatch.setattr(capo, "kinder", lambda _g, _s: kinder)
     monkeypatch.setattr(capo, "alle_commits", lambda _r, _ref: [])
     monkeypatch.setattr(
-        capo,
-        "log_vom_ref",
-        lambda _r, _ref, n: [{"ts": jetzt.isoformat(), "typ": "frage", "text": "Fremde Frage"}] if n == 102 else [],
+        waechter_takt.bau_log,
+        "lese",
+        lambda _r, n, **_k: (
+            [{"zeit": jetzt.isoformat(), "typ": "frage", "text": "Fremde Frage"}] if int(n) == 102 else []
+        ),
     )
-    monkeypatch.setattr(capo, "laufdateien", lambda *_a: [])
     monkeypatch.setattr(befund, "kommentiere", lambda n, _g, t: kommentare.append((n, t)) or True)
     monkeypatch.setattr(waechter_takt.briefkasten, "offene", lambda nummern, **_k: [])
 
