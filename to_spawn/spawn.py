@@ -17,7 +17,20 @@ import time
 from pathlib import Path
 from typing import Any, Sequence, TextIO
 
-from . import auswahl, capo, config, manifest, probesitz, sitzung_env, spawn_exit, stand, starter, tmux_aufruf, umzug
+from . import (
+    auswahl,
+    bau_log,
+    capo,
+    config,
+    manifest,
+    probesitz,
+    sitzung_env,
+    spawn_exit,
+    stand,
+    starter,
+    tmux_aufruf,
+    umzug,
+)
 
 log = logging.getLogger("to_spawn.spawn")
 
@@ -126,6 +139,27 @@ def _befehl_unix(
     return ["ssh", config.ssh_ziel(konfig), umzug.fern_skill_befehl(server_repo, "bash", "spawn_srv.sh", argumente)]
 
 
+def _protokoll_schreiben(typ: str, *, repo: Path, **felder: Any) -> None:
+    """Pflicht-Ereignis ins Ereignis-Protokoll schreiben — Fehler stoppen nie den Spawn (#903)."""
+    try:
+        bau_log.schreibe(typ, repo=repo, **felder)
+    except (OSError, ValueError, TimeoutError) as fehler:
+        log.warning("Ereignis-Protokoll (%s) nicht geschrieben: %s", typ, fehler)
+
+
+def _spawn_tickets(repo: Path, spec: int | str, tickets: Sequence[str] | None) -> list[str]:
+    if tickets:
+        return [str(t).strip() for t in tickets if str(t).strip()]
+    try:
+        daten, _ = manifest.lies_json(manifest.manifest_pfad(repo, spec))
+    except (OSError, ValueError):
+        return [str(spec)]
+    eintraege = daten.get("tickets") if isinstance(daten, dict) else None
+    if isinstance(eintraege, dict) and eintraege:
+        return [str(t) for t in sorted(eintraege, key=manifest.ticket_schluessel)]
+    return [str(spec)]
+
+
 def spawn(
     repo: Path,
     spec: int | str,
@@ -183,6 +217,22 @@ def spawn(
             "Terminal-Skript endete mit Exit %s (%s) — es wurde nichts (vollständig) gestartet; Ausgabe siehe oben.",
             rc,
             spawn_exit.beschreibung(rc),
+        )
+        return rc
+    commit = bau_log.git_kopf_kurz(repo)
+    for t in _spawn_tickets(repo, spec, tickets):
+        _protokoll_schreiben(
+            "start",
+            repo=repo,
+            ticket=t,
+            wer="spawn",
+            was=f"Spawn ({gewaehlt}) für Spec #{spec} gestartet",
+            session=f"spawn-{spec}",
+            commit=commit,
+            grund=f"Spawn ({gewaehlt}) für Spec #{spec}",
+            kontextstand=0,
+            ausloeser="spawn",
+            idempotenz_schluessel=f"start:spawn:{spec}:{t}:{gewaehlt}:{commit}",
         )
     return rc
 
@@ -359,9 +409,43 @@ def neustart(
     if dry_run:
         return 0
     if sys.platform == "win32":
-        return starter.starte(befehl, cwd=repo, check=False, warten=True).returncode
-    grund = capo._starte_folge_runde(repo, ticket, befehl, ueber_tmux, auftrag)
-    if grund:
-        log.error("#%s: Start fehlgeschlagen — %s", ticket, grund)
-        return 2
+        rc = starter.starte(befehl, cwd=repo, check=False, warten=True).returncode
+        if rc != 0:
+            return rc
+    else:
+        grund = capo._starte_folge_runde(repo, ticket, befehl, ueber_tmux, auftrag)
+        if grund:
+            log.error("#%s: Start fehlgeschlagen — %s", ticket, grund)
+            return 2
+    commit = bau_log.git_kopf_kurz(repo, ticket)
+    handoff_sauber = handoff.strip()
+    if handoff_sauber:
+        _protokoll_schreiben(
+            "uebergabe",
+            repo=repo,
+            ticket=ticket,
+            wer="spawn",
+            was=f"Neustart ab Handoff {handoff_sauber}",
+            session=f"bau-{ticket}",
+            commit=commit,
+            grund=f"Neustart ab Handoff {handoff_sauber}",
+            kontextstand=bau_log.kontextstand_aktuell(repo, ticket),
+            ausloeser="handoff",
+            handoff=handoff_sauber,
+            idempotenz_schluessel=f"uebergabe:{ticket}:handoff:{handoff_sauber}",
+        )
+    else:
+        _protokoll_schreiben(
+            "start",
+            repo=repo,
+            ticket=ticket,
+            wer="spawn",
+            was=f"Ticket #{ticket} neu gestartet (Spec #{spec})",
+            session=f"bau-{ticket}",
+            commit=commit,
+            grund=f"Neustart Ticket #{ticket} (Spec #{spec})",
+            kontextstand=0,
+            ausloeser="neustart",
+            idempotenz_schluessel=f"start:neustart:{spec}:{ticket}:{commit}",
+        )
     return 0
