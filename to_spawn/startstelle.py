@@ -471,16 +471,18 @@ def _fern_sperre_absichern(
     eigener = auswahl.aktueller_rechner()
 
     for _versuch in range(FERN_SPERRE_CAS_VERSUCHE):
+        # Zeitpunkt vor dem Remote-Lesen festhalten: dauert git fetch/log (z. B. unter Windows-Last)
+        # länger als die Rest-TTL, war die gelesene Lease beim Lese-Start noch aktiv.
+        lese_zeit = time.time()
         ok_lesen, bestehend, fehler = _fern_sperre_lesen(cwd, ticket, timeout=timeout_s)
         if not ok_lesen:
             return _fern_sperre_fail_closed(ticket, fehler)
-        jetzt = time.time()
         erwartet_sha = ""
         if bestehend is not None:
-            abgelaufen = bestehend.ist_abgelaufen(jetzt)
+            abgelaufen = bestehend.ist_abgelaufen(lese_zeit)
             eigener_rechner = auswahl.gleicher_rechner(bestehend.rechner, eigener)
             if not abgelaufen and not eigener_rechner and not uebernahme:
-                return _fern_sperre_belegt_entscheidung(ticket, bestehend, jetzt)
+                return _fern_sperre_belegt_entscheidung(ticket, bestehend, lese_zeit)
             if abgelaufen:
                 log.warning(
                     "bau %s: abgelaufene Fern-Sperre von Rechner %s wird übernommen.",
@@ -502,6 +504,7 @@ def _fern_sperre_absichern(
                 )
             erwartet_sha = bestehend.sha
 
+        jetzt = time.time()
         token = uuid.uuid4().hex
         nachricht = _fern_sperre_payload(
             ticket=ticket,
@@ -537,12 +540,12 @@ def _fern_sperre_absichern(
         return _fern_sperre_fail_closed(ticket, f"CAS-Push gescheitert: {fehler_push}")
 
     # Nach wiederholtem CAS-Wettlauf noch einmal lesen: gewinnt ein anderer Rechner, ruhig abweisen.
+    lese_zeit = time.time()
     ok_nach, bestehend_nach, fehler_nach = _fern_sperre_lesen(cwd, ticket, timeout=timeout_s)
     if not ok_nach:
         return _fern_sperre_fail_closed(ticket, fehler_nach)
-    jetzt = time.time()
-    if bestehend_nach is not None and not bestehend_nach.ist_abgelaufen(jetzt):
-        return _fern_sperre_belegt_entscheidung(ticket, bestehend_nach, jetzt)
+    if bestehend_nach is not None and not bestehend_nach.ist_abgelaufen(lese_zeit):
+        return _fern_sperre_belegt_entscheidung(ticket, bestehend_nach, lese_zeit)
     return _fern_sperre_fail_closed(ticket, "wiederholter CAS-Konflikt beim Setzen der Fern-Sperre")
 
 
@@ -551,10 +554,11 @@ def _fern_sperre_pruefen_weiter(ticket: str, cwd: Path | None) -> Entscheidung |
     if not _fern_sperre_aktiv(cwd):
         return None
     assert cwd is not None
+    lese_zeit = time.time()
     ok, bestehend, fehler = _fern_sperre_lesen(cwd, ticket, timeout=_fern_sperre_timeout())
     if not ok:
         return _fern_sperre_fail_closed(ticket, fehler)
-    if bestehend is None or bestehend.ist_abgelaufen():
+    if bestehend is None or bestehend.ist_abgelaufen(lese_zeit):
         return None
     halter = _gehaltene_fern_sperre(ticket, cwd)
     fremder_token = halter is not None and bestehend.token != halter.token
