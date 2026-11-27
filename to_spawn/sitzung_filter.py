@@ -1,6 +1,7 @@
-"""Gemeinsamer Skill- und MCP-Filter für Bau- und Aufseher-Sessions (#412).
+"""Gemeinsamer Skill- und MCP-Filter für Bau-, Aufseher-, Takt- und Leitstand-Sessions (#412, #869).
 
-Einzige Quelle (SSOT) für ``skripte/bau.py``, ``skripte/wache.py`` und
+Einzige Quelle (SSOT) für ``skripte/bau.py``, ``skripte/wache.py``,
+``skripte/leitstand_fenster.py``, ``to_spawn/waechter_takt.py`` und
 ``to_spawn/start_last.py``:
 
 * :data:`PFLICHT_SKILLS` — Review-Skills, die kein Manifest abwählen darf.
@@ -13,17 +14,24 @@ Einzige Quelle (SSOT) für ``skripte/bau.py``, ``skripte/wache.py`` und
   ``skillOverrides`` (alle ungenutzten Skills auf ``off``).
 * :func:`mcp_katalog` / :func:`mcp_auswahl` / :func:`aufseher_mcp_auswahl` — löst
   gewünschte MCP-Server für ``--mcp-config`` + ``--strict-mcp-config`` auf.
+* :func:`schlanke_mcp_server` / :func:`schlanke_mcp_datei` / :func:`schlanke_mcp_flags` —
+  erzeugt die schlanke ``mcp.json`` (nur Pflicht-MCP ``context-mode``) samt
+  ``--mcp-config`` + ``--strict-mcp-config`` für Aufseher-Takt und Leitstand (#869).
 """
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import json
 import logging
+import os
+import tempfile
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from . import config
+from . import config, context_mode
 
 log = logging.getLogger("to_spawn.sitzung_filter")
 
@@ -294,3 +302,66 @@ def aufseher_mcp_auswahl(
     gewuenscht = waechter_liste(konfig, "mcp", logger=logger)
     kat = katalog if katalog is not None else mcp_katalog(repo=repo, home=home, claude_dir=claude_dir, logger=logger)
     return mcp_auswahl(gewuenscht, kat, logger=logger)
+
+
+#: Schalter zum Aussperren aller nicht in ``--mcp-config`` gelisteten MCP-Server (#869).
+STRICT_MCP_FLAG = "--strict-mcp-config"
+
+
+def schlanke_mcp_server(
+    *,
+    claude_dir: Path | None = None,
+    logger: logging.Logger | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Minimaler MCP-Satz für Aufseher-Takt und Leitstand: nur Pflicht-MCP ``context-mode`` (#869).
+
+    Fehlt das Plugin, bleibt die Liste leer, damit die Session trotzdem mit
+    ``--strict-mcp-config`` startet statt alle Profil-MCPs zu laden.
+    """
+    try:
+        return context_mode.server_definition(claude_dir)
+    except context_mode.ContextModeFehlt as fehler:
+        (logger or log).warning("context-mode fehlt, Session startet ohne MCP-Server: %s", fehler)
+        return {}
+
+
+def schlanke_mcp_datei(
+    *,
+    claude_dir: Path | None = None,
+    ziel_ordner: Path | None = None,
+    logger: logging.Logger | None = None,
+) -> Path:
+    """Schreibt eine ``mcp.json`` nur mit :func:`schlanke_mcp_server` (Hash-Name, atomar, #869).
+
+    Datei statt Inline-JSON, damit auch Windows-Startwege ohne Shell-Quoting-Verlust laufen.
+    """
+    inhalt = json.dumps(
+        {"mcpServers": schlanke_mcp_server(claude_dir=claude_dir, logger=logger)},
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    kennung = hashlib.sha256(inhalt.encode("utf-8")).hexdigest()[:12]
+    ordner = ziel_ordner if ziel_ordner is not None else Path(tempfile.gettempdir())
+    ordner.mkdir(parents=True, exist_ok=True)
+    ziel = ordner / f"to-spawn-mcp-schlank-{kennung}.json"
+    fd, roh = tempfile.mkstemp(prefix=ziel.stem + "-", suffix=".tmp", dir=ordner)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as aus:
+            aus.write(inhalt)
+        os.replace(roh, ziel)  # atomar; ersetzt auch einen fremd angelegten Link statt ihm zu folgen
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.unlink(roh)
+        raise
+    return ziel
+
+
+def schlanke_mcp_flags(
+    *,
+    claude_dir: Path | None = None,
+    ziel_ordner: Path | None = None,
+    logger: logging.Logger | None = None,
+) -> list[str]:
+    """``--mcp-config <datei> --strict-mcp-config`` — Sperre direkt dahinter (Flag ist variadisch)."""
+    datei = schlanke_mcp_datei(claude_dir=claude_dir, ziel_ordner=ziel_ordner, logger=logger)
+    return ["--mcp-config", str(datei), STRICT_MCP_FLAG]

@@ -62,6 +62,7 @@ from . import (
     leitstand,
     manifest,
     melder,
+    sitzung_filter,
     sitzungsjob,
     starter,
     ticket_zustand,
@@ -506,7 +507,17 @@ def claude_befehl(claude: str, konfig: dict[str, Any], spec: int) -> list[str]:
     modelle = konfig.get("modelle") if isinstance(konfig.get("modelle"), dict) else {}
     modell = str(modelle.get("waechter") or MODELL)
     ausweich = str(modelle.get("waechter_ausweich") or "")
-    cmd = waechter_lauf.befehl(claude, modell, ausweich, False, spec, "", effort=waechter_lauf.effort(konfig))
+    mcp_pfad = sitzung_filter.schlanke_mcp_datei(logger=log)
+    cmd = waechter_lauf.befehl(
+        claude,
+        modell,
+        ausweich,
+        False,
+        spec,
+        "",
+        effort=waechter_lauf.effort(konfig),
+        mcp_pfad=mcp_pfad,
+    )
     return [*claude_start(claude), *cmd[1:-1], "-p"]
 
 
