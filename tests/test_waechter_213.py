@@ -601,6 +601,7 @@ def test_spec_fertig_meldet_und_schreibt_uebersicht(welt: dict[str, Path]) -> No
 # --- D: Melder -------------------------------------------------------------------
 
 
+@pytest.mark.xfail(strict=True, reason="überholt durch #885: tagsüber keine Mail je Spec (Entscheidung 27.11.)")
 def test_melder_politik(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
     from to_spawn import melder
 

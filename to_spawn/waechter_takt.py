@@ -60,6 +60,7 @@ from . import (
     gh,
     leitstand,
     manifest,
+    melder,
     sitzungsjob,
     starter,
     ticket_zustand,
@@ -590,6 +591,31 @@ def _fehler(spec: int, text: str) -> int:
     return 1
 
 
+def ist_ruhig(
+    repo: Path,
+    spec: int,
+    gh_repo: str,
+    konfig: dict[str, Any],
+    merker: dict[str, Any] | None,
+) -> bool:
+    """Nach „Spec fertig“ hört der Aufseher auf (#885) — erst, wenn der Abschluss erledigt ist.
+
+    Ohne eingerichteten Mail-Versand heißt „fertig“ sofort ruhig. Mit Mail-Versand ruht der Takt,
+    sobald der Morgen-Bericht bzw. die Abschluss-Mail raus ist (und keine neuen Folge-Tickets
+    offen sind).
+    """
+    if not (merker or {}).get("fertig"):
+        return False
+    if _abschluss_paket().abschluss_faellig(repo, spec).neue_tickets:
+        return False
+    if not melder.mail_eingerichtet(konfig):
+        return True
+    return any(
+        melder.schon_gesendet(repo, schluessel, gh_repo)
+        for schluessel in (f"morgen_bericht|{spec}", f"abschluss_{spec}", f"spec_fertig|{spec}")
+    )
+
+
 def takt(
     repo: Path,
     spec: int,
@@ -620,6 +646,12 @@ def takt(
         konfig = config.lade(repo)
         try:
             merker = leitstand.lese_zustand().get("takt", {}).get(str(spec))
+            if ist_ruhig(repo, spec, gh_repo, konfig, merker):
+                ruhe = (
+                    "Abschluss ist erledigt" if melder.mail_eingerichtet(konfig) else "kein Mail-Versand eingerichtet"
+                )
+                print(f"Takt #{spec}: Spec fertig — Aufseher hört auf ({ruhe}).")
+                return 0
             eintraege, neu = pruefe(repo, spec, gh_repo, konfig, merker, dry_run=dry_run)
         except (RuntimeError, OSError) as fehler:
             return _fehler(spec, str(fehler))
