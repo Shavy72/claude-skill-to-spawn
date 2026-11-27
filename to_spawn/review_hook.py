@@ -401,10 +401,15 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="nur prüfen: Exit 1 bei fehlender oder abweichender Datei (ändert nichts)",
     )
+    parser.add_argument(
+        "--ohne-hook",
+        action="store_true",
+        help="Review-Hook (~/.claude/hooks/review) überspringen, nur Review-Werkzeug einspielen (#851)",
+    )
     args = parser.parse_args(argv)
     basis = args.klon or QUELL_ORDNER.parent
     ziele = (
-        ("Review-Hook", args.ziel, basis / QUELL_ORDNER.name, installiere),
+        *([] if args.ohne_hook else [("Review-Hook", args.ziel, basis / QUELL_ORDNER.name, installiere)]),
         ("Review-Werkzeug", Path.home() / ".claude" / "review", basis / WERKZEUG_QUELLE.name, installiere_werkzeug),
     )
     if args.pruefen:
