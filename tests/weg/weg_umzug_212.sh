@@ -23,8 +23,11 @@ O="$WEG/origin.git"; L="$WEG/lokal"; SRV="$WEG/server"
 LOG="$WEG/lokal.log"
 rot=0
 pruefe() { if eval "$2"; then echo "PRÜFUNG $1: ok"; else echo "PRÜFUNG $1: ROT"; rot=1; fi; }
+laufende() {  # $1 = Regex auf die Kommandozeile → PIDs, ohne dieses Skript und seine Session (#1456 / #870)
+  python3 "$SKILL/to_spawn.py" warte-lauf --frist 0 "$1" 2>/dev/null
+}
 pid_mit_cwd() {  # $1 = Muster in der Kommandozeile, $2 = Ordner → PIDs dort
-  for p in $(pgrep -f "$1"); do
+  for p in $(laufende "$1"); do
     [ "$(readlink "/proc/$p/cwd" 2>/dev/null)" = "$2" ] && echo "$p"
   done
 }
@@ -94,7 +97,8 @@ tmux new-session -d -s weg212-lokal -x 200 -y 50 -c "$L" \
   "bash -lc 'export REPO=$L TO_SPAWN_HOME=$SKILL; bau $T --sofort --model $MODELL; echo BAU_EXIT=\$?; sleep 600'"
 tmux pipe-pane -o -t weg212-lokal "cat >> $LOG"
 for _ in $(seq 1 60); do
-  [ -n "$(pid_mit_cwd "bau.py $T" "$L")" ] && pgrep -f "claude.*--model $MODELL" >/dev/null && break
+  B="$(pid_mit_cwd "bau.py $T" "$L" | head -1)"
+  [ -n "$B" ] && for k in $(pgrep -P "$B"); do tr "\0" " " < "/proc/$k/cmdline" 2>/dev/null; done | grep -q -- "--model $MODELL" && break
   sleep 2
 done
 sleep 45   # erste Runde (wartet + ScheduleWakeup) abwarten
@@ -124,7 +128,7 @@ pruefe "Commit-Betreff endet mit (#$T) [skip ci]" 'git -C "$O" log -1 --format=%
 sleep 40
 pruefe "Server-Session: Claude-Kind lebt" '[ -n "$SRV_BAU" ] && pgrep -P "$SRV_BAU" >/dev/null'
 pruefe "Server-Session hat Umzug-Startkontext" 'grep -q "Umzug auf den Bau-Server" /tmp/*-bau/$T-*/prompt-runde1.txt 2>/dev/null || grep -q "Umzug auf den Bau-Server" "${TMPDIR:-/tmp}"/*/"$T"-*/prompt-runde1.txt 2>/dev/null'
-pruefe "kein Doppel-Lauf (genau 1 bau.py $T)" '[ "$(pgrep -fc "bau.py $T")" = "1" ]'
+pruefe "kein Doppel-Lauf (genau 1 bau.py $T)" '[ "$(laufende "bau.py $T" | wc -l)" = "1" ]'
 
 tmux capture-pane -p -t "=spec-$S:bau $T" -S -60 > "$WEG/server_pane.txt" 2>/dev/null
 tmux capture-pane -p -t weg212-lokal -S -400 > "$WEG/lokal_pane.txt" 2>/dev/null
