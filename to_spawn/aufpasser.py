@@ -331,7 +331,7 @@ EXIT_WARTEN_S = 30
 #: Nach ``/exit``: so lange darf die Fenster-Shell brauchen, um den nächsten
 #: Kettenbefehl zu starten, bevor das Fenster als „nur noch Shell“ gilt (#598).
 KETTE_RUHE_S = 1.0
-STOPP_LABELS = frozenset({"ready-for-human", "needs-info", "wontfix", "bau:lokal", "bau:pause"})
+STOPP_LABELS = frozenset({"ready-for-human", "needs-info", "bau:lokal"}) | ticket_zustand.BAU_SPERR_LABELS
 CRON_MARKE = "# to-spawn aufpasser"
 CRON_TAKT = "*/15 * * * *"
 #: Datei im Zustandsordner, in die der Cron-Lauf schreibt (Aufpasser-Log für Menschen).

@@ -611,6 +611,10 @@ def _pruefen(ticket: str, cwd: Path | None, pruefer: TicketPruefer | None) -> En
         grund = f"bau {ticket}: nichts zu tun ({ticket_zustand.wortlaut(daten)}) — Ticket ist geschlossen, kein Start."
         log.info("%s", grund)
         return Entscheidung(False, grund, art="nichts")
+    if sperre_text := ticket_zustand.sperre_grund(daten):
+        grund = f"bau {ticket}: nichts zu tun ({sperre_text}) — Ticket gesperrt, kein Start."
+        log.info("%s", grund)
+        return Entscheidung(False, grund, art="nichts")
     if ticket_zustand.ist_abnahme(daten, repo=cwd):
         label = ticket_zustand.abnahme_label(cwd)
         grund = (

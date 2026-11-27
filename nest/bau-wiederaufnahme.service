@@ -1,0 +1,33 @@
+# Bau nach Server-Neustart wiederaufnehmen (#887 / App #1184): je offener Spec
+# (Klon ~/<name>-<S> mit .to-spawn/sessions/, Spec-Issue offen) einmal die
+# tmux-Sitzung (spec-<kurz>-<S> bzw. bestehende spec-<S>) mit „wache <S>“
+# (--resume, wenn gemerkt). Die bau-Fenster stellt danach der Aufpasser-Cron
+# mit --resume gestaffelt wieder her. Log: journalctl --user -u bau-wiederaufnahme.
+# Einrichten (automatisch über nest/nest_server.sh Abschnitt 5b oder von Hand):
+#   sudo loginctl enable-linger "$USER"
+#   mkdir -p ~/.config/systemd/user
+#   cp nest/bau-wiederaufnahme.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable bau-wiederaufnahme.service
+# Probe ohne Start: cd ~/.claude/skills/to-spawn && python3 -m to_spawn.wiederaufnahme --dry-run
+[Unit]
+Description=to-spawn: Bau nach Neustart wiederaufnehmen (#887)
+After=default.target
+# Netz für Restart=on-failure: höchstens 3 Neustarts je Stunde.
+StartLimitIntervalSec=1h
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+# Erste 30 s Schonfrist für Netz/gh; das Modul fragt unlesbares gh danach noch 5× im
+# 60-s-Takt und endet sonst mit Exit 1 → Neustart der Unit (oneshot+Restart ab systemd 244).
+ExecStartPre=/bin/sleep 30
+Restart=on-failure
+RestartSec=120
+WorkingDirectory=%h/.claude/skills/to-spawn
+ExecStart=/usr/bin/env python3 -m to_spawn.wiederaufnahme
+# tmux-Server lebt in dieser Unit weiter — nie mit der Unit beenden.
+RemainAfterExit=yes
+KillMode=process
+
+[Install]
+WantedBy=default.target

@@ -29,6 +29,9 @@ from typing import Any, Literal
 
 #: Label der Deploy-Schlange (#1527): Ticket liegt grün auf Staging, wartet nur noch auf Live.
 STAGING_FERTIG_LABEL = "staging:fertig"
+#: Labels, mit denen ``bau.py`` ein Ticket weder startet noch fortsetzt (#887 / App #1184).
+#: ``bau:lokal`` fehlt bewusst: es heißt nur „nicht auf dem Bau-Server“ — am PC läuft es.
+BAU_SPERR_LABELS: frozenset[str] = frozenset({"bau:pause", "wontfix"})
 #: Vorgabe-Label für Abnahme-Tickets (überschreibbar über ``regularien.checkpoint_label``, #854).
 CHECKPOINT_LABEL = "checkpoint:human"
 
@@ -133,6 +136,12 @@ def label_namen(ticket: Mapping[str, Any] | None) -> set[str]:
     if isinstance(labels, Mapping):  # GraphQL: ``labels { nodes { name } }``
         labels = labels.get("nodes") or ()
     return {str(x.get("name") if isinstance(x, Mapping) else x) for x in labels}
+
+
+def sperre_grund(ticket: Mapping[str, Any] | None) -> str | None:
+    """Grund, warum ein Ticket per Sperr-Label (:data:`BAU_SPERR_LABELS`) nicht starten darf; sonst ``None``."""
+    gesperrt = sorted(label_namen(ticket) & BAU_SPERR_LABELS)
+    return f"Label {', '.join(gesperrt)}" if gesperrt else None
 
 
 def wortlaut(ticket: Mapping[str, Any] | None) -> str:
