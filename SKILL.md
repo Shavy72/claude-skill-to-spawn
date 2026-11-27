@@ -97,6 +97,10 @@ Ablauf für dich (das Modell), wenn die Konfig fehlt oder der Nutzer „setup“
 - `sessions <S>` (PowerShell-Profil → `scripts/sessions_stand.py`): je Ticket **aus / wartet / läuft seit HH:MM / VERWAIST**, mit Prozess- und Claude-PID — unabhängig davon, ob eine Session offen ist.
 - Symbole am Tab: ✳ grün = arbeitet · ◐ = denkt/wartet auf Ergebnis · 🔔 = Zug fertig (Glocke, `preferredNotifChannel = terminal_bell` in `~/.claude.json`) · ⊗ = Prozess beendet.
 
+## Halt einer Spec (#1444)
+
+Ganze Spec anhalten (Takt steigt aus, Aufpasser startet keine Fenster) nur mit Aufhebe-Bedingung: `python -m to_spawn.halt --repo-dir <klon> anlegen --grund "…" (--ticket-zu N | --commit SHA | --bis 2026-11-21T08:00)` · `… pruefen` (zeigen, hebt erfüllten Halt auf) · `… aufheben --wer <name>`. Unbekanntes Ticket/Commit wird abgelehnt; der Takt hebt den Halt selbst auf, sobald die Bedingung erfüllt ist (oder sie 24 h am Stück nicht prüfbar war). Datei `.to-spawn/halt.json`, Verlauf `halt_log.jsonl`. Grenze: `bau:pause`-Label und `stop-<N>` gelten je Ticket, der Halt je Spec.
+
 ## Harte Regeln (aus Vorfällen 17.09.2026)
 
 - **Nie `bau.py` beenden ohne vorher `sessions <S>`.** Nur Zustand `wartet` darf gekillt werden. Ein gekilltes `bau.py` hinterlässt sein Claude-Kind verwaist; ein Neustart erzeugt ein Duplikat im selben Worktree (#187).
