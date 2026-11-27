@@ -6,6 +6,9 @@ import concurrent.futures
 import json
 import subprocess
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 from probe.protokoll_probe import (
     DEFAULT_DATEI,
@@ -21,6 +24,8 @@ def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
         ["git", *args],
         cwd=cwd,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         check=True,
         **fensterlos(),
@@ -120,3 +125,52 @@ def test_zwei_gleichzeitige_schreiber_verlustfrei(tmp_path: Path) -> None:
     # Arbeitsordner beider Schreiber bleiben unberührt.
     assert list(klon_a.iterdir()) == [klon_a / ".git"]
     assert list(klon_b.iterdir()) == [klon_b / ".git"]
+
+
+def test_plumbing_uebergibt_stdin_binaer_ohne_windows_crlf(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Git-Plumbing übergibt stdin als UTF-8-Bytes mit LF, damit Windows kein CRLF in Tree/Blob schreibt."""
+    bare, [klon] = _erstelle_bare_und_klone(tmp_path, anzahl_klone=1)
+    echtes_run = subprocess.run
+    gesehene_eingaben: list[Any] = []
+
+    def _run_mit_windows_textmodus(cmd: list[str], *args: Any, **kwargs: Any) -> Any:
+        eingabe = kwargs.get("input")
+        if eingabe is not None:
+            gesehene_eingaben.append(eingabe)
+            # Unter Windows wandelt subprocess.run(..., text=True) jedes '\n' in '\r\n'.
+            if kwargs.get("text") or kwargs.get("universal_newlines") or kwargs.get("encoding"):
+                assert isinstance(eingabe, str)
+                kwargs = dict(kwargs)
+                kwargs["input"] = eingabe.replace("\r\n", "\n").replace("\n", "\r\n")
+        return echtes_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr("probe.protokoll_probe.subprocess.run", _run_mit_windows_textmodus)
+
+    zeile = json.dumps({"ereignis": "prüfung", "text": "äöüß"}, ensure_ascii=False)
+    ergebnis = anhaengen_plumbing(
+        repo_pfad=klon,
+        remote="origin",
+        zweig=DEFAULT_ZWEIG,
+        dateiname=DEFAULT_DATEI,
+        zeile=zeile,
+    )
+
+    assert ergebnis.erfolg is True
+    assert gesehene_eingaben
+    assert all(isinstance(e, bytes) for e in gesehene_eingaben)
+    assert all(b"\r\n" not in e for e in gesehene_eingaben)
+
+    inhalt = lese_zweig_inhalt(bare, DEFAULT_ZWEIG, DEFAULT_DATEI)
+    assert inhalt.splitlines() == [zeile]
+
+    roh = echtes_run(
+        ["git", "cat-file", "-p", f"refs/heads/{DEFAULT_ZWEIG}:{DEFAULT_DATEI}"],
+        cwd=bare,
+        capture_output=True,
+        check=True,
+        **fensterlos(),
+    ).stdout
+    assert roh == f"{zeile}\n".encode()

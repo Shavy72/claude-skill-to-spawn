@@ -52,17 +52,27 @@ def _git(
     eingabe: str | None = None,
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    """Führt einen Git-Unterprozess fensterlos im angegebenen Repository aus."""
-    return subprocess.run(
+    """Führt einen Git-Unterprozess fensterlos im angegebenen Repository aus.
+
+    Übergibt ``stdin`` als UTF-8-Bytes (ohne Text-Modus), damit Windows kein
+    ``\\n`` in ``\\r\\n`` umschreibt: ``git mktree`` würde das ``\\r`` sonst in
+    den Dateinamen übernehmen und ``git hash-object`` CRLF-Blobs erzeugen.
+    """
+    roh_eingabe = eingabe.encode() if eingabe is not None else None
+    res = subprocess.run(
         ["git", *args],
         cwd=repo_pfad,
-        input=eingabe,
-        text=True,
+        input=roh_eingabe,
         capture_output=True,
-        check=check,
+        check=False,
         env=_git_umgebung(),
         **fensterlos(),
     )
+    stdout = res.stdout.decode("utf-8", errors="replace")
+    stderr = res.stderr.decode("utf-8", errors="replace")
+    if check and res.returncode != 0:
+        raise subprocess.CalledProcessError(res.returncode, res.args, output=stdout, stderr=stderr)
+    return subprocess.CompletedProcess(res.args, res.returncode, stdout=stdout, stderr=stderr)
 
 
 def _remote_kopf_holen(repo_pfad: Path, remote: str, zweig: str) -> str | None:
@@ -183,6 +193,8 @@ def _gh_run_list_ids(repo_pfad: Path) -> list[str]:
         ["gh", "run", "list", "--limit", "10", "--json", "databaseId", "-q", ".[].databaseId"],
         cwd=repo_pfad,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         check=True,
         **fensterlos(),
