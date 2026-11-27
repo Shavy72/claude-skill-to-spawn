@@ -106,6 +106,9 @@ _LAUF_DATEIEN = tuple(
         "sandbox.json",
     )
 )
+#: Session-Übergabe-Dateien von Claude (``.claude-handoff*.md`` ganz oben im Repo, #950):
+#: reine Session-Reste, kein geprüfter Code; dürfen Komplett-Prüfung und Live nicht blockieren.
+_UEBERGABE_MUSTER = ".claude-handoff*.md"
 #: Bytecode: der einzige Inhalt eines ``__pycache__/``, der nicht zählt.
 _BYTECODE = (".pyc", ".pyo")
 #: Kopf eines ``.pyc`` (PEP 552): Bytes 4–8 = Flags; Bit 0 Hash statt Stempel, Bit 1 Hash prüfen.
@@ -149,17 +152,18 @@ _FLUECHTIG = frozenset(
 
 
 def ist_werkzeug_rest(repo: Path, pfad: str) -> bool:
-    """Einzige Stelle für „Rest eines Werkzeugs, ändert den geprüften Stand nicht“ (#218).
+    """Einzige Stelle für „Rest eines Werkzeugs, ändert den geprüften Stand nicht“ (#218, #950).
 
     ``pfad`` relativ zum Repo mit ``/``; ein Ordner endet auf ``/`` (so melden ``git status``
     und ``git ls-files --directory`` neue Ordner). Rest sind: Laufdateien (``_ist_laufdatei``),
+    ungetrackte Session-Übergabe-Dateien (``.claude-handoff*.md`` ganz oben, kein Symlink, #950),
     Caches in jeder Tiefe, ``.venv``/``venv``/``node_modules`` nur ganz oben. Ein ``__pycache__``
     ist nur Rest, solange darin ausschließlich geprüfter Bytecode liegt (``_geprueft_bytecode``);
     dessen Inhalt prüft niemand (Grenze, #238: Python lädt ein ``.pyc`` aus ``__pycache__`` nur,
     wenn Stempel oder Hash zur Quelle passt — nur ein gezielt gefälschter Kopf ginge durch).
     Im Zweifel ``False``.
     """
-    if _ist_laufdatei(pfad):
+    if _ist_laufdatei(pfad) or _ist_uebergabe_datei(repo, pfad):
         return True
     teile = pfad.rstrip("/").split("/")
     if "__pycache__" in teile[:-1]:
@@ -196,6 +200,13 @@ def _geprueft_bytecode(datei: Path) -> bool:
     except OSError:
         return True
     return len(kopf) < _PYC_FLAGS.stop or int.from_bytes(kopf[_PYC_FLAGS], "little") & 0b11 != _PYC_UNGEPRUEFT
+
+
+def _ist_uebergabe_datei(repo: Path, pfad: str) -> bool:
+    """Ungetrackte Session-Übergabe-Datei (``.claude-handoff*.md`` ganz oben im Repo, kein Symlink, #950)."""
+    if pfad.endswith("/") or "/" in pfad or not fnmatch.fnmatchcase(pfad, _UEBERGABE_MUSTER):
+        return False
+    return not (repo / pfad).is_symlink()
 
 
 def _ist_laufdatei(pfad: str) -> bool:

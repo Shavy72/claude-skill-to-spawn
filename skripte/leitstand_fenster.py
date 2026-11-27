@@ -12,7 +12,11 @@ import json
 import logging
 import os
 import re
+import subprocess
 import sys
+import threading
+import time
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -22,7 +26,7 @@ _SKRIPTE = Path(__file__).resolve().parent
 _SKILL = str(_SKRIPTE.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import (  # noqa: E402
+from to_spawn import (
     config,
     melder,
     sitzung_env,
@@ -32,6 +36,7 @@ from to_spawn import (  # noqa: E402
     sperre,
     starter,
     terminal_maus,
+    waechter_lauf,
 )
 
 log = logging.getLogger("leitstand_seite")
@@ -43,6 +48,10 @@ MODELL = "claude-sonnet-5"
 TAKT = "3m"
 MAIL_ART = "leitstand_start"
 VORLAGE = _SKRIPTE.parent / "leitstand" / "seite.html"
+#: Obergrenze automatischer Staffelwechsel an der Handoff-Grenze je Fenster (#950).
+MAX_STAFFELN = 50
+#: Höchst-Wartezeit (s) auf einen ruhigen Takt-Abschluss nach Erreichen der Handoff-Grenze (#950).
+RUHE_WARTE_MAX_S = 60.0
 
 
 def jetzt_iso() -> str:
@@ -212,6 +221,7 @@ def sitzung_befehl(
     takt: str = TAKT,
     *,
     mcp_pfad: Path | str | None = None,
+    session_id: str | None = None,
 ) -> list[str]:
     """Leitstand-Session mit schlankem MCP-Profil (nur ``context-mode`` + ``--strict-mcp-config``, #869)."""
     mcp_flags = (
@@ -219,11 +229,13 @@ def sitzung_befehl(
         if mcp_pfad is not None
         else sitzung_filter.schlanke_mcp_flags(logger=log)
     )
+    sid_flags = ["--session-id", session_id] if session_id else []
     return [
         "claude",
         "--model",
         modell,
         *mcp_flags,
+        *sid_flags,
         "--allowedTools",
         *werkzeuge,
         "--",
@@ -262,6 +274,7 @@ def anweisung_text(
         "Werkzeuge nicht geladen → ToolSearch `select:ArtifactData,Artifact`.",
         "Ein Befehl endet mit einem hier nicht genannten Exit → Antwort „FEHLER <Befehl> Exit <n>“, Durchlauf beenden.",
         f"Keine anderen Dateien lesen als die hier genannten (alle unter {ordner}).",
+        "Keine Übergabe-Datei (.claude-handoff*.md) schreiben — der Leitstand startet an der Handoff-Grenze selbst neu.",
         "",
     ]
     batch = (
@@ -274,8 +287,10 @@ def anweisung_text(
             "## Ersteinrichtung (noch keine Seite)",
             f"1. Bash `{ls} url`. Exit 0 → Seite gibt es schon: Antwort „Seite da“, Durchlauf beenden. Exit 4 → weiter.",
             f"2. Bash `{ls} seite` → stdout = Pfad der HTML-Datei.",
-            f"3. Werkzeug Artifact, publish: diese Datei, Titel `Bau-Leitstand #{spec}`, "
-            'capabilities `{"db":{}}`, icon `chart`. Die zurückgegebene URL = <URL>.',
+            (
+                f"3. Werkzeug Artifact, publish: diese Datei, Titel `Bau-Leitstand #{spec}`, "
+                'capabilities `{"db":{}}`, icon `chart`. Die zurückgegebene URL = <URL>.'
+            ),
             f"4. Bash `{ls} url --setzen <URL>`.",
             f"5. Bash `{ls} seed`. Exit 3 → weiter mit 8. Exit 0 → stdout = Pfad der writes-Datei.",
             f"6. {batch}",
@@ -351,17 +366,33 @@ def start_mail(ablage: Ablage) -> int:
     return 1
 
 
-def sitzung(ablage: Ablage, *, probe: bool = False) -> int:
-    """Interaktive Leitstand-Session im aktuellen Fenster (Tab/tmux) — hält eine Sperre gegen Doppelstart."""
+def sitzung(
+    ablage: Ablage,
+    *,
+    probe: bool = False,
+    grenze: int | None = None,
+    aufsicht_takt: float | None = None,
+    ruhe_warte_max: float = RUHE_WARTE_MAX_S,
+    max_staffeln: int = MAX_STAFFELN,
+) -> int:
+    """Interaktive Leitstand-Session im aktuellen Fenster (Tab/tmux) — hält eine Sperre gegen Doppelstart.
+
+    Überwacht das Transkript der laufenden Session gegen die Handoff-Grenze aus
+    ``~/.claude/smart-zone.json`` (:func:`to_spawn.waechter_lauf.handoff_grenze`, #950).
+    Erreicht der Kontext die Grenze, beendet der Rahmen die alte Session nach Abschluss des
+    laufenden Takts ruhig und startet im selben Fenster eine frische Session (Staffelwechsel).
+    """
     lk = leitstand_konfig(ablage.repo)
     if not ist_aktiv(lk):
         log.info("leitstand.aktiv ist aus — keine Leitstand-Session für Spec %s.", ablage.spec)
         return EXIT_AUS
     python = python_befehl()
+    modell = str(lk.get("modell") or MODELL)
+    takt = str(lk.get("takt") or TAKT)
     anweisung = schreibe_anweisung(ablage, python).as_posix()
     werkzeuge = erlaubte_werkzeuge(python, skript_pfad(), ablage.ordner.as_posix())
-    befehl = sitzung_befehl(str(lk.get("modell") or MODELL), werkzeuge, anweisung, str(lk.get("takt") or TAKT))
     if probe:
+        befehl = sitzung_befehl(modell, werkzeuge, anweisung, takt)
         print(json.dumps(befehl, ensure_ascii=False))
         return 0
     claude = starter.finde("claude")  # unter Test nur die Attrappe (#1406)
@@ -377,12 +408,87 @@ def sitzung(ablage: Ablage, *, probe: bool = False) -> int:
     env["CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"] = "1"
     env[speicher.ANZEIGE_VARIABLE] = "1"  # Anzeige-Fenster belegt nie einen Platz (#460)
     terminal_maus.maus_ruhig(env)  # Klick-Sperre nur hier, nicht global (Windows)
+    ziel_grenze = grenze if grenze is not None else waechter_lauf.handoff_grenze(modell)
+    ueberwachung_takt = (
+        aufsicht_takt
+        if aufsicht_takt is not None
+        else (waechter_lauf.zahl_aus_umgebung("TO_SPAWN_AUFSICHT_TAKT", waechter_lauf.TAKT_S) or waechter_lauf.TAKT_S)
+    )
     try:
-        # Vordergrund im eigenen Fenster (braucht die Konsole) — kein Hintergrundstart.
-        # Job hält den ganzen Baum, auch Git-Bash-Kinder; Blockende beendet den Rest (#122).
-        prozess = starter.starte([claude, *befehl[1:]], cwd=ablage.repo, env=env)
-        with sitzungsjob.gebunden(prozess):
-            return prozess.wait()
+        for runde in range(1, max_staffeln + 2):
+            if runde > 1:
+                anweisung = schreibe_anweisung(ablage, python).as_posix()
+            sid = str(uuid.uuid4())
+            befehl = sitzung_befehl(modell, werkzeuge, anweisung, takt, session_id=sid)
+            datei = waechter_lauf.transkript_ordner(ablage.repo) / f"{sid}.jsonl"
+            ab = datei.stat().st_size if datei.is_file() else 0
+            grenze_erreicht = threading.Event()
+
+            def bei_grenze(
+                kontext: int,
+                _event: threading.Event = grenze_erreicht,
+                _runde: int = runde,
+            ) -> None:
+                log.info(
+                    "Leitstand #%s (Runde %s): Handoff-Grenze erreicht (%s >= %s Token) — Staffelwechsel.",
+                    ablage.spec,
+                    _runde,
+                    kontext,
+                    ziel_grenze,
+                )
+                _event.set()
+
+            # Vordergrund im eigenen Fenster (braucht die Konsole) — kein Hintergrundstart.
+            # Job hält den ganzen Baum, auch Git-Bash-Kinder; Blockende beendet den Rest (#122).
+            prozess = starter.starte([claude, *befehl[1:]], cwd=ablage.repo, env=env)
+            with sitzungsjob.gebunden(prozess):
+                aufsicht = waechter_lauf.Aufsicht(
+                    datei,
+                    ab,
+                    ueberwachung_takt,
+                    lambda _text: None,
+                    grenze=ziel_grenze,
+                    bei_grenze=bei_grenze,
+                )
+                aufsicht.start()
+                grenze_seit: float | None = None
+                try:
+                    while True:
+                        try:
+                            rc = prozess.wait(timeout=ueberwachung_takt)
+                            break
+                        except subprocess.TimeoutExpired:
+                            if not grenze_erreicht.is_set():
+                                continue
+                            if grenze_seit is None:
+                                grenze_seit = time.monotonic()
+                            if (
+                                waechter_lauf.session_ruhig(datei, min(ueberwachung_takt, 1.0))
+                                or time.monotonic() - grenze_seit >= ruhe_warte_max
+                            ):
+                                log.info(
+                                    "Leitstand #%s: beende alte Session (Runde %s) für Staffelwechsel.",
+                                    ablage.spec,
+                                    runde,
+                                )
+                                aufsicht.halt.set()
+                                waechter_lauf._beende(prozess)
+                                rc = 0
+                                break
+                finally:
+                    aufsicht.halt.set()
+                    aufsicht.join(timeout=ueberwachung_takt + 1)
+            if not grenze_erreicht.is_set():
+                return rc
+            if runde > max_staffeln:
+                log.error(
+                    "Leitstand #%s: %s Staffelwechsel erreicht — keine weitere Nachfolge.",
+                    ablage.spec,
+                    max_staffeln,
+                )
+                return rc
+            log.info("Leitstand #%s: Staffelwechsel %s — starte frische Session.", ablage.spec, runde)
+        return 0
     finally:
         sperre.close()
 
