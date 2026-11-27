@@ -186,7 +186,7 @@ def _bedingung_bekannt(klon: Path, b: Bedingung) -> bool | None:
                 **prozessbaum.fensterlos(),
             ).returncode
         except (OSError, subprocess.TimeoutExpired) as fehler:
-            log.warning("git für Halt-Bedingung gescheitert: %s", fehler)
+            log.debug("git für Halt-Bedingung gescheitert: %s", fehler)
             return None
         if da == 0:
             return True
@@ -260,7 +260,7 @@ def _commit_auf_hauptzweig(klon: Path, sha: str) -> bool | None:
             **prozessbaum.fensterlos(),
         ).returncode
     except (OSError, subprocess.TimeoutExpired) as fehler:
-        log.warning("git für Halt-Bedingung gescheitert: %s", fehler)
+        log.debug("git für Halt-Bedingung gescheitert: %s", fehler)
         return None
     return {0: True, 1: False}.get(code)  # sonst unbekannter Commit/Fehler
 
@@ -326,8 +326,13 @@ def _entfernen(klon: Path, halt: Halt, wer: str, anlass: str, *, sichern: bool =
                 felder["roh"] = datei.read_text(encoding="utf-8", errors="replace")[:500]
             except OSError as fehler:
                 felder["roh_fehler"] = str(fehler)
-            # Mikrosekunden: zwei Fristabläufe in derselben Sekunde überschreiben sich nicht.
-            ziel = datei.with_name(f"{datei.name}.aufgehoben-{_jetzt().strftime('%Y%m%dT%H%M%S%f')}")
+            # Mikrosekunden + Zähler-Fallback: eindeutiger Name auch bei gleichem Zeitstempel (Linux + Windows).
+            basis = f"{datei.name}.aufgehoben-{_jetzt().strftime('%Y%m%dT%H%M%S%f')}"
+            ziel = datei.with_name(basis)
+            nr = 1
+            while ziel.exists():
+                ziel = datei.with_name(f"{basis}-{nr}")
+                nr += 1
             datei.rename(ziel)
             felder["gesichert_als"] = ziel.name
         else:
