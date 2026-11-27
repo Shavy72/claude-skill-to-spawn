@@ -182,9 +182,7 @@ def _als_wiedereroeffnet_offen(
     )
 
 
-def test_offenes_wiedereroeffnetes_ticket_startet_folge_runde(
-    welt: dict[str, Path], tmux: dict[str, Path]
-) -> None:
+def test_offenes_wiedereroeffnetes_ticket_startet_folge_runde(welt: dict[str, Path], tmux: dict[str, Path]) -> None:
     """Ticket offen + schon in erledigt, kein Fenster → startet Folge-Runde (#862)."""
     _als_wiedereroeffnet_offen(welt)
     ergebnis = _capo(welt)

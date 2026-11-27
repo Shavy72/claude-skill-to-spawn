@@ -2791,12 +2791,17 @@ def _tick(
             # #448: eigenes Fehl-Reopen zurücknehmen, wenn die Regeln jetzt grün sind.
             kandidat = None if vps_fehlt else fehl_reopen_kandidat(n, issue, eigene, erledigt, checkpoint=checkpoint)
             aktuelle_funde: list[Verstoss] = []
+            folge_runde_gesperrt = vps_fehlt
             if kandidat is not None:
                 aktuelle_funde = reopen_funde(
                     repo, ref, n, eigene, belege, vps, kopf, alle_zeilen, staging_stand, issue
                 )
                 if aktuelle_funde:
                     kandidat = None  # Regeln weiter rot — das Reopen war richtig
+                else:
+                    # Regeln jetzt grün (#448): keine Folge-Runde starten, auch wenn die Rücknahme
+                    # ausgesetzt, blockiert oder gescheitert ist (z. B. Mensch öffnete danach neu).
+                    folge_runde_gesperrt = True
             if kandidat is not None:
                 spaeter = spaeter_geschlossen(gh_repo, n, kandidat[0])
                 if spaeter is None:
@@ -2850,7 +2855,7 @@ def _tick(
                 )
                 if len(erledigt) != vorher:
                     sichern()
-            else:
+            elif not folge_runde_gesperrt:
                 # #862: wiedereröffnetes Ticket ohne laufende Session nachstarten oder Stillstand melden.
                 folge_zeilen, folge_behandelt = _folge_runde_offen(
                     repo,
