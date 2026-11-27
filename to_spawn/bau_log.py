@@ -1,38 +1,83 @@
-"""Bau-Log: zwei JSONL-Dateien je Ticket.
+"""Bau-Log und Ereignis-Protokoll (#902 / #1395).
 
-- Laufdatei ``.to-spawn/bau_log/<N>.jsonl`` (unversioniert, per ``.gitignore``
-  ausgenommen): hier schreiben Hooks und Starter während der Session. So bleibt der
-  Worktree sauber, ``git rebase`` und das Deploy-Gate brechen nicht ab (Fixrunde #204).
-- Versionierte Datei ``docs/agents/bau_log/<N>.jsonl``: schreibt nur der CLI-Befehl
-  ``eintrag``. Er überträgt dabei alle Laufdatei-Zeilen, die dort noch fehlen; danach
-  committet die Session die Datei.
+Neue Schreib-Tür ``schreibe(typ, **felder)`` für das gemeinsame Ereignis-Protokoll:
+- Prüft die Pflichtfelder (``zeit``, ``ticket``, ``wer``, ``was``, ``session``,
+  ``commit``, ``grund``, ``kontextstand``).
+- Hält beim Schreiben eine lokale Datei-Sperre über :mod:`to_spawn.sperre`.
+- Puffert Zeilen unter ``~/.local/state/to-spawn/protokoll`` (nie im Worktree).
+- Schiebt den Puffer gebündelt per Git-Plumbing (ohne Arbeitsbaum-/Index-Eingriff)
+  auf den verwaisten Zweig ``protokoll`` (``bau_log/<Ticket>.jsonl``), mit
+  Rebase/Retry bei Push-Konflikt und Offline-Puffer ohne Fehler an den Aufrufer.
 
-Nur anhängen, nie umschreiben — so wandert die Datei konfliktfrei über Git
-zwischen Laptop und Bau-Server. Zahlen schreiben die Hooks, Worte schreibt die
-Session. ``lese()`` vereint beide Dateien.
+Übergangsweise (bis #903 alle Altaufrufer und Leser umstellt) bleibt der alte
+3-Argumente-Aufruf ``schreibe(repo, ticket, typ, **felder)`` für die lokale
+Laufdatei ``.to-spawn/bau_log/<N>.jsonl`` und ``eintrag_schreiben`` für
+``docs/agents/bau_log/<N>.jsonl`` erhalten.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
+import random
 import re
+import tempfile
+import threading
+import time
+import uuid
 from collections import Counter
 from collections.abc import Iterable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, overload
 
-from . import config
+from . import config, sperre
 
 log = logging.getLogger("to_spawn.bau_log")
 
 #: Typ der Zeile einer abgelehnten Komplett-Prüfung (#496); Zähler: ``komplett_lauf.ablehnungen``.
 KOMPLETT_ABGELEHNT = "komplett_abgelehnt"
 
+#: Pflicht-Ereignistypen des gemeinsamen Ereignis-Protokolls (#902 / #1395).
+EREIGNIS_TYPEN: tuple[str, ...] = (
+    "start",
+    "uebergabe",
+    "schliessen",
+    "wiedereroeffnen",
+    "hindernis",
+)
+
+#: Pflichtfelder jeder Zeile im Ereignis-Protokoll (#902 / #1395).
+PFLICHTFELDER: tuple[str, ...] = (
+    "zeit",
+    "ticket",
+    "wer",
+    "was",
+    "session",
+    "commit",
+    "grund",
+    "kontextstand",
+)
+
+#: Verwaistes Git-Ziel des Ereignis-Protokolls (#902 / #1395).
+PROTOKOLL_ZWEIG = "protokoll"
+PROTOKOLL_REF = f"refs/heads/{PROTOKOLL_ZWEIG}"
+PROTOKOLL_BAUM_ORDNER = "bau_log"
+#: Env-Überschreibungen für Tests und Sonderläufe.
+PROTOKOLL_PUFFER_ENV = "TO_SPAWN_PROTOKOLL_PUFFER"
+PROTOKOLL_REPO_ENV = "TO_SPAWN_PROTOKOLL_REPO"
+PROTOKOLL_BUENDEL_ENV = "TO_SPAWN_PROTOKOLL_BUENDEL_S"
+#: Wartezeit auf die lokale Datei-Sperre (s) und maximale Konflikt-Wiederholungen beim Push.
+SPERR_WARTE_S = 30.0
+MAX_PUSH_VERSUCHE = 12
+_TICKET_MUSTER = re.compile(r"^[A-Za-z0-9._-]+$")
+_TEXT_PFLICHTFELDER: tuple[str, ...] = ("wer", "was", "session", "commit", "grund")
+
 #: Erlaubte Zeilen-Typen (``staffel_limit`` meldet das Ende der Staffel-Kette).
 TYPEN = (
+    *EREIGNIS_TYPEN,
     "auftrag",
     "session_start",
     "entscheidung",
@@ -62,6 +107,11 @@ TYPEN = (
     # komplett_lauf (#496): Komplett-Prüfung aus einem Bau-Ticket abgelehnt (Felder ``spec``, ``weg``).
     KOMPLETT_ABGELEHNT,
 )
+
+
+class ProtokollPflichtfeldFehler(ValueError):
+    """Fehlendes oder ungültiges Pflichtfeld beim Schreiben ins Ereignis-Protokoll (#902)."""
+
 
 #: Felder, deren ``None`` als ``null`` stehen bleibt, weil es etwas bedeutet (sonst
 #: fallen ``None``-Felder weg). ``aufseher_abloesung.exit`` null = Ablösung nicht versucht.
@@ -270,7 +320,7 @@ def ticket_aus_umgebung(cwd: Path | None = None) -> str | None:
 
 
 def jetzt() -> str:
-    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+    return datetime.now(UTC).astimezone().isoformat(timespec="seconds")
 
 
 def _neue_zeile(ticket: str | int, typ: str, felder: dict[str, Any]) -> dict[str, Any]:
@@ -315,10 +365,433 @@ def _fehlende(fest: list[str], lauf: list[str]) -> list[str]:
     return fehlend
 
 
-def schreibe(repo: Path, ticket: str | int, typ: str, **felder: Any) -> dict[str, Any]:
-    """Eine Zeile an die unversionierte Laufdatei anhängen und zurückgeben."""
-    zeile = _neue_zeile(ticket, typ, felder)
-    _haenge_an(lauf_pfad(repo, ticket), [json.dumps(zeile, ensure_ascii=False)])
+def protokoll_puffer_ordner() -> Path:
+    """Puffer-Ordner für das Ereignis-Protokoll (Vorgabe: ``~/.local/state/to-spawn/protokoll``, #902).
+
+    Liegt immer außerhalb von Repo und Worktree. Über ``TO_SPAWN_PROTOKOLL_PUFFER``
+    (z. B. in Tests) überschreibbar.
+    """
+    vorgabe = os.environ.get(PROTOKOLL_PUFFER_ENV, "").strip()
+    if vorgabe:
+        return Path(vorgabe).expanduser()
+    return config.heim_ordner() / ".local" / "state" / "to-spawn" / "protokoll"
+
+
+def protokoll_datei_im_zweig(ticket: str | int) -> str:
+    """Pfad der Ticket-Datei auf dem Zweig ``protokoll`` (immer ``/``-getrennt)."""
+    return f"{PROTOKOLL_BAUM_ORDNER}/{ticket}.jsonl"
+
+
+def _protokoll_jetzt() -> str:
+    """ISO-8601-Zeitstempel mit Mikrosekunden für eindeutige zeitliche Ordnung."""
+    return datetime.now(UTC).astimezone().isoformat(timespec="microseconds")
+
+
+def _protokoll_repo(vorgabe: Path | None = None) -> Path | None:
+    """Ziel-Repo für den Git-Plumbing-Push des Ereignis-Protokolls."""
+    if vorgabe is not None:
+        pfad = Path(vorgabe).expanduser()
+        return pfad.resolve() if pfad.is_dir() else None
+    aus_env = os.environ.get(PROTOKOLL_REPO_ENV, "").strip()
+    if aus_env:
+        pfad = Path(aus_env).expanduser()
+        if pfad.is_dir():
+            return pfad.resolve()
+    return log_repo()
+
+
+def _ist_im_ordner(pfad: Path, basis: Path) -> bool:
+    try:
+        pfad.resolve().relative_to(basis.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _pruefe_puffer_ausserhalb(puffer: Path, repo: Path | None) -> None:
+    if repo is not None and _ist_im_ordner(puffer, repo):
+        raise ValueError(f"Protokoll-Puffer darf nie im Arbeitsordner liegen: {puffer}")
+
+
+def _buendel_intervall_s() -> float:
+    roh = os.environ.get(PROTOKOLL_BUENDEL_ENV, "").strip()
+    if not roh:
+        return 0.0
+    try:
+        wert = float(roh)
+    except ValueError:
+        return 0.0
+    return max(wert, 0.0)
+
+
+def _pruefe_pflichtfelder(typ: str, felder: dict[str, Any]) -> dict[str, Any]:
+    """Prüft alle Pflichtfelder einer Ereignis-Protokoll-Zeile und normalisiert sie (#902)."""
+    if not isinstance(typ, str) or not typ.strip():
+        raise ProtokollPflichtfeldFehler("Ereignis-Typ darf nicht leer sein.")
+    typ_wert = typ.strip()
+    if typ_wert not in TYPEN:
+        log.warning("Unbekannter Zeilen-Typ %r — wird trotzdem geschrieben.", typ_wert)
+
+    if "zeit" in felder:
+        zeit_roh = felder["zeit"]
+        if not isinstance(zeit_roh, str) or not zeit_roh.strip() or _zeitpunkt(zeit_roh) is None:
+            raise ProtokollPflichtfeldFehler("Pflichtfeld 'zeit' muss ein gültiger ISO-Zeitstempel sein.")
+        zeit_wert = zeit_roh.strip()
+    elif "ts" in felder:
+        zeit_roh = felder["ts"]
+        if not isinstance(zeit_roh, str) or not zeit_roh.strip() or _zeitpunkt(zeit_roh) is None:
+            raise ProtokollPflichtfeldFehler("Pflichtfeld 'zeit' muss ein gültiger ISO-Zeitstempel sein.")
+        zeit_wert = zeit_roh.strip()
+    else:
+        zeit_wert = _protokoll_jetzt()
+
+    if "ticket" not in felder:
+        raise ProtokollPflichtfeldFehler("Pflichtfeld 'ticket' fehlt.")
+    ticket_roh = felder["ticket"]
+    if ticket_roh is None or isinstance(ticket_roh, bool) or not isinstance(ticket_roh, (str, int)):
+        raise ProtokollPflichtfeldFehler("Pflichtfeld 'ticket' ist ungültig.")
+    ticket_wert = str(ticket_roh).strip()
+    if not ticket_wert or ".." in ticket_wert or not _TICKET_MUSTER.fullmatch(ticket_wert):
+        raise ProtokollPflichtfeldFehler(f"Pflichtfeld 'ticket' hat unzulässigen Wert: {ticket_roh!r}")
+
+    textwerte: dict[str, str] = {}
+    for name in _TEXT_PFLICHTFELDER:
+        if name not in felder:
+            raise ProtokollPflichtfeldFehler(f"Pflichtfeld '{name}' fehlt.")
+        wert = felder[name]
+        if not isinstance(wert, str) or not wert.strip():
+            raise ProtokollPflichtfeldFehler(f"Pflichtfeld '{name}' darf nicht leer sein.")
+        textwerte[name] = wert.strip()
+
+    if "kontextstand" not in felder:
+        raise ProtokollPflichtfeldFehler("Pflichtfeld 'kontextstand' fehlt.")
+    kontext_roh = felder["kontextstand"]
+    if kontext_roh is None or isinstance(kontext_roh, bool):
+        raise ProtokollPflichtfeldFehler("Pflichtfeld 'kontextstand' darf nicht leer oder boolesch sein.")
+    if isinstance(kontext_roh, str):
+        kontext_wert: str | int | float = kontext_roh.strip()
+        if not kontext_wert:
+            raise ProtokollPflichtfeldFehler("Pflichtfeld 'kontextstand' darf nicht leer sein.")
+    elif isinstance(kontext_roh, (int, float)):
+        kontext_wert = kontext_roh
+    else:
+        raise ProtokollPflichtfeldFehler("Pflichtfeld 'kontextstand' muss Zahl oder Text sein.")
+
+    zeile: dict[str, Any] = {
+        "zeit": zeit_wert,
+        "typ": typ_wert,
+        "ticket": ticket_wert,
+        **textwerte,
+        "kontextstand": kontext_wert,
+    }
+    bleibt = NULL_FELDER.get(typ_wert, frozenset())
+    vergeben = set(PFLICHTFELDER) | {"ts", "typ"}
+    for key, val in felder.items():
+        if key in vergeben:
+            continue
+        if val is not None or key in bleibt:
+            zeile[key] = val
+    return zeile
+
+
+def _sortiere_rohzeilen(zeilen: list[str]) -> list[str]:
+    """Sortiert JSONL-Rohzeilen stabil nach Zeitstempel (``zeit`` oder ``ts``)."""
+
+    def _schluessel(roh: str) -> datetime:
+        try:
+            eintrag = json.loads(roh)
+        except ValueError:
+            return datetime.min.replace(tzinfo=UTC)
+        if not isinstance(eintrag, dict):
+            return datetime.min.replace(tzinfo=UTC)
+        return _sortier_zeit(eintrag)
+
+    return sorted(zeilen, key=_schluessel)
+
+
+def _puffer_lesen(puffer: Path) -> dict[str, list[str]]:
+    if not puffer.is_dir():
+        return {}
+    wartend: dict[str, list[str]] = {}
+    for datei in sorted(puffer.glob("*.jsonl")):
+        ticket = datei.stem
+        if not _TICKET_MUSTER.fullmatch(ticket) or ".." in ticket:
+            continue
+        zeilen = rohzeilen(datei)
+        if zeilen:
+            wartend[ticket] = zeilen
+    return wartend
+
+
+def _puffer_leeren(puffer: Path, gesendet: dict[str, list[str]]) -> None:
+    for ticket, weg in gesendet.items():
+        datei = puffer / f"{ticket}.jsonl"
+        if not datei.is_file():
+            continue
+        rest = _fehlende(weg, rohzeilen(datei))
+        if not rest:
+            with contextlib.suppress(OSError):
+                datei.unlink()
+        else:
+            datei.write_text("\n".join(rest) + "\n", encoding="utf-8", newline="\n")
+
+
+def _buendel_faellig(puffer: Path, buendel_s: float) -> bool:
+    if buendel_s <= 0:
+        return True
+    marker = puffer / ".letzter_push"
+    if not marker.is_file():
+        return True
+    try:
+        letzter = float(marker.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return True
+    return (time.time() - letzter) >= buendel_s
+
+
+def _merke_push_zeit(puffer: Path) -> None:
+    with contextlib.suppress(OSError):
+        (puffer / ".letzter_push").write_text(f"{time.time():.6f}\n", encoding="utf-8", newline="\n")
+
+
+def _plumbing_push_einmal(repo: Path, wartend: dict[str, list[str]]) -> tuple[bool, bool, str]:
+    """Ein atomarer Git-Plumbing-Push aller gepufferten Tickets auf ``refs/heads/protokoll`` (#902).
+
+    Arbeitet komplett ohne Arbeitsbaum- oder Index-Eingriff (eigene temporäre ``GIT_INDEX_FILE``).
+    Rückgabe ``(ok, konflikt, fehler)``.
+    """
+    from . import gh  # spät: gh fragt config, aber nicht bau_log
+
+    if not gh.hat_origin(repo):
+        return False, False, "kein origin konfiguriert"
+
+    ok_ref, remote_sha, fehler_ref = gh.remote_ref_sha(repo, PROTOKOLL_REF)
+    if not ok_ref:
+        return False, False, fehler_ref
+
+    temp_ref = ""
+    parent_sha = ""
+    try:
+        if remote_sha:
+            temp_ref = f"refs/to-spawn/tmp/protokoll-{os.getpid()}-{threading.get_ident()}-{uuid.uuid4().hex[:8]}"
+            c_fetch, s_fetch, e_fetch = gh._git_lauf(
+                ["fetch", "-q", "--no-tags", "origin", f"+{PROTOKOLL_REF}:{temp_ref}"],
+                repo,
+                timeout=gh.FETCH_ZEIT_S,
+            )
+            if c_fetch != 0:
+                return False, False, gh._git_fehler_kurz(c_fetch, s_fetch, e_fetch)
+            c_rev, s_rev, e_rev = gh._git_lauf(
+                ["rev-parse", "--verify", f"{temp_ref}^{{commit}}"],
+                repo,
+                timeout=gh.GIT_ZEIT_S,
+            )
+            parent_sha = s_rev.strip()
+            if c_rev != 0 or not gh._GIT_SHA.fullmatch(parent_sha):
+                return False, False, gh._git_fehler_kurz(c_rev, s_rev, e_rev)
+
+        with tempfile.TemporaryDirectory(prefix="to-spawn-protokoll-") as tmp_dir:
+            tmp_pfad = Path(tmp_dir)
+            index_env = {"GIT_INDEX_FILE": str(tmp_pfad / "index")}
+            if parent_sha:
+                c_rt, s_rt, e_rt = gh._git_lauf(["read-tree", parent_sha], repo, extra_env=index_env)
+                if c_rt != 0:
+                    return False, False, gh._git_fehler_kurz(c_rt, s_rt, e_rt)
+
+            neue_gesamt = 0
+            geaenderte_tickets: list[str] = []
+            for ticket, lokal_roh in sorted(wartend.items()):
+                baum_pfad = protokoll_datei_im_zweig(ticket)
+                if parent_sha:
+                    c_cat, s_cat, _e_cat = gh._git_lauf(["cat-file", "-p", f"{parent_sha}:{baum_pfad}"], repo)
+                    remote_roh = [z.strip() for z in s_cat.splitlines() if z.strip()] if c_cat == 0 else []
+                else:
+                    remote_roh = []
+                fehlend = _fehlende(remote_roh, lokal_roh)
+                if not fehlend:
+                    continue
+                neue_gesamt += len(fehlend)
+                geaenderte_tickets.append(ticket)
+                kombiniert = _sortiere_rohzeilen([*remote_roh, *fehlend])
+                blob_datei = tmp_pfad / f"{ticket}.jsonl"
+                blob_datei.write_text("\n".join(kombiniert) + "\n", encoding="utf-8", newline="\n")
+                c_hash, s_hash, e_hash = gh._git_lauf(["hash-object", "-w", "--", str(blob_datei)], repo)
+                blob_sha = s_hash.strip()
+                if c_hash != 0 or not gh._GIT_SHA.fullmatch(blob_sha):
+                    return False, False, gh._git_fehler_kurz(c_hash, s_hash, e_hash)
+                c_upd, s_upd, e_upd = gh._git_lauf(
+                    ["update-index", "--add", "--cacheinfo", f"100644,{blob_sha},{baum_pfad}"],
+                    repo,
+                    extra_env=index_env,
+                )
+                if c_upd != 0:
+                    return False, False, gh._git_fehler_kurz(c_upd, s_upd, e_upd)
+
+            if neue_gesamt == 0:
+                return True, False, ""
+
+            c_tree, s_tree, e_tree = gh._git_lauf(["write-tree"], repo, extra_env=index_env)
+            tree_sha = s_tree.strip()
+            if c_tree != 0 or not gh._GIT_SHA.fullmatch(tree_sha):
+                return False, False, gh._git_fehler_kurz(c_tree, s_tree, e_tree)
+
+        commit_args = ["-c", "commit.gpgsign=false", "commit-tree", tree_sha]
+        if parent_sha:
+            commit_args += ["-p", parent_sha]
+        commit_args += ["-F", "-"]
+        tickets_kurz = ", ".join(f"#{t}" for t in geaenderte_tickets[:5])
+        if len(geaenderte_tickets) > 5:
+            tickets_kurz += f" +{len(geaenderte_tickets) - 5}"
+        nachricht = f"protokoll: {neue_gesamt} Ereignis(se) ({tickets_kurz})\n"
+        c_com, s_com, e_com = gh._git_lauf(
+            commit_args,
+            repo,
+            eingabe=nachricht,
+            extra_env=gh._INTERN_GIT_ENV,
+        )
+        commit_sha = s_com.strip()
+        if c_com != 0 or not gh._GIT_SHA.fullmatch(commit_sha):
+            return False, False, gh._git_fehler_kurz(c_com, s_com, e_com)
+
+        ok_push, konflikt, fehler_push = gh.remote_ref_cas_setzen(repo, PROTOKOLL_REF, commit_sha, parent_sha)
+        if ok_push:
+            gh._git_lauf(["update-ref", f"refs/remotes/origin/{PROTOKOLL_ZWEIG}", commit_sha], repo)
+            return True, False, ""
+        return False, konflikt, fehler_push
+    finally:
+        if temp_ref:
+            gh._git_lauf(["update-ref", "-d", temp_ref], repo)
+
+
+def _schiebe_puffer_ein_durchlauf(repo: Path, wartend: dict[str, list[str]], puffer: Path) -> bool:
+    """Schiebt ``wartend`` gebündelt mit Konflikt-Retry (hält dabei keine Puffer-Sperre)."""
+    letzter_fehler = ""
+    for versuch in range(1, MAX_PUSH_VERSUCHE + 1):
+        ok, konflikt, fehler = _plumbing_push_einmal(repo, wartend)
+        if ok:
+            return True
+        letzter_fehler = fehler
+        if not konflikt:
+            log.warning(
+                "Ereignis-Protokoll: Push auf %s fehlgeschlagen (%s) — Zeilen bleiben im Puffer %s.",
+                PROTOKOLL_ZWEIG,
+                fehler,
+                puffer,
+            )
+            return False
+        if versuch < MAX_PUSH_VERSUCHE:
+            time.sleep(min(0.03 * versuch, 0.25) + random.uniform(0.0, 0.05))
+    log.warning(
+        "Ereignis-Protokoll: Push auf %s nach %d Konflikt-Versuchen offen (%s) — Zeilen bleiben im Puffer %s.",
+        PROTOKOLL_ZWEIG,
+        MAX_PUSH_VERSUCHE,
+        letzter_fehler,
+        puffer,
+    )
+    return False
+
+
+def _schiebe_puffer(puffer: Path, repo: Path | None) -> bool:
+    """Serialisiert lokale Pushes über ``protokoll.lock``, hält ``puffer.lock`` nur für Datei-I/O."""
+    push_sperre = puffer / "protokoll.lock"
+    puffer_sperre = puffer / "puffer.lock"
+    with sperre.halte(push_sperre, warten=SPERR_WARTE_S) as gehalten:
+        if not gehalten:
+            log.warning(
+                "Ereignis-Protokoll: Push-Sperre %s nach %.1f s belegt — Puffer bleibt liegen.",
+                push_sperre,
+                SPERR_WARTE_S,
+            )
+            return False
+        for _ in range(3):
+            with sperre.halte(puffer_sperre, warten=SPERR_WARTE_S) as p_gehalten:
+                if not p_gehalten:
+                    log.warning("Ereignis-Protokoll: Puffer-Sperre %s belegt — Push vertagt.", puffer_sperre)
+                    return False
+                wartend = _puffer_lesen(puffer)
+            if not wartend:
+                return True
+            if repo is None:
+                log.warning("Ereignis-Protokoll: kein Repo gefunden — Zeilen bleiben im Puffer %s.", puffer)
+                return False
+            if not _schiebe_puffer_ein_durchlauf(repo, wartend, puffer):
+                return False
+            with sperre.halte(puffer_sperre, warten=SPERR_WARTE_S) as p_gehalten:
+                if not p_gehalten:
+                    log.warning("Ereignis-Protokoll: Puffer-Sperre %s nach Push belegt.", puffer_sperre)
+                    return False
+                _puffer_leeren(puffer, wartend)
+                _merke_push_zeit(puffer)
+                if not _puffer_lesen(puffer):
+                    return True
+        return False
+
+
+def spuele(repo: Path | None = None, *, puffer_ordner: Path | None = None) -> bool:
+    """Schiebt alle im lokalen Puffer wartenden Ereignis-Zeilen gebündelt auf ``protokoll`` (#902).
+
+    Gibt ``True`` zurück, wenn der Puffer danach leer ist (nichts offen oder erfolgreich
+    gepusht), ``False``, wenn der Push offline/gesperrt war (Zeilen bleiben im Puffer).
+    """
+    puffer = Path(puffer_ordner).expanduser() if puffer_ordner is not None else protokoll_puffer_ordner()
+    ziel_repo = _protokoll_repo(repo)
+    _pruefe_puffer_ausserhalb(puffer, ziel_repo)
+    return _schiebe_puffer(puffer, ziel_repo)
+
+
+@overload
+def schreibe(typ: str, /, **felder: Any) -> dict[str, Any]: ...
+
+
+@overload
+def schreibe(repo: Path, ticket: str | int, typ: str, /, **felder: Any) -> dict[str, Any]: ...
+
+
+def schreibe(*args: Any, **felder: Any) -> dict[str, Any]:
+    """Einzige Schreib-Tür für das Ereignis-Protokoll: ``schreibe(typ, **felder)`` (#902).
+
+    Prüft alle Pflichtfelder (``zeit``, ``ticket``, ``wer``, ``was``, ``session``,
+    ``commit``, ``grund``, ``kontextstand``), sperrt lokal über :mod:`to_spawn.sperre`,
+    puffert unter ``~/.local/state/to-spawn/protokoll`` (nie im Worktree) und schiebt
+    gebündelt per Git-Plumbing auf ``protokoll`` (mit Rebase/Retry bei Konflikt und
+    Offline-Puffer ohne Fehler an den Aufrufer).
+
+    Übergangsweise (bis #903) wird der alte 3-Argumente-Aufruf
+    ``schreibe(repo, ticket, typ, **felder)`` weiter an die lokale Laufdatei geleitet.
+    """
+    if len(args) == 3 and isinstance(args[0], (Path, os.PathLike)):
+        repo = Path(args[0])
+        ticket = args[1]
+        typ = str(args[2])
+        zeile = _neue_zeile(ticket, typ, felder)
+        _haenge_an(lauf_pfad(repo, ticket), [json.dumps(zeile, ensure_ascii=False)])
+        return zeile
+
+    if len(args) == 1:
+        typ_wert = args[0]
+    elif len(args) == 0 and "typ" in felder:
+        typ_wert = felder.pop("typ")
+    else:
+        raise TypeError("schreibe() erwartet schreibe(typ, **felder) oder alt schreibe(repo, ticket, typ, **felder).")
+
+    repo_vorgabe = felder.pop("repo", None) if isinstance(felder.get("repo"), (Path, os.PathLike)) else None
+    puffer_vorgabe = felder.pop("puffer_ordner", None)
+    sofort_push = felder.pop("sofort_push", None)
+
+    zeile = _pruefe_pflichtfelder(typ_wert, felder)
+    puffer = Path(puffer_vorgabe).expanduser() if puffer_vorgabe is not None else protokoll_puffer_ordner()
+    ziel_repo = _protokoll_repo(Path(repo_vorgabe) if repo_vorgabe is not None else None)
+    _pruefe_puffer_ausserhalb(puffer, ziel_repo)
+
+    roh = json.dumps(zeile, ensure_ascii=False)
+    puffer_sperre = puffer / "puffer.lock"
+    with sperre.halte(puffer_sperre, warten=SPERR_WARTE_S) as gehalten:
+        if not gehalten:
+            raise TimeoutError(f"Ereignis-Protokoll: Puffer-Sperre {puffer_sperre} nach {SPERR_WARTE_S:.1f} s belegt.")
+        _haenge_an(puffer / f"{zeile['ticket']}.jsonl", [roh])
+        darf_pushen = bool(sofort_push) if sofort_push is not None else _buendel_faellig(puffer, _buendel_intervall_s())
+    if darf_pushen:
+        _schiebe_puffer(puffer, ziel_repo)
     return zeile
 
 
@@ -374,7 +847,7 @@ def _lese_datei(datei: Path) -> list[tuple[str, dict[str, Any]]]:
 
 
 def _sortier_zeit(zeile: dict[str, Any]) -> datetime:
-    return _zeitpunkt(zeile.get("ts")) or datetime.min.replace(tzinfo=timezone.utc)
+    return _zeitpunkt(zeile.get("zeit") or zeile.get("ts")) or datetime.min.replace(tzinfo=UTC)
 
 
 def lese(repo: Path, ticket: str | int, *, hauptbaum: Path | None = None) -> list[dict[str, Any]]:
@@ -639,12 +1112,12 @@ def _zeitpunkt(text: Any) -> datetime | None:
         wert = datetime.fromisoformat(str(text))
     except ValueError:
         return None
-    return wert if wert.tzinfo else wert.replace(tzinfo=timezone.utc)
+    return wert if wert.tzinfo else wert.replace(tzinfo=UTC)
 
 
 def _juengster(repo: Path, ticket: str) -> datetime:
     zeiten = [z for z in (_zeitpunkt(r.get("ts")) for r in lese(repo, ticket)) if z]
-    return max(zeiten) if zeiten else datetime.min.replace(tzinfo=timezone.utc)
+    return max(zeiten) if zeiten else datetime.min.replace(tzinfo=UTC)
 
 
 def _manifest_eintraege(repo: Path) -> dict[str, dict[str, Any]]:
