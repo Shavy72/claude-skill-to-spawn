@@ -128,8 +128,9 @@ def handoff_auftrag(handoff: str, start: str) -> str:
 #: Aufseher-Takt (``to_spawn/waechter_takt.py``) (#367, #429). Platzhalter ``{S}`` und ``{SKILL}``
 #: werden erst beim Bauen des jeweiligen Prompts gefüllt.
 ABSCHLUSS_ANWEISUNG = (
-    "Bau fertig, bereit zur Abnahme (alle Bau-Tickets zu oder nur noch Live-Belege/checkpoint:human-Abnahme offen, "
-    "bzw. „Kette … durch“ oder „SPEC FERTIG“) → PFLICHT Abschluss-Paket `--stand abnahme` (einmal): "
+    "Ob die Spec fertig und bereit zur Abnahme ist, entscheidet nur capo, nie du: "
+    "die Abschluss-Kette startet nur nach capos Zeile „#{S} SPEC FERTIG — Abschluss-Kette“ "
+    "(sonst nichts davon tun, auch wenn alle Tickets zu wirken) → PFLICHT Abschluss-Paket `--stand abnahme` (einmal): "
     "zuerst Rundschau-Auftrag erzeugen mit `python {SKILL}/skripte/abschluss_paket.py rundschau-auftrag {S}` "
     "(schreibt docs/agents/rundschau_auftrag_{S}.md mit Tickets, Direkt-Links, Pflicht-Folie Bild + Klick-Schritte je Bau-Ticket "
     "und Pflicht-Folie „Für dich entschieden“ aus docs/agents/entscheidungen_{S}.md). "
@@ -174,12 +175,13 @@ ABSCHLUSS_ANWEISUNG = (
     "Exit 4 → überspringen. Exit 3 → KI nachstarten, erneut sammeln. Exit 1 → Grund notieren, weiter. "
     "Zum Schluss `python {SKILL}/skripte/abschluss_paket.py nachsehen {S}` "
     "(genau eine Mail an den Menschen; nur für `--stand abnahme` gilt: Exit 3 = wartet noch, capo stößt es je Tick selbst an — nicht warten). "
+    "`ablegen`/`nachsehen` Exit 4 = capo meldet nicht fertig → abbrechen, nicht umgehen, im Notizzettel vermerken. "
     "Live-Schritt nur über `python {SKILL}/to_spawn.py live {S}` (die Tür prüft selbst vorher die Komplett-Prüfung, höchstens einmal je Spec): "
     "Exit 0 → live; Exit 1 → kein Live, Grund aus der Zeile beheben und erneut rufen; "
     "Exit 2 → `live.befehl` fehlt, Komplett-Prüfung grün, Live-Schritt nach Repo-Ablauf von Hand. "
     "Ohne ausdrückliches Wort des Nutzers geht nichts live. "
-    "Meldet der Nutzer nach dem Abnahme-Paket Nachbesserungen (Kommentar im Spec-Issue), je Punkt ein Folge-Ticket an derselben Spec über "
-    '`python {SKILL}/skripte/abschluss_paket.py nachbesserung {S} --punkt "<Punkt>"` anlegen (Manifest ergänzt, Kette baut weiter); '
+    "Meldet der Nutzer nach dem Abnahme-Paket Nachbesserungen (Kommentar im Spec-Issue), je Punkt ein Folge-Ticket an derselben Spec ausschließlich über "
+    '`python {SKILL}/skripte/abschluss_paket.py nachbesserung {S} --punkt "<Punkt>"` anlegen (nie über `befund --stufe gelb`; Manifest ergänzt, Kette baut weiter); '
     "sind die Folge-Tickets fertig, läuft der Abnahme-Abschluss erneut (neue Rundschau, neue Selbstprüfung, `thermo_lauf.py live-bereit plan {S} --neu`, "
     "`abschluss_paket.py ablegen {S} --stand abnahme …` → Paket trägt „Runde 2“ im Titel; keine zweite Mail). "
     "Nach dem Live-Deploy dasselbe einmal mit `--stand live` (`abschluss_paket.py ablegen {S} --stand live …` + `abschluss_paket.py nachsehen {S} --stand live`); "

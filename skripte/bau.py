@@ -1245,9 +1245,8 @@ def main() -> int:
         return 2
     cmd = praefix + cmd
 
-    # Vertrauens-Dialog vorab bestätigen (#257): nur für Claude Code (``~/.claude.json``).
-    if runner == "claude":
-        vertrauen.still_sicherstellen(Path(worktree_pfad(ticket)).expanduser(), REPO)
+    # Vertrauens-Dialog vorab bestätigen (#257 Claude ~/.claude.json, #855 agy settings.json).
+    vertrauen.still_sicherstellen(Path(worktree_pfad(ticket)).expanduser(), REPO, Path.cwd(), runner=runner)
 
     # Aus einer Claude-Session gestartet erben Kind-Sessions die Markierung
     # CLAUDE_CODE_CHILD_SESSION und speichern kein Transkript (kein Resume nach
