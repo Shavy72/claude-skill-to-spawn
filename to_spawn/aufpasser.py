@@ -87,7 +87,7 @@ import signal
 import subprocess
 import sys
 import tempfile
-import time
+import time as _stdlib_time
 from collections.abc import Callable, Iterable, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass, field
@@ -123,6 +123,22 @@ from to_spawn.waechter_lauf import _LIMIT_TEXT as LIMIT_TEXT
 from to_spawn.waechter_lauf import ist_echte_antwort, limit_offen, transkript_ordner
 
 log = logging.getLogger("aufpasser")
+
+
+class _ZeitModul:
+    """Modullokaler Zeit-Zugriff, damit ``monkeypatch.setattr(aufpasser.time, …)``
+    nur ``aufpasser`` trifft und nicht global ``subprocess``/``sperre``/``bau_log`` (#903)."""
+
+    def __init__(self) -> None:
+        self.sleep: Callable[[float], None] = _stdlib_time.sleep
+        self.monotonic: Callable[[], float] = _stdlib_time.monotonic
+        self.time: Callable[[], float] = _stdlib_time.time
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(_stdlib_time, name)
+
+
+time = _ZeitModul()
 
 HANG_MIN = 90
 #: Wakeups wartender Loop-Sessions kommen spätestens alle 60 min — darunter wäre

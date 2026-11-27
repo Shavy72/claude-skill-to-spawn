@@ -788,10 +788,6 @@ def kontextstand_aktuell(repo: Path | None, ticket: str | int | None = None) -> 
         wert = kontext_aktuell_k(repo, ticket)
         if wert is not None:
             return wert
-        z = zusammenfassung(repo, ticket)
-        spitze = z.get("spitze_k")
-        if isinstance(spitze, (int, float)) and not isinstance(spitze, bool) and spitze > 0:
-            return spitze
     except (OSError, ValueError, KeyError, TypeError):
         return 0
     return 0

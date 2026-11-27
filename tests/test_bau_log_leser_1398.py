@@ -18,6 +18,8 @@ import ast
 import json
 import re
 import subprocess
+import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -503,3 +505,47 @@ def test_grep_kein_direkter_lokaler_bau_log_schreibweg() -> None:
     assert "docs/agents/bau_log" not in stand_text
     assert "bau_log.lauf_pfad" not in stand_text
     assert "bau_log.log_pfad" not in stand_text
+
+
+# --- 8. Regression #903: monkeypatch auf aufpasser.time.sleep darf subprocess nicht treffen ---
+
+
+def test_aufpasser_time_sleep_patch_isoliert_gegen_subprocess_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein Monkeypatch auf ``aufpasser.time.sleep`` (wie in ``test_aufpasser_paket_418``)
+    darf ``subprocess.Popen._wait(timeout=...)`` in ``bau_log`` nicht mit ``0.001, 0.002, …``
+    in die aufgezeichneten Staffel-Pausen schleusen (#903)."""
+    bare, klon = _bare_und_klon(tmp_path, "klon-418")
+    del bare
+    monkeypatch.setenv("TO_SPAWN_PROTOKOLL_PUFFER", str(tmp_path / "puffer"))
+    ap = aufpasser.Aufpasser(aufpasser.Einstellungen(zustand=tmp_path / "zustand", repo=klon))
+
+    pausen: list[float] = []
+    echt_stdlib_sleep = time.sleep
+    monkeypatch.setattr(aufpasser.time, "sleep", lambda s: pausen.append(s))
+    monkeypatch.setattr(aufpasser.speicher, "platz_frei", lambda *_a, **_k: (True, "frei"))
+    monkeypatch.setattr(aufpasser.speicher, "staffel_s", lambda _k: 20)
+    monkeypatch.setattr(ap, "fenster_starten", lambda *_a, **_k: None)
+    monkeypatch.setattr(ap, "_start_nachweisen", lambda *_a, **_k: True)
+    monkeypatch.setattr(ap, "melden", lambda *_a, **_k: None)
+
+    # Langsamer Subprozess mit timeout=5 simuliert CPU-Last in CI: Popen._wait()
+    # ruft intern stdlib time.sleep(0.001, 0.002, …) auf.
+    echt_git_kopf = bau_log.git_kopf_kurz
+
+    def _langsamer_kopf(repo: Path | None, ticket: str | int | None = None) -> str:
+        subprocess.run(
+            [sys.executable, "-c", "import time; time.sleep(0.05)"],
+            timeout=5,
+            check=True,
+        )
+        return echt_git_kopf(repo, ticket)
+
+    monkeypatch.setattr(bau_log, "git_kopf_kurz", _langsamer_kopf)
+
+    ap.fehlendes_fenster("spec-900", str(SPEC), klon, None)
+    ap.fehlendes_fenster("spec-900", str(SPEC), klon, TICKET)
+
+    assert pausen == [20], f"Fremde sleep-Aufrufe aus subprocess in pausen gelandet: {pausen[:10]}"
+    assert time.sleep is echt_stdlib_sleep, "Patch auf aufpasser.time.sleep darf stdlib time.sleep nicht verändern"
