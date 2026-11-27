@@ -198,7 +198,9 @@ ABSCHLUSS_ANWEISUNG = (
     "Live-Schritt nur über `python {SKILL}/to_spawn.py live {S}` (die Tür prüft selbst vorher die Komplett-Prüfung, höchstens einmal je Spec): "
     "Exit 0 → live; Exit 1 → kein Live, Grund aus der Zeile beheben und erneut rufen; "
     "Exit 2 → `live.befehl` fehlt, Komplett-Prüfung grün, Live-Schritt nach Repo-Ablauf von Hand. "
-    "Ohne ausdrückliches Wort des Nutzers geht nichts live. "
+    "Ohne ausdrückliches Wort des Nutzers geht nichts live — der Abnahme-Kommentar „passt“ des Nutzers im Abnahme-Ticket "
+    "ist die Live-Freigabe für diese Spec (kein zweites Live-Ja, keine Briefkasten-Frage): direkt `python {SKILL}/to_spawn.py live {S}` "
+    "(startet ohne Staging vorher die Komplett-Prüfung), dann Aufräumen. "
     "Meldet der Nutzer nach dem Abnahme-Paket Nachbesserungen (Kommentar im Spec-Issue), je Punkt ein Folge-Ticket an derselben Spec ausschließlich über "
     '`python {SKILL}/skripte/abschluss_paket.py nachbesserung {S} --punkt "<Punkt>"` anlegen (nie über `befund --stufe gelb`; Manifest ergänzt, Kette baut weiter); '
     "sind die Folge-Tickets fertig, läuft der Abnahme-Abschluss erneut (neue Rundschau, neue Selbstprüfung, `thermo_lauf.py live-bereit plan {S} --neu`, "

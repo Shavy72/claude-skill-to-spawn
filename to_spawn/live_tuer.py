@@ -26,7 +26,7 @@ from to_spawn import bash_wahl, capo, config, komplett_lauf
 log = logging.getLogger(__name__)
 
 
-def starte(klon: Path, spec: int, konfig: dict[str, Any]) -> tuple[int, list[str]]:
+def starte(klon: Path, spec: int, konfig: dict[str, Any], *, gh_repo: str = "") -> tuple[int, list[str]]:
     """Live-Schritt der Spec ``spec`` starten, wenn die Komplett-Prüfung frei gibt; (Exit, Zeilen)."""
     pruefung = komplett_lauf.darf_live(klon, spec, konfig)
     if not pruefung.frei:
@@ -49,7 +49,7 @@ def starte(klon: Path, spec: int, konfig: dict[str, Any]) -> tuple[int, list[str
         zeilen.append(f"Live-Befehl rot (Exit {erg.returncode}). Handlung: Ausgabe oben lesen, beheben, erneut rufen.")
         return 1, zeilen
     log.info("live_tuer: Spec %s live-Befehl grün", spec)
-    if not capo.live_merken(klon, spec):  # Merker für den Takt (#546); Live selbst lief
+    if not capo.live_merken(klon, spec, gh_repo):  # Merker für den Takt (#546); Live selbst lief
         zeilen.append("Live-Merker nicht schreibbar — Spec-Issue schließt der Takt dann nicht von selbst.")
     zeilen.append("Live-Befehl grün.")
     return 0, zeilen
