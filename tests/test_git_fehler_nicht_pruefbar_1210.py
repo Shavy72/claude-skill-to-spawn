@@ -94,9 +94,7 @@ def test_echter_verlust_und_nicht_pruefbar_werden_beide_gemeldet(
 # --- #861 (aus App #1211): weitere git-Fehler in Netto-Prüfung & _dateien ------
 
 
-def test_861_datei_an_spitze_trennt_fehlt_von_git_fehler(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_861_datei_an_spitze_trennt_fehlt_von_git_fehler(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     """Fehlende Datei im gültigen Ref liefert None ohne Warnung; kaputter Ref wirft _NichtPruefbar."""
     repo = _repo(tmp_path)
     kopf = _git(repo, "rev-parse", "HEAD")

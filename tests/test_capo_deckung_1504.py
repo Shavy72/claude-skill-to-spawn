@@ -113,9 +113,7 @@ def _gepusht_mit_manifest(tmp_path: Path) -> tuple[Path, dict[str, str]]:
 
 
 @pytest.mark.parametrize("code", [124, 127])
-def test_1504_baum_abfrage_gescheitert_fail_closed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int
-) -> None:
+def test_1504_baum_abfrage_gescheitert_fail_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int) -> None:
     """Git-Abfrage nach dem Skript scheitert kurz (Zeitablauf/OSError): nicht „fehlt“, also kein Zettel-Rückfall."""
     repo, vps = _gepusht_mit_manifest(tmp_path)
     echt = capo._git
@@ -156,3 +154,18 @@ def test_1504_entpackt_nur_gebrauchte_dateien(tmp_path: Path, monkeypatch: pytes
     monkeypatch.setattr(capo.subprocess, "run", lauf)
     assert _gedeckt(repo, vps) is True
     assert archiv_pfade == [["scripts/schlange_deckung.py", "docs/agents/manifests"]]
+
+
+def test_1504_manifest_ordner_aus_repo_konfig(tmp_path: Path) -> None:
+    """``pfade.manifeste`` aus ``.to-spawn/config.json`` steuert den entpackten Manifest-Ordner (#860)."""
+    repo, vps = _welt(tmp_path)
+    konfig = repo / ".to-spawn" / "config.json"
+    konfig.parent.mkdir(parents=True, exist_ok=True)
+    konfig.write_text('{"pfade": {"manifeste": "eigene/manifests"}}\n', encoding="utf-8")
+    manifest = repo / "eigene" / "manifests" / "spec-900.json"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text('{"tickets": [901]}\n', encoding="utf-8")
+    _git(repo, "add", ".to-spawn/config.json", "eigene/manifests/spec-900.json")
+    _git(repo, "commit", "-q", "-m", "docs: eigenes Manifest (#900)")
+    _git(repo, "push", "-q", "origin", "HEAD:master")
+    assert _gedeckt(repo, vps) is True

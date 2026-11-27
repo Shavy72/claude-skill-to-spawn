@@ -832,7 +832,17 @@ class _StandUnlesbar(Exception):
 # Was das Deckungs-Skript zum Laufen braucht: es selbst, sein Import ``schlange_spur`` und
 # ``staging/deploy_ziel.py`` (Unterprozess). Erstes Element = das Skript.
 _DECKUNG_DATEIEN = ("scripts/schlange_deckung.py", "scripts/schlange_spur.py", "scripts/staging/deploy_ziel.py")
-_MANIFESTE = "docs/agents/manifests"
+_MANIFESTE_VORGABE: str = str(config.DEFAULTS["pfade"]["manifeste"])
+
+
+def _manifest_ordner(repo: Path) -> str:
+    """Relativer Manifest-Ordner des Repos für ``git ls-tree``/``git archive`` (Konfig ``pfade.manifeste``)."""
+    pfade = config.lade(repo).get("pfade")
+    wert = pfade.get("manifeste") if isinstance(pfade, dict) else None
+    text = wert.strip() if isinstance(wert, str) and wert.strip() else _MANIFESTE_VORGABE
+    if Path(text).is_absolute() or text.startswith("~"):
+        return _MANIFESTE_VORGABE
+    return text.replace("\\", "/").strip("/") or _MANIFESTE_VORGABE
 
 
 @dataclass(frozen=True)
@@ -858,7 +868,8 @@ def _deckungs_stand(repo: Path) -> Iterator[_Stand | None]:
     ref = haupt_ref(repo)
     if ref is None:
         raise _StandUnlesbar("kein origin/<Hauptzweig>")
-    code, text = _git(repo, "ls-tree", "-r", "-z", "--name-only", ref, "--", *_DECKUNG_DATEIEN, _MANIFESTE)
+    manifeste = _manifest_ordner(repo)
+    code, text = _git(repo, "ls-tree", "-r", "-z", "--name-only", ref, "--", *_DECKUNG_DATEIEN, manifeste)
     if code != 0:
         raise _StandUnlesbar(f"git ls-tree {ref} Exit {code}")
     vorhanden = set(filter(None, text.split("\0")))
@@ -866,8 +877,8 @@ def _deckungs_stand(repo: Path) -> Iterator[_Stand | None]:
         yield None
         return
     pfade = [d for d in _DECKUNG_DATEIEN if d in vorhanden]
-    if any(n.startswith(_MANIFESTE + "/") for n in vorhanden):
-        pfade.append(_MANIFESTE)
+    if any(n.startswith(manifeste + "/") for n in vorhanden):
+        pfade.append(manifeste)
     with tempfile.TemporaryDirectory(prefix="capo-deckung-") as ordner:
         ziel = Path(ordner)
         try:
@@ -885,8 +896,8 @@ def _deckungs_stand(repo: Path) -> Iterator[_Stand | None]:
                 tar.extractall(ziel, filter="data")
         except (OSError, subprocess.SubprocessError, tarfile.TarError) as fehler:
             raise _StandUnlesbar(str(fehler)) from fehler
-        (ziel / _MANIFESTE).mkdir(parents=True, exist_ok=True)
-        yield _Stand(skript=ziel / _DECKUNG_DATEIEN[0], manifeste=ziel / _MANIFESTE)
+        (ziel / manifeste).mkdir(parents=True, exist_ok=True)
+        yield _Stand(skript=ziel / _DECKUNG_DATEIEN[0], manifeste=ziel / manifeste)
 
 
 def live_gedeckt(repo: Path, vps: dict[str, Any], ticket: int, kopf: str, sha: str) -> bool:
