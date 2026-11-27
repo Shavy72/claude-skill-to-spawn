@@ -1599,7 +1599,19 @@ def _folge_runde(
     sitzung, fremd = tmux_aufruf.sitzung_aufloesen(repo, spec)
     if fremd:
         log.warning("Folge-Runde für #%s verweigert: %s", n, fremd)
-        return [f"#{n} {fremd}"]
+        zeilen = [f"#{n} {fremd}"]
+        zeilen += _melde(
+            repo,
+            konfig,
+            gh_repo,
+            dry_run,
+            "session_tot",
+            f"Folge-Runde blockiert #{n}",
+            f"Ticket #{n} ist wieder offen, aber die Folge-Runde wurde verweigert ({fremd}) — "
+            f"es baut niemand weiter. Grund der Wiederöffnung: {grund}",
+            f"folgerunde_fehler|{n}|{jetzt.astimezone():%Y-%m-%d}",
+        )
+        return zeilen
     fenster = _fenster_fuer_sitzung(spec, sitzung)
     laeuft = laeuft_noch(n, fenster, wt_zeit, jetzt)
     if laeuft:
@@ -1630,7 +1642,19 @@ def _folge_runde(
         fehler = str(ausnahme)
     if fehler:
         log.warning("Folge-Runde für #%s nicht gestartet: %s", n, fehler)
-        return [f"#{n} FEHLER: Folge-Runde nicht gestartet ({fehler})"]
+        zeilen = [f"#{n} FEHLER: Folge-Runde nicht gestartet ({fehler})"]
+        zeilen += _melde(
+            repo,
+            konfig,
+            gh_repo,
+            dry_run,
+            "session_tot",
+            f"Folge-Runde gescheitert #{n}",
+            f"Ticket #{n} ist wieder offen, aber der Start der Folge-Runde ist gescheitert "
+            f"({fehler}) — es baut niemand weiter. Grund der Wiederöffnung: {grund}",
+            f"folgerunde_fehler|{n}|{schon}|{jetzt.astimezone():%Y-%m-%d}",
+        )
+        return zeilen
     folgerunden[str(n)] = schon + 1
     weg = "tmux-Fenster" if fenster is not None else "lokal"
     return [f"#{n} Folge-Runde gestartet ({weg}, {schon + 1}/{grenze}) — Auftrag: {_kurz(grund)}"]
@@ -2380,6 +2404,106 @@ def fehl_reopen_kandidat(
     return stempel, sorted(je_stempel[stempel])
 
 
+def _wiedereroeffnete_regeln(n: int, erledigt: set[str]) -> list[str]:
+    """Regeln des jüngsten noch offenen capo-Reopens von #n — leer ohne aktives Reopen (#862).
+
+    Liest die beim Wiederöffnen geschriebenen Schlüssel ``N|Regel|closed_at`` (Regel in
+    :data:`REOPEN_REGELN`). Wurde das jüngste Reopen zurückgenommen (``ruecknahme|N|<stempel>``)
+    oder danach erneut geschlossen (:func:`_gesehene_schliessungen`), liefert die Funktion ``[]``.
+    """
+    je_stempel: dict[str, list[str]] = {}
+    for schluessel in erledigt:
+        teile = schluessel.split("|")
+        if len(teile) == 3 and teile[0] == str(n) and teile[1] in REOPEN_REGELN:
+            je_stempel.setdefault(teile[2], []).append(teile[1])
+    if je_stempel:
+        mit_zeit = [(zeit, stempel) for stempel in je_stempel if (zeit := _zeit(stempel)) is not None]
+        if mit_zeit:
+            zeit, stempel = max(mit_zeit)
+            if f"ruecknahme|{n}|{stempel}" in erledigt:
+                return []
+            if any(spaeter > zeit for spaeter in _gesehene_schliessungen(n, erledigt)):
+                return []
+            return sorted(set(je_stempel[stempel]))
+        if f"ruecknahme|{n}" in erledigt or _gesehene_schliessungen(n, erledigt):
+            return []
+        return sorted({r for regeln in je_stempel.values() for r in regeln})
+    if f"ruecknahme|{n}" in erledigt or _gesehene_schliessungen(n, erledigt):
+        return []
+    return sorted(
+        {
+            teile[2]
+            for s in erledigt
+            if len(teile := s.split("|")) == 4
+            and teile[0] == "geoeffnet"
+            and teile[1] == str(n)
+            and teile[2] in REOPEN_REGELN
+        }
+    )
+
+
+def _folge_runde_offen(
+    repo: Path,
+    konfig: dict[str, Any],
+    gh_repo: str,
+    spec: int,
+    n: int,
+    issue: dict[str, Any],
+    erledigt: set[str],
+    folgerunden: dict[str, int],
+    *,
+    checkpoint: str,
+    aktuelle_funde: list[Verstoss],
+    wt_zeit: float | None,
+    jetzt: datetime,
+    dry_run: bool,
+    gelernt: list[vorfall.Vorfall],
+) -> tuple[list[str], bool]:
+    """Stehen gebliebenes, wiedereröffnetes Ticket anstoßen oder Stillstand melden (#862).
+
+    Löst die Folge-Runde vom einmaligen Reopen-Tick: ist #n offen und bereits als capo-Reopen
+    in ``erledigt`` vermerkt, nicht fertig gebaut, ohne Checkpoint-/Freigabe-Label, ohne
+    laufende Session und ohne offene Blocker, startet :func:`_folge_runde` über ``skripte/bau.py``
+    (→ ``to_spawn/startstelle.py``) die Folge-Runde bzw. meldet den Stillstand über :func:`_melde`.
+    Rückgabe: ``(aktionszeilen, behandelt)``.
+    """
+    reopen_regeln = _wiedereroeffnete_regeln(n, erledigt)
+    if not reopen_regeln:
+        return [], False
+    labels = label_namen(issue)
+    if checkpoint in labels or OK_LABEL in labels or ticket_zustand.fertig_gebaut(issue):
+        return [], False
+    from . import tmux_aufruf
+
+    sitzung, fremd = tmux_aufruf.sitzung_aufloesen(repo, spec)
+    if not fremd:
+        fenster = _fenster_fuer_sitzung(spec, sitzung)
+        if laeuft_noch(n, fenster, wt_zeit, jetzt):
+            return [], False
+    blocker = gh.blocked_by(gh_repo, str(n))
+    if blocker is None:
+        return [f"#{n} FEHLER: Blocker nicht lesbar — Folge-Runde zurückgehalten"], False
+    if not all(isinstance(b, dict) and b.get("state") for b in blocker):
+        return [f"#{n} FEHLER: Blocker-Format unbekannt — Folge-Runde zurückgehalten"], False
+    if any(not ticket_zustand.fertig_gebaut(b) for b in blocker):
+        return [], False
+    funde = aktuelle_funde or [Verstoss(n, r, "wiedereröffnet ohne laufende Session") for r in reopen_regeln]
+    zeilen = _folge_runde(
+        repo,
+        konfig,
+        gh_repo,
+        spec,
+        n,
+        funde,
+        folgerunden,
+        wt_zeit=wt_zeit,
+        jetzt=jetzt,
+        dry_run=dry_run,
+        gelernt=gelernt,
+    )
+    return zeilen, True
+
+
 def tick(
     repo: Path,
     spec: int,
@@ -2666,10 +2790,13 @@ def _tick(
         elif not regeln_aus:
             # #448: eigenes Fehl-Reopen zurücknehmen, wenn die Regeln jetzt grün sind.
             kandidat = None if vps_fehlt else fehl_reopen_kandidat(n, issue, eigene, erledigt, checkpoint=checkpoint)
-            if kandidat is not None and reopen_funde(
-                repo, ref, n, eigene, belege, vps, kopf, alle_zeilen, staging_stand, issue
-            ):
-                kandidat = None  # Regeln weiter rot — das Reopen war richtig
+            aktuelle_funde: list[Verstoss] = []
+            if kandidat is not None:
+                aktuelle_funde = reopen_funde(
+                    repo, ref, n, eigene, belege, vps, kopf, alle_zeilen, staging_stand, issue
+                )
+                if aktuelle_funde:
+                    kandidat = None  # Regeln weiter rot — das Reopen war richtig
             if kandidat is not None:
                 spaeter = spaeter_geschlossen(gh_repo, n, kandidat[0])
                 if spaeter is None:
@@ -2723,6 +2850,29 @@ def _tick(
                 )
                 if len(erledigt) != vorher:
                     sichern()
+            else:
+                # #862: wiedereröffnetes Ticket ohne laufende Session nachstarten oder Stillstand melden.
+                folge_zeilen, folge_behandelt = _folge_runde_offen(
+                    repo,
+                    konfig,
+                    gh_repo,
+                    spec,
+                    n,
+                    issue,
+                    erledigt,
+                    folgerunden,
+                    checkpoint=checkpoint,
+                    aktuelle_funde=aktuelle_funde,
+                    wt_zeit=wt_zeit,
+                    jetzt=jetzt,
+                    dry_run=dry_run,
+                    gelernt=gelernt,
+                )
+                if folge_zeilen:
+                    aktionen += folge_zeilen
+                if folge_behandelt:
+                    sichern()
+                    continue
             fund = regel_verwaist(
                 n,
                 issue,
