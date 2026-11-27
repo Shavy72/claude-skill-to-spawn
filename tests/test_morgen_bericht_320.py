@@ -387,3 +387,21 @@ def test_h_abschluss_paket_morgen_bericht_cli_genau_einmal(welt: dict[str, Any])
     assert mails[0]["art"] == "morgen_bericht"
     for u in UEBERSCHRIFTEN:
         assert u in mails[0]["text"]
+
+
+def test_i_morgen_bericht_laufdatei_laesst_arbeitsbaum_sauber(welt: dict[str, Any]) -> None:
+    """#885 Fix-Runde 2: Morgen-Bericht als Laufdatei unter ``.to-spawn/``, ohne festen Bau-Log-Pfad."""
+    from to_spawn import capo
+    from to_spawn.pruef import cache, sofort
+
+    repo = welt["repo"]
+    liste: list[dict[str, Any]] = [{"number": n, "title": f"Ticket {n}", "state": "closed"} for n in range(101, 116)]
+    pfad, text = capo.morgen_bericht(repo, "HEAD", 500, liste)
+
+    rel = pfad.relative_to(repo).as_posix()
+    assert rel == ".to-spawn/morgen_bericht_500.md"
+    assert cache.ist_werkzeug_rest(repo, rel) is True
+    # Config liegt im Test-Repo ungetrackt; der Morgen-Bericht selbst zählt nie als ungespeichert.
+    assert rel not in sofort.ungespeichert(repo)
+    assert "docs/agents/bau_log" not in text
+    assert "(siehe Bau-Log)" in text

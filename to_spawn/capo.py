@@ -1096,8 +1096,8 @@ BERICHT_ZEILE = 220
 
 
 def morgen_bericht_datei(repo: Path, spec: int) -> Path:
-    """``<pfade.agenten>/morgen_bericht_<S>.md`` (Vorgabe ``docs/agents``, #885)."""
-    return config.pfad(config.lade(repo), "agenten") / f"morgen_bericht_{spec}.md"
+    """``.to-spawn/morgen_bericht_<S>.md`` — Laufdatei neben ``abschluss_<S>_paket.json`` (#885)."""
+    return repo / config.KONFIG_PFAD.parent / f"morgen_bericht_{spec}.md"
 
 
 def _umweg(z: dict[str, Any]) -> str | None:
@@ -1120,7 +1120,7 @@ def _abschnitt(titel: str, punkte: list[str], leer: str) -> list[str]:
         return [*zeilen, f"_{leer}_"]
     zeilen += [f"- {_kurz(p, BERICHT_ZEILE)}" for p in punkte[:BERICHT_MAX]]
     if len(punkte) > BERICHT_MAX:
-        zeilen.append(f"- … und {len(punkte) - BERICHT_MAX} weitere (Bau-Log docs/agents/bau_log/)")
+        zeilen.append(f"- … und {len(punkte) - BERICHT_MAX} weitere (siehe Bau-Log)")
     return zeilen
 
 
@@ -1163,11 +1163,16 @@ def morgen_bericht(
         wartet.append(f"#{eintrag.get('ticket') or spec} Mensch nötig: {mensch_noetig_was(eintrag)}")
     wartet.append("Spec abnehmen und Live freigeben — Live-Deploy wartet auf Freigabe des Nutzers.")
     kritisch_text = ", ".join(melder.kritisch_liste())
+    ent_pfad = entscheidungs_datei(repo, spec)
+    try:
+        ent_rel = ent_pfad.relative_to(repo).as_posix()
+    except ValueError:
+        ent_rel = ent_pfad.as_posix()
     zeilen = [
         f"# Morgen-Bericht Spec #{spec}",
         "",
         f"Stand {datetime.now().astimezone():%d.%m.%Y %H:%M} · Quelle: Unter-Tickets (GitHub) und "
-        f"Bau-Logs auf {ref or '-'} (to-spawn capo). Alle Entscheidungen: docs/agents/entscheidungen_{spec}.md",
+        f"Bau-Logs auf {ref or '-'} (to-spawn capo). Alle Entscheidungen: {ent_rel}",
         *_abschnitt("Fertig", fertig, "Noch kein Ticket zu."),
         *_abschnitt("Entscheidungen zum Kippen", kippen, "Keine Entscheidungen im Bau-Log."),
         *_abschnitt("Umwege", umwege, "Keine Umwege im Bau-Log."),
