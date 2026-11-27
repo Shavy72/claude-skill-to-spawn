@@ -380,13 +380,19 @@ def wecke_ticket(
     if _sperre_belegt(haupt_sperre):
         return False, f"#{ticket} läuft schon (Start-Sperre belegt) — kein zweiter Weck-Aufruf"
     auftrag = f"Wiedereröffnet ({grund}) — Befund beheben, testen und neu einreichen."
-    mit_pc_tab = pc_fenster.am_pc() and pc_fenster.wt_verfuegbar()
-    if dry_run:
-        if mit_pc_tab:
-            return True, f"#{ticket} [Probe] würde Tab „bau {ticket}“ über Start-Stelle öffnen"
-        return True, f"#{ticket} [Probe] würde Bau-Session über Start-Stelle wecken"
 
-    if mit_pc_tab:
+    if pc_fenster.am_pc():
+        if not pc_fenster.wt_verfuegbar():
+            log.warning(
+                "Taktgeber #%s: Windows Terminal (wt) fehlt — kein unsichtbarer Hintergrundstart am PC.",
+                ticket,
+            )
+            return (
+                False,
+                f"#{ticket} nicht geweckt: Windows Terminal (wt) fehlt — kein unsichtbarer Hintergrundstart am PC",
+            )
+        if dry_run:
+            return True, f"#{ticket} [Probe] würde Tab „bau {ticket}“ über Start-Stelle öffnen"
         try:
             pc_fenster.tab_starten(repo, ticket, auftrag)
         except OSError as fehler:
@@ -399,6 +405,9 @@ def wecke_ticket(
                 break
             time.sleep(0.05)
         return True, f"#{ticket} geweckt im Tab „bau {ticket}“ über Start-Stelle ({grund})"
+
+    if dry_run:
+        return True, f"#{ticket} [Probe] würde Bau-Session über Start-Stelle wecken"
 
     if sys.platform == "win32":
         befehl = capo.folge_befehl(repo, spec, ticket, None, auftrag)
@@ -621,12 +630,24 @@ def lauf(
 
 
 def log_datei(spec: int) -> Path:
-    """Logdatei für die Cron-Ausgabe des Taktgebers (kein Zustand, reines Lauf-Log)."""
+    """Logdatei für die Cron- und Windows-Aufgaben-Ausgabe des Taktgebers (kein Zustand, reines Lauf-Log)."""
     ordner = Path(
         os.environ.get("TO_SPAWN_TAKTGEBER_LOG") or (Path.home() / ".local" / "state" / "to-spawn" / "taktgeber")
     )
     ordner.mkdir(parents=True, exist_ok=True)
     return ordner / f"{spec}.log"
+
+
+def _lauf_log_schreiben(spec: int, zeilen: Sequence[str]) -> None:
+    """Hängt Zeitstempel-Zeilen an ``log_datei(spec)`` an (für ``pythonw.exe`` / Windows-Aufgaben, #907)."""
+    stempel = datetime.now(UTC).astimezone().isoformat(timespec="seconds")
+    try:
+        pfad = log_datei(spec)
+        with pfad.open("a", encoding="utf-8", newline="\n") as fh:
+            for zeile in zeilen:
+                fh.write(f"{stempel} {zeile}\n")
+    except OSError as fehler:
+        log.warning("Taktgeber #%s: Lauf-Log nicht schreibbar: %s", spec, fehler)
 
 
 def cron_marke(spec: int) -> str:
@@ -827,6 +848,17 @@ def richte_parser_ein(unter: Any) -> None:
     p_e.add_argument("--trocken", action="store_true", help="nur zeigen, nichts schreiben")
 
 
+def _cli_zeilen_ausgeben(zeilen: Sequence[str], *, spec: int, in_datei: bool, kopf: str | None = None) -> None:
+    """Gibt CLI-Zeilen auf stdout aus (sofern vorhanden) und schreibt bei ``in_datei`` ins Lauf-Log."""
+    if sys.stdout is not None:
+        for zeile in zeilen:
+            print(zeile)
+    if in_datei:
+        log_zeilen = [kopf, *zeilen] if kopf else list(zeilen)
+        if log_zeilen:
+            _lauf_log_schreiben(spec, log_zeilen)
+
+
 def cli_lauf(args: argparse.Namespace) -> int:
     if args.befehl == "taktgeber-einrichten":
         try:
@@ -839,16 +871,29 @@ def cli_lauf(args: argparse.Namespace) -> int:
             return 1
         return 0
 
-    repo = _repo(args)
-    gh_repo = args.gh_repo or gh.repo_aus_origin(repo, fallback="")
-    if not gh_repo:
-        print("FEHLER: GitHub-Repo unbekannt — --gh-repo owner/name angeben.")
-        return 2
-    erg = lauf(repo, args.spec, gh_repo, dry_run=args.dry_run)
+    mit_datei_log = pc_fenster.am_pc() or sys.stdout is None
+    try:
+        repo = _repo(args)
+        gh_repo = args.gh_repo or gh.repo_aus_origin(repo, fallback="")
+        if not gh_repo:
+            meldung = f"FEHLER: Taktgeber #{args.spec}: GitHub-Repo unbekannt — --gh-repo owner/name angeben."
+            _cli_zeilen_ausgeben([meldung], spec=args.spec, in_datei=mit_datei_log)
+            return 2
+        erg = lauf(repo, args.spec, gh_repo, dry_run=args.dry_run)
+    except Exception as fehler:
+        log.exception("Taktgeber #%s: unerwarteter Fehler", args.spec)
+        meldung = f"FEHLER: Taktgeber #{args.spec}: {type(fehler).__name__}: {fehler}"
+        _cli_zeilen_ausgeben([meldung], spec=args.spec, in_datei=mit_datei_log)
+        return 1
+
     if not erg.ok:
         log.error("Taktgeber #%s: %s", args.spec, erg.fehler)
-        print(f"FEHLER: Taktgeber #{args.spec}: {erg.fehler}")
+        meldung = f"FEHLER: Taktgeber #{args.spec}: {erg.fehler}"
+        _cli_zeilen_ausgeben([meldung], spec=args.spec, in_datei=mit_datei_log)
         return 1
-    for eintrag in erg.aktionen:
-        print(f"#{eintrag.ticket}: {eintrag.aktion} — {eintrag.grund}")
+
+    modus = ", Probe" if args.dry_run else ""
+    kopf = f"Taktgeber #{args.spec} ({gh_repo}{modus}): {len(erg.aktionen)} Ticket(s), Exit 0"
+    zeilen = [f"#{eintrag.ticket}: {eintrag.aktion} — {eintrag.grund}" for eintrag in erg.aktionen]
+    _cli_zeilen_ausgeben(zeilen, spec=args.spec, in_datei=mit_datei_log, kopf=kopf)
     return 0

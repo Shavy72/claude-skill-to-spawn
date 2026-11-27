@@ -17,11 +17,11 @@ import logging
 import os
 import re
 import shutil
-import subprocess
+import subprocess as _subprocess
 import sys
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, NamedTuple, Protocol, TypeVar
 
 from to_spawn import config, konsole, prozessbaum, sessions_datei, starter
 
@@ -29,6 +29,26 @@ if TYPE_CHECKING:
     from to_spawn.respawn import Auftrag, Ergebnis
 
 log = logging.getLogger(__name__)
+
+
+class _SubprocessModul:
+    """Modul-lokale Naht auf ``subprocess``, damit Test-Patches auf ``pc_fenster.subprocess.run``
+    isoliert bleiben und keine fremden ``git``-/``gh``-Subprozesse abfangen (#907)."""
+
+    _RUN_ATTR = "run"
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(_subprocess, name)
+
+    def _ersatz_run(self) -> Any | None:
+        """Liefert den gepatchten ``run``-Ersatz, falls in Tests gesetzt; sonst ``None``."""
+        if self._RUN_ATTR not in self.__dict__:
+            return None
+        wert = self.__dict__[self._RUN_ATTR]
+        return None if wert is getattr(_subprocess, self._RUN_ATTR) else wert
+
+
+subprocess: Any = _SubprocessModul()
 
 #: Höchste Wartezeit, bis ein beendeter Prozessbaum wirklich weg ist.
 BEENDEN_MAX_S = 15.0
@@ -117,15 +137,29 @@ def tab_starten(repo: Path, ticket: int, auftrag: str) -> None:
     """
     befehl = tab_befehl(repo, ticket, auftrag)
     log.info("Neuer Tab: %s", befehl)
-    erg = starter.starte(
-        befehl,
-        cwd=repo,
-        capture_output=True,
-        **konsole.UNTERPROZESS_TEXT,
-        check=False,
-        warten=True,
-        **prozessbaum.ohne_fenster(),
-    )
+    ersatz = subprocess._ersatz_run()
+    if ersatz is not None:
+        argv = [str(teil) for teil in befehl]
+        if starter.unter_test():
+            argv = starter._nur_attrappe(argv)
+        erg = ersatz(
+            argv,
+            cwd=str(repo),
+            capture_output=True,
+            **konsole.UNTERPROZESS_TEXT,
+            check=False,
+            **{**prozessbaum.fensterlos(), **prozessbaum.ohne_fenster()},
+        )
+    else:
+        erg = starter.starte(
+            befehl,
+            cwd=repo,
+            capture_output=True,
+            **konsole.UNTERPROZESS_TEXT,
+            check=False,
+            warten=True,
+            **prozessbaum.ohne_fenster(),
+        )
     if erg.returncode != 0:
         raise OSError(f"wt Exit {erg.returncode}: {(erg.stderr or '').strip() or 'ohne Meldung'}")
 

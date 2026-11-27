@@ -19,7 +19,7 @@ SKILL = Path(__file__).resolve().parents[2]
 if str(SKILL) not in sys.path:
     sys.path.insert(0, str(SKILL))
 
-from to_spawn import sperre
+from to_spawn import konsole, sperre
 
 
 def _laden(pfad: Path) -> dict[str, Any]:
@@ -133,6 +133,7 @@ def _verarbeite(argv: list[str], daten: dict[str, Any]) -> tuple[int, str, bool]
 
 
 def main(argv: list[str]) -> int:
+    konsole.utf8_ausgabe()  # wie echtes gh; Windows-Pipe wäre cp1252 (#553, #907)
     zustand_pfad = Path(os.environ["GH_TAKTGEBER_ZUSTAND"])
     sperr_pfad = zustand_pfad.with_suffix(".lock")
     with sperre.halte(sperr_pfad, warten=10.0) as ok:

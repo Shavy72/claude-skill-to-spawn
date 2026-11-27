@@ -424,7 +424,36 @@ def test_wiedereroeffnetes_ticket_weckt_einmal_ueber_startstelle_auch_gleichzeit
     weck_log = tmp_path / "geweckt.jsonl"
     stop_datei = tmp_path / "stop_bau"
     _installiere_test_bau(welt["repo"], weck_log, halte_sekunden=20.0, stop_datei=stop_datei)
-    # Ohne tmux starten, damit direkt scripts/bau.py über startstelle läuft (im Test-Attrappen-Ordner)
+    # Unter Windows (am_pc) startet der Taktgeber sichtbare wt-Tabs (#907): wt-Attrappe reicht an scripts/bau.py durch.
+    if sys.platform == "win32":
+        wt_attrappe = welt["repo"] / "scripts" / "wt"
+        wt_attrappe.write_text(
+            f"""#!{PY}
+from __future__ import annotations
+import os, re, subprocess, sys
+
+argv = sys.argv[1:]
+titel = argv[argv.index("--title") + 1] if "--title" in argv else ""
+treffer = re.search(r"(\\d+)", titel)
+if not treffer:
+    sys.exit(2)
+ticket = treffer.group(1)
+env = dict(os.environ)
+env["BAU_AUFTRAG"] = "Wiedereröffnet"
+subprocess.Popen(
+    [sys.executable, {str(welt["repo"] / "scripts" / "bau.py")!r}, ticket, "--sofort"],
+    cwd={str(welt["repo"])!r},
+    env=env,
+    stdin=subprocess.DEVNULL,
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+    close_fds=True,
+    creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
+)
+""",
+            encoding="utf-8",
+        )
+    # Ohne tmux starten, damit direkt scripts/bau.py (Linux) bzw. wt-Attrappe → scripts/bau.py (Windows) läuft
     welt["env"]["TO_SPAWN_TMUX"] = str(tmp_path / "kein-tmux-vorhanden")
     welt["env"]["TO_SPAWN_TEST_BIN"] = str(welt["repo"] / "scripts")
 
@@ -580,8 +609,8 @@ def test_windows_prozess_optionen_ohne_detached_process(monkeypatch: pytest.Monk
 def test_windows_wecke_ticket_startet_bau_direkt_fensterlos_ohne_wt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Unter Windows startet ``wecke_ticket`` fensterlos direkt ``bau.py`` (kein ``wt``-Fenster, Fix-Runde 2)."""
-    from to_spawn import starter, taktgeber
+    """Abgleich mit #907: am PC ohne ``wt`` kein unsichtbarer Hintergrundstart; außerhalb des PCs fensterlos direkt ``bau.py``."""
+    from to_spawn import pc_fenster, starter, taktgeber
 
     repo = tmp_path / "repo"
     skript = repo / "scripts" / "bau.py"
@@ -605,11 +634,19 @@ def test_windows_wecke_ticket_startet_bau_direkt_fensterlos_ohne_wt(
 
     monkeypatch.setattr(starter, "starte", _fake_starte)
 
+    # 1) Am PC (pc_fenster.am_pc() == True) ohne wt: kein unsichtbarer Hintergrundstart (#907)
+    ok_pc, meldung_pc = taktgeber.wecke_ticket(repo, 293, 530, "test-org/beispiel-app", "Beleg fehlt")
+    assert ok_pc is False
+    assert "wt" in meldung_pc.lower()
+    assert gestartet_cmds == []
+
+    # 2) Außerhalb des PCs (pc_fenster.am_pc() == False) mit win32-Prozessoptionen: fensterlos direkt bau.py
+    monkeypatch.setattr(pc_fenster, "am_pc", lambda: False)
     ok, _meldung = taktgeber.wecke_ticket(repo, 293, 530, "test-org/beispiel-app", "Beleg fehlt")
     assert ok is True
     assert len(gestartet_cmds) == 1
     cmd, kwargs = gestartet_cmds[0]
-    assert cmd[0] == sys.executable, f"Windows-Wecken muss direkt Python/bau.py starten, nicht {cmd[0]!r}"
+    assert cmd[0] == sys.executable, f"Direkt-Wecken muss direkt Python/bau.py starten, nicht {cmd[0]!r}"
     assert Path(cmd[1]) == skript
     assert cmd[2:] == ["530", "--sofort"]
     assert "wt" not in Path(cmd[0]).name.lower()
