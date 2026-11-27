@@ -171,6 +171,44 @@ def _probe_gueltig(eintrag: dict[str, Any], jetzt: float) -> bool:
     return 0 <= jetzt - zeit < LIMIT_PROBE_ABSTAND_S
 
 
+def _fenster_eintrag_bereinigen(roh: Any) -> dict[str, Any] | None:
+    """Validiert und normalisiert einen ``fenster``-Eintrag aus ``stand.json`` (#894).
+
+    Unbrauchbare Einträge liefern ``None`` und werden beim Laden verworfen.
+    """
+    if not isinstance(roh, dict):
+        return None
+    seit = _als_zahl(roh.get("seit"))
+    if seit is None:
+        return None
+    bereinigt: dict[str, Any] = dict(roh)
+    bereinigt["seit"] = seit
+    for feld in ("eingriff", "pane_aenderung"):
+        wert = roh.get(feld)
+        if wert is not None:
+            zahl = _als_zahl(wert)
+            if zahl is None:
+                return None
+            bereinigt[feld] = zahl
+    if "stufe" in roh:
+        stufe = roh["stufe"]
+        if isinstance(stufe, bool) or not isinstance(stufe, int):
+            return None
+        bereinigt["stufe"] = stufe
+    if "stupser" in roh and roh["stupser"] is not None:
+        stupser_roh = roh["stupser"]
+        if not isinstance(stupser_roh, list):
+            return None
+        stupser: list[float] = []
+        for t in stupser_roh:
+            zahl = _als_zahl(t)
+            if zahl is None:
+                return None
+            stupser.append(zahl)
+        bereinigt["stupser"] = stupser
+    return bereinigt
+
+
 #: Meldungen ohne Eingriff kommen je Fenster/Ereignis nur einmal am Tag ins Issue;
 #: jeder Eingriff (gestartet, angestupst, fortgesetzt, geschlossen) immer (R3).
 MELDUNG_EINMAL_PRO_TAG = frozenset(
@@ -1965,8 +2003,9 @@ class Aufpasser:
         fenster_roh = roh.get("fenster")
         if isinstance(fenster_roh, dict):
             for k, v in fenster_roh.items():
-                if isinstance(k, str) and isinstance(v, dict):
-                    fenster[k] = v
+                eintrag = _fenster_eintrag_bereinigen(v) if isinstance(k, str) else None
+                if eintrag is not None:
+                    fenster[k] = eintrag
                 else:
                     verworfen += 1
         elif fenster_roh is not None:
