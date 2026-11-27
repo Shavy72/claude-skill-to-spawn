@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -42,6 +43,18 @@ BELEG_MAX_S = 300.0
 def am_pc() -> bool:
     """Läuft der Skill am PC (Windows, kein tmux)? Die eine Plattform-Weiche."""
     return sys.platform == "win32"
+
+
+def wt_verfuegbar() -> bool:
+    """Ist Windows Terminal (``wt``) auf diesem Rechner (oder im Test-Attrappen-Ordner) vorhanden?"""
+    if starter.unter_test():
+        test_bin = os.environ.get(starter.TEST_BIN_ENV, "").strip()
+        if test_bin:
+            ordner = Path(test_bin)
+            if any((ordner / name).is_file() for name in ("wt", "wt.exe", "wt.cmd", "wt.bat")):
+                return True
+        return False
+    return shutil.which("wt") is not None
 
 
 class Alte(NamedTuple):

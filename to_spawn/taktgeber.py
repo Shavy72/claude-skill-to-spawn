@@ -23,6 +23,7 @@ ohne VPS-Prüfung); dieses Modul enthält keine eigene Fertig-Regel.
 from __future__ import annotations
 
 import argparse
+import html
 import importlib
 import logging
 import os
@@ -44,20 +45,27 @@ from . import (
     capo,
     config,
     gh,
+    konsole,
     manifest,
+    pc_fenster,
     prozessbaum,
     sperre,
     starter,
     startstelle,
     ticket_zustand,
     tmux_aufruf,
+    wecker,
 )
 
 log = logging.getLogger("to_spawn.taktgeber")
 
 SKILL = Path(__file__).resolve().parent.parent
+#: Standard-Takt in Minuten (Linux-Cron und Windows-Aufgabe).
+TAKT_MIN = 5
 #: Standard-Cron-Takt des zustandslosen Taktgebers (alle 5 Minuten).
-CRON_TAKT = "*/5 * * * *"
+CRON_TAKT = f"*/{TAKT_MIN} * * * *"
+#: Zeitlimit je ``schtasks``-Aufruf in Sekunden (Windows-Aufgabenplanung).
+SCHTASKS_ZEITLIMIT_S = 30
 #: Akteur-Kennung im Ereignis-Protokoll (``bau_log.schreibe``).
 WER = "taktgeber"
 #: Sichtbare Label-Beschreibung für ``ticket_zustand.STAGING_FERTIG_LABEL``.
@@ -372,8 +380,25 @@ def wecke_ticket(
     if _sperre_belegt(haupt_sperre):
         return False, f"#{ticket} läuft schon (Start-Sperre belegt) — kein zweiter Weck-Aufruf"
     auftrag = f"Wiedereröffnet ({grund}) — Befund beheben, testen und neu einreichen."
+    mit_pc_tab = pc_fenster.am_pc() and pc_fenster.wt_verfuegbar()
     if dry_run:
+        if mit_pc_tab:
+            return True, f"#{ticket} [Probe] würde Tab „bau {ticket}“ über Start-Stelle öffnen"
         return True, f"#{ticket} [Probe] würde Bau-Session über Start-Stelle wecken"
+
+    if mit_pc_tab:
+        try:
+            pc_fenster.tab_starten(repo, ticket, auftrag)
+        except OSError as fehler:
+            log.warning("Taktgeber #%s: Tab-Start fehlgeschlagen: %s", ticket, fehler)
+            return False, f"#{ticket} Tab-Start fehlgeschlagen ({fehler})"
+
+        frist = time.monotonic() + _WECK_UEBERNAHME_WARTE_S
+        while time.monotonic() < frist:
+            if _sperre_belegt(haupt_sperre):
+                break
+            time.sleep(0.05)
+        return True, f"#{ticket} geweckt im Tab „bau {ticket}“ über Start-Stelle ({grund})"
 
     if sys.platform == "win32":
         befehl = capo.folge_befehl(repo, spec, ticket, None, auftrag)
@@ -650,6 +675,128 @@ def cron_einrichten(spec: int, repo: Path, *, trocken: bool = False) -> str:
     return f"Cron eingerichtet: {zeile}"
 
 
+# --- Idempotente Windows-Aufgaben (PC: beim Anmelden + im Takt, fensterlos) -----
+
+
+def windows_aufgabe_name(spec: int, *, anmelden: bool = False) -> str:
+    """Name der Windows-Aufgabe für den Taktgeber (Takt- oder Anmelde-Aufgabe, #907)."""
+    return f"to-spawn Taktgeber #{spec} Anmelden" if anmelden else f"to-spawn Taktgeber #{spec}"
+
+
+def windows_aufgabe_argumente(spec: int, repo: Path) -> str:
+    """Argumente für ``pythonw.exe`` in der Windows-Aufgabenplanung."""
+    return f'"{SKILL / "to_spawn.py"}" taktgeber {spec} --repo-dir "{repo}"'
+
+
+def _xml_feld(xml: str, name: str) -> str:
+    treffer = re.search(rf"<{name}>(.*?)</{name}>", xml, re.DOTALL)
+    return html.unescape(treffer.group(1)).strip() if treffer else ""
+
+
+def windows_aufgabe_gleich(
+    xml: str | None,
+    pythonw: str,
+    argumente: str,
+    *,
+    takt_min: int | None = None,
+    anmelden: bool = False,
+) -> bool:
+    """Prüft, ob die vorhandene ``schtasks /Query /XML``-Aufgabe Befehl, Argumente und Auslöser trifft."""
+    # Regex statt XML-Parser: schtasks kündigt UTF-16 an, liefert über die Pipe aber Text.
+    if not xml:
+        return False
+    if _xml_feld(xml, "Command").strip('"').lower() != pythonw.lower():
+        return False
+    if _xml_feld(xml, "Arguments") != argumente:
+        return False
+    if anmelden:
+        return "<LogonTrigger>" in xml
+    if takt_min is not None:
+        return wecker._windows_intervall_min(_xml_feld(xml, "Interval")) == takt_min
+    return True
+
+
+def _schtasks(*args: str) -> subprocess.CompletedProcess[str]:
+    """Führt ``schtasks`` fensterlos mit Zeitlimit aus (``CREATE_NO_WINDOW|CREATE_NEW_PROCESS_GROUP``)."""
+    try:
+        return subprocess.run(
+            ["schtasks", *args],
+            capture_output=True,
+            **konsole.UNTERPROZESS_TEXT,
+            check=False,
+            timeout=SCHTASKS_ZEITLIMIT_S,
+            **prozessbaum.ohne_fenster(),
+        )
+    except FileNotFoundError as fehler:
+        raise RuntimeError("schtasks nicht gefunden — Windows-Aufgabenplanung fehlt") from fehler
+    except subprocess.TimeoutExpired as fehler:
+        raise RuntimeError(f"schtasks {args[0]} hängt (über {SCHTASKS_ZEITLIMIT_S} s)") from fehler
+
+
+def _windows_aufgabe_abfrage(name: str, *, trocken: bool) -> str | None:
+    try:
+        lauf = _schtasks("/Query", "/TN", name, "/XML")
+    except RuntimeError:
+        if not trocken:
+            raise
+        return None
+    return lauf.stdout if lauf.returncode == 0 else None
+
+
+def windows_aufgaben_einrichten(
+    spec: int,
+    repo: Path,
+    *,
+    takt_min: int = TAKT_MIN,
+    trocken: bool = False,
+    python: str = sys.executable,
+    takt_name: str | None = None,
+    anmelden_name: str | None = None,
+) -> str:
+    """Richtet den Taktgeber unter Windows beim Anmelden und alle ``takt_min`` min idempotent ein (#907).
+
+    Startet über ``pythonw.exe`` ohne aufpoppendes Konsolenfenster; jeder ``schtasks``-Aufruf
+    läuft mit ``CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP`` über :func:`prozessbaum.ohne_fenster`.
+    """
+    wecker.windows_aufgabe_intervall(takt_min)  # prüft 1–60 Minuten
+    repo = repo.resolve()
+    pythonw = Path(python).with_name("pythonw.exe")
+    argumente = windows_aufgabe_argumente(spec, repo)
+    befehl = f'"{pythonw}" {argumente}'
+    anmelden_tn = anmelden_name or windows_aufgabe_name(spec, anmelden=True)
+    takt_tn = takt_name or windows_aufgabe_name(spec, anmelden=False)
+
+    meldungen: list[str] = []
+    plaene: tuple[tuple[str, str, bool, list[str]], ...] = (
+        ("Anmelde-Aufgabe", anmelden_tn, True, ["/SC", "ONLOGON"]),
+        (f"Takt-Aufgabe (alle {takt_min} min)", takt_tn, False, ["/SC", "MINUTE", "/MO", str(takt_min)]),
+    )
+    for titel, name, ist_anmelden, zeitplan in plaene:
+        vorhanden = _windows_aufgabe_abfrage(name, trocken=trocken)
+        gleich = windows_aufgabe_gleich(
+            vorhanden,
+            str(pythonw),
+            argumente,
+            takt_min=None if ist_anmelden else takt_min,
+            anmelden=ist_anmelden,
+        )
+        if gleich:
+            meldungen.append(f"{titel} unverändert: {name}")
+            continue
+        if trocken:
+            meldungen.append(f"[trocken] {titel} würde eingerichtet: {name} → {befehl}")
+            continue
+        if not pythonw.is_file():
+            raise RuntimeError(
+                f"pythonw.exe fehlt neben {python} — ohne sie öffnet die geplante Aufgabe bei jedem Lauf ein Fenster."
+            )
+        ergebnis = _schtasks("/Create", "/F", *zeitplan, "/TN", name, "/TR", befehl)
+        if ergebnis.returncode != 0:
+            raise RuntimeError(f"schtasks /Create ({name}): {(ergebnis.stderr or ergebnis.stdout).strip()[:300]}")
+        meldungen.append(f"{titel} eingerichtet: {name} → {befehl}")
+    return "\n".join(meldungen)
+
+
 # --- CLI ------------------------------------------------------------------------
 
 
@@ -671,7 +818,10 @@ def richte_parser_ein(unter: Any) -> None:
     p.add_argument("--repo-dir", default="", help="Git-Repo (Vorgabe: TO_SPAWN_REPO bzw. Git-Wurzel)")
     p.add_argument("--gh-repo", default="", help="owner/name (Vorgabe: aus origin)")
 
-    p_e = unter.add_parser("taktgeber-einrichten", help="Zustandslosen Taktgeber alle 5 min als Cron (nur Linux)")
+    p_e = unter.add_parser(
+        "taktgeber-einrichten",
+        help="Zustandslosen Taktgeber alle 5 min einrichten (Linux: Cron, Windows: Anmelde- + Takt-Aufgabe)",
+    )
     p_e.add_argument("spec", type=int, help="Spec-Issue-Nummer")
     p_e.add_argument("--repo-dir", default="", help="Git-Repo (Vorgabe: TO_SPAWN_REPO bzw. Git-Wurzel)")
     p_e.add_argument("--trocken", action="store_true", help="nur zeigen, nichts schreiben")
@@ -679,11 +829,11 @@ def richte_parser_ein(unter: Any) -> None:
 
 def cli_lauf(args: argparse.Namespace) -> int:
     if args.befehl == "taktgeber-einrichten":
-        if sys.platform == "win32":
-            print("taktgeber-einrichten gibt es nur auf dem Linux-Bau-Server (Cron) — hier nichts eingerichtet.")
-            return 2
         try:
-            print(cron_einrichten(args.spec, _repo(args), trocken=args.trocken))
+            if pc_fenster.am_pc():
+                print(windows_aufgaben_einrichten(args.spec, _repo(args), trocken=args.trocken))
+            else:
+                print(cron_einrichten(args.spec, _repo(args), trocken=args.trocken))
         except RuntimeError as fehler:
             print(f"FEHLER: {fehler}")
             return 1
