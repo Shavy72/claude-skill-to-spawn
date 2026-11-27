@@ -92,6 +92,9 @@ DEFAULTS: dict[str, Any] = {
         "nur_kritisch": True,
         #: Versand-Befehl als argv-Liste, JSON auf stdin (leer = kein Versand, nur Log) (#213).
         "befehl": [],
+        #: Nacht-Fenster „HH:MM-HH:MM“ (Ortszeit, #885): darin geht nur ``server_tot`` raus,
+        #: alles andere bleibt stumm ohne Nachhol-Schwall. Leer = keine Nachtruhe.
+        "nacht": "",
     },
     "regularien": {
         "checkpoint_label": "checkpoint:human",
@@ -208,6 +211,15 @@ DEFAULTS: dict[str, Any] = {
         "min_frei_mib": 2048,
         "max_sessions": 6,
         "staffel_s": 20,
+    },
+    #: Bau-Schutz (#887 / App #1184, ``speicher.slice_praefix``): Bau-Sessions laufen unter Linux
+    #: in einer eigenen systemd-User-Slice (cgroup-Speicherdeckel + ``systemd-oomd``) mit
+    #: ``oom_score_adj`` über ``choom``, getrennt von der Gate-Slice (``gate_slice``).
+    #: ``slice`` leer = aus. Temp-Ordner setzt bereits :mod:`to_spawn.temp_ordner` (#136).
+    "bau_schutz": {
+        "slice": "bau-sessions.slice",
+        "gate_slice": "bau-gate.slice",
+        "choom": 300,
     },
     #: Ort-Wahl für alle Testläufe (#760/#802, Beschlüsse E33/E35): Grenzwerte und Rechenregel-
     #: Parameter an genau einer Stelle. Die dynamische Schwelle wird aus Gesamt-Speicher, Kernen

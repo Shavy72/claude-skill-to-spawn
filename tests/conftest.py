@@ -883,6 +883,8 @@ def _speicher_immer_frei(
     monkeypatch.setenv("TO_SPAWN_SPEICHER_PLATZ", str(ordner / "platz.json"))
     # #761: Runden-Merker der Ort-Wahl ebenfalls isolieren, damit kein Test eine echte Server-Runde sieht.
     monkeypatch.setenv("TO_SPAWN_ORT_WAHL_RUNDE", str(ordner / "ort-wahl-runde.json"))
+    # #887: Bau-Slice in Tests standardmäßig aus, damit Attrappen keine echten systemd-Scopes starten.
+    monkeypatch.setenv("TO_SPAWN_BAU_SLICE", "aus")
 
 
 @pytest.fixture(autouse=True)

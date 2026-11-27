@@ -132,6 +132,9 @@ FRAGE_SPERRE_BEFEHL = "node ~/.claude/hooks/smart-zone/staffel/frage-sperre.mjs"
 #: CLI des Skills (Bau-Log-Hooks #204, Umzug-Anfrage #212) — dieselbe Skill-Wurzel wie oben in sys.path.
 TO_SPAWN_CLI = Path(_SKILL) / "to_spawn.py"
 STAFFEL_MAX_DEFAULT = 8
+#: Endet ein Start in der Bau-Slice schneller mit Exit ≠ 0, gilt der Slice-Start als
+#: gescheitert (#887 / App #1184) — dann genau einmal ohne Slice-Präfix.
+SLICE_FEHLSTART_S = 5.0
 #: Werkzeug-Rechte der Probesitz-Wegwerf-Session (#214): nur git, Ordner anlegen, Dateien.
 PROBESITZ_RECHTE = ("Bash(git *)", "Bash(mkdir *)", "Write", "Edit", "Read")
 #: Auftrag einer Runde (#285) ist ein Aufseher-Kommentar, kein Dokument.
@@ -528,6 +531,7 @@ def build_prompt(
     ``{MINDSET}``/``{ABLOESE_SOP}`` = feste Texte aus ``anleitung`` (#500),
     ``{BEFUGNIS}`` = Befugnis-Abschnitt aus ``befugnis.start_text`` (#278),
     ``{ENTSCHEIDUNGS_LINIE}`` = ``anleitung.entscheidungs_linie`` mit dem Hauptzweig (#376),
+    ``{MASTER_ROT_REGEL}`` = ``anleitung.master_rot_regel`` mit Hauptzweig und Kennzeichen (#900),
     ``{ANNAHME_GRENZE}`` = ``capo.annahme_grenze`` (was die Checkpoint-Annahme deckt, #490),
     ``{REPO_ZUSATZ}`` = Inhalt von ``start_text.zusatz_datei`` (#274 P1) — zuletzt eingesetzt, darin
     nur :data:`ZUSATZ_PLATZHALTER` ersetzt; leer → Platzhalter samt Überschrift darüber entfällt.
@@ -541,6 +545,7 @@ def build_prompt(
     ziel_gh = gh_repo if gh_repo is not None else GH_REPO
     konfig = konfig if konfig is not None else config.lade(ziel_repo)
     label = str((konfig.get("regularien") or {}).get("checkpoint_label") or "checkpoint:human")
+    master_rot = str((konfig.get("regularien") or {}).get("master_rot_kennzeichen") or anleitung.MASTER_ROT_KENNZEICHEN)
     haupt = gh.hauptzweig(ziel_repo)
     werte = {
         "{WT}": config.worktree_pfad(ticket, ziel_repo) if repo is not None else worktree_pfad(ticket),
@@ -556,6 +561,7 @@ def build_prompt(
         "{ABLOESE_SOP}": anleitung.ABLOESE_SOP,
         "{BEFUGNIS}": befugnis.start_text(ticket),
         "{ENTSCHEIDUNGS_LINIE}": anleitung.entscheidungs_linie(haupt),
+        "{MASTER_ROT_REGEL}": anleitung.master_rot_regel(haupt, master_rot),
         "{ANNAHME_GRENZE}": capo.annahme_grenze(ticket),
     }
     if "{ANNAHME_GRENZE}" not in template:
@@ -1322,7 +1328,14 @@ def main() -> int:
             werkzeug.prompt_setzen(cmd, runner, aktueller_prompt, hat_prompt=mit_prompt, interaktiv=not args.probesitz)
             mit_prompt = True
         (out / f"prompt-runde{runde}.txt").write_text(aktueller_prompt, encoding="utf-8")
-        code, umzug_daten = starte_session(cmd, umzug_datei)
+        slice_woerter = speicher.slice_praefix(konfig, f"bau-{ticket}")
+        beginn = time.monotonic()
+        code, umzug_daten = starte_session(slice_woerter + cmd, umzug_datei)
+        # ponytail: „sofort gescheitert“ = Exit ≠ 0 binnen SLICE_FEHLSTART_S; Upgrade-Pfad:
+        # systemd-run-Fehler gezielt am stderr erkennen.
+        if slice_woerter and umzug_daten is None and code != 0 and time.monotonic() - beginn < SLICE_FEHLSTART_S:
+            log.warning("Start in der Bau-Slice scheiterte sofort (Exit %s) — einmal ohne Slice.", code)
+            code, umzug_daten = starte_session(cmd, umzug_datei)
         if umzug_daten is not None:
             # Kein Staffel-Neustart: die Session läuft jetzt auf dem Server weiter.
             staffel_datei.unlink(missing_ok=True)

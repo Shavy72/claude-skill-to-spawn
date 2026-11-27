@@ -244,6 +244,19 @@ def test_commit_ohne_nummer_oeffnet_wieder(welt: dict[str, Path]) -> None:
     assert "commit_ohne_nummer" in ergebnis.stdout
 
 
+def test_folge_runde_startet_neue_tmux_session_ohne_server(welt: dict[str, Path]) -> None:
+    """#1412/#868 Lücke 6: ohne tmux-Session (Linux ohne Server) muss capo ``new-session`` nehmen;
+    ``new-window`` scheitert dort echt. Das Protokoll des tmux-Ersatzes belegt den Weg."""
+    _commit(welt["repo"], "feat: Bauteil ohne Nummer", _beleg())
+    ergebnis = _capo(welt)
+    assert ergebnis.returncode == 0, _text(ergebnis)
+    protokoll = welt["tmp"] / "tmux_aufrufe.jsonl"
+    aufrufe = [json.loads(z) for z in protokoll.read_text(encoding="utf-8").splitlines() if z.strip()]
+    starts = [a for a in aufrufe if a[:1] in (["new-window"], ["new-session"])]
+    assert [a[:1] for a in starts] == [["new-session"]], aufrufe
+    assert "bau 901" in starts[0]
+
+
 def test_sauberes_ticket_bleibt_zu(welt: dict[str, Path]) -> None:
     _commit(welt["repo"], "feat: Bauteil (#901) [skip ci]", _beleg())
     ergebnis = _capo(welt)
@@ -601,6 +614,7 @@ def test_spec_fertig_meldet_und_schreibt_uebersicht(welt: dict[str, Path]) -> No
 # --- D: Melder -------------------------------------------------------------------
 
 
+@pytest.mark.xfail(strict=True, reason="überholt durch #885: tagsüber keine Mail je Spec (Entscheidung 27.11.)")
 def test_melder_politik(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
     from to_spawn import melder
 
@@ -1213,3 +1227,255 @@ def test_vps_kopf_pfad_mit_tilde_bleibt_fuer_server_offen(monkeypatch: pytest.Mo
     aufrufe = _ssh_zaehler(monkeypatch, lambda b: subprocess.CompletedProcess(b, 0, stdout=sha + "\n", stderr=""))
     assert capo_mod.vps_kopf({"ssh": "vps-test", "pfad": "~/app; rm -rf x"}) == sha
     assert aufrufe[0][-1] == "cd ~/'app; rm -rf x' && git rev-parse HEAD", aufrufe[0][-1]
+
+
+# --- #1207: Deckung wie der Deploy-Dienst (scripts/schlange_deckung.py) --------
+
+#: Echte SSOT aus dem Haupt-Repo (scripts/schlange_deckung.py + deploy_ziel.py + schlange_spur.py), keine
+#: Nachbildung. Gelesen beim Import, weil conftest ``TO_SPAWN_*`` je Test löscht.
+_HAUPT_REPO_TEST = os.environ.get("TO_SPAWN_HAUPT_REPO_TEST") or ""
+_SCRIPTS = Path(_HAUPT_REPO_TEST).expanduser() / "scripts" if _HAUPT_REPO_TEST else None
+#: Dateien, die capos Deckungs-Befehl im Repo braucht (relativ zu scripts/).
+_DECKUNG_DATEIEN = ("schlange_deckung.py", "schlange_spur.py", "staging/deploy_ziel.py")
+
+
+def test_1207_haupt_repo_variable_zeigt_auf_deploy_ziel() -> None:
+    """Gesetzte Variable ohne Skript ist ein Fehler, kein stiller Skip der #1207-Tests."""
+    if _SCRIPTS is None:
+        pytest.skip("TO_SPAWN_HAUPT_REPO_TEST nicht gesetzt — #1207-Weg-Tests brauchen das Haupt-Repo")
+    fehlt = [d for d in _DECKUNG_DATEIEN if not (_SCRIPTS / d).is_file()]
+    assert not fehlt, f"TO_SPAWN_HAUPT_REPO_TEST gesetzt, aber unter {_SCRIPTS} fehlt: {fehlt}"
+
+
+def _vps_deckung(
+    welt: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    zettel: list[str],
+    manifest: dict | None = None,
+    davor: tuple[str, dict[str, str]] = (
+        "feat: Fremd (#902)",
+        {"web/fremd.py": "y = 1\n"},
+    ),
+) -> str:
+    """#901 mit Zettel-Lage ``zettel``; im Stand davor Commit ``davor``, alles auf Staging, live alt.
+
+    Zettel-Namen mit ``{davor}`` werden durch den SHA des Davor-Commits ersetzt; Rückgabe = dieser SHA.
+    """
+    if _SCRIPTS is None:
+        pytest.skip("TO_SPAWN_HAUPT_REPO_TEST nicht gesetzt — #1207-Weg-Tests brauchen das Haupt-Repo")
+    dateien = {f"scripts/{d}": (_SCRIPTS / d).read_text(encoding="utf-8") for d in _DECKUNG_DATEIEN}
+    if manifest is not None:
+        dateien["docs/agents/manifests/spec-900.json"] = json.dumps(manifest)
+    vorher = _commit(welt["repo"], "chore: Deploy-Ziel (#1)", dateien)
+    log = welt["tmp"] / "deploys.jsonl"
+    freigabe = welt["tmp"] / "live_freigabe"
+    freigabe.mkdir()
+    _konfig(
+        welt,
+        vps={
+            "ssh": "vps-test",
+            "pfad": "/opt/x",
+            "deploy_pfade": ["web/"],
+            "staging_log": str(log),
+            "freigabe_ordner": str(freigabe),
+        },
+    )
+    zwischen = _commit(welt["repo"], *davor)
+    for name in zettel:
+        (freigabe / name.format(davor=zwischen)).write_text("ok\n", encoding="utf-8")
+    kopf = _commit(welt["repo"], "feat: Seite (#901)", {"web/seite.py": "x = 1\n", **_beleg()})
+    log.write_text(json.dumps({"sha": kopf, "ergebnis": "gruen"}) + "\n", encoding="utf-8")
+    for name, wert in _ssh_fake(welt, vorher).items():
+        monkeypatch.setenv(name, wert)
+    return zwischen
+
+
+def test_1207_ticket_zettel_fremdes_ticket_ohne_zettel_auf_staging_bleibt_zu(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1191: Zettel nur für das eigene Ticket, #902 im Stand ohne Zettel → Dienst bleibt auf Staging."""
+    _vps_deckung(welt, monkeypatch, zettel=["901"])
+    ergebnis = _capo(welt)
+    assert _kommentare(welt, "901") == [], _text(ergebnis)
+    assert _gh_zustand(welt)["issues"]["901"]["state"] == "closed"
+
+
+def test_1207_alle_tickets_gedeckt_aber_nicht_live_oeffnet_wieder(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _vps_deckung(welt, monkeypatch, zettel=["901", "902"])
+    _capo(welt)
+    assert any(k.startswith("Aufseher: vps_ungleich_origin") for k in _kommentare(welt, "901"))
+
+
+def test_1207_spec_zettel_deckt_alle_tickets_oeffnet_wieder(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec-Zettel 900 deckt #901 und #902 über das Manifest (deploy_ziel.eltern_specs)."""
+    _vps_deckung(welt, monkeypatch, zettel=["900"], manifest={"spec": "900", "tickets": {"901": {}, "902": {}}})
+    _capo(welt)
+    assert any(k.startswith("Aufseher: vps_ungleich_origin") for k in _kommentare(welt, "901"))
+
+
+def test_1207_docs_commit_ohne_nummer_live_gescheitert_meldet(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review-Fall: Doku-Commit ohne Nummer blockiert die Schlange nie → Stand geht live; liegt er
+    nicht auf dem VPS, ist das Live-Deploy gescheitert und capo muss melden."""
+    _vps_deckung(
+        welt,
+        monkeypatch,
+        zettel=["901"],
+        davor=("docs: Notiz", {"docs/notiz.md": "n\n"}),
+    )
+    _capo(welt)
+    assert any(k.startswith("Aufseher: vps_ungleich_origin") for k in _kommentare(welt, "901"))
+
+
+def test_1207_sha_zettel_sieben_zeichen_deckt_code_commit_ohne_nummer(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SHA-Zettel mit 7 Zeichen deckt den Code-Commit ohne Nummer wie in der Schlange → live erwartet."""
+    _vps_deckung(
+        welt,
+        monkeypatch,
+        zettel=["901", "{davor:.7}"],
+        davor=("fix: schnell", {"web/fremd.py": "y = 1\n"}),
+    )
+    _capo(welt)
+    assert any(k.startswith("Aufseher: vps_ungleich_origin") for k in _kommentare(welt, "901"))
+
+
+def _live_gedeckt_welt(tmp_path: Path, zettel: bool, skript: str | None) -> tuple[Path, dict]:
+    repo = tmp_path / "repo"
+    (repo / "scripts" / "staging").mkdir(parents=True)
+    # Alter Haupt-Repo-Stand: deploy_ziel.py ist da, der Deckungs-Befehl (noch) nicht.
+    (repo / "scripts" / "staging" / "deploy_ziel.py").write_text("print('{}')\n", encoding="utf-8")
+    if skript is not None:
+        (repo / "scripts" / "schlange_deckung.py").write_text(skript, encoding="utf-8")
+    # #1504: capo liest Skript und Manifeste aus origin/master — Stand also pushen.
+    fern = tmp_path / "fern.git"
+    subprocess.run(
+        ["git", "init", "-q", "--bare", "-b", "master", str(fern)],
+        check=True,
+        capture_output=True,
+    )
+    _git(repo, "init", "-q", "-b", "master")
+    _git(repo, "config", "user.email", "test@example.invalid")
+    _git(repo, "config", "user.name", "Test")
+    _git(repo, "remote", "add", "origin", str(fern))
+    _git(repo, "add", "-A")
+    _commit(repo, "chore: Stand (#1)", {})
+    ordner = tmp_path / "zettel"
+    ordner.mkdir()
+    if zettel:
+        (ordner / "901").write_text("ok\n", encoding="utf-8")
+    return repo, {"freigabe_ordner": str(ordner)}
+
+
+@pytest.mark.parametrize("zettel", [True, False])
+def test_1207_rueckfall_skript_fehlt_nur_eigener_zettel(tmp_path: Path, zettel: bool) -> None:
+    from to_spawn import capo as capo_mod
+
+    repo, vps = _live_gedeckt_welt(tmp_path, zettel, None)
+    assert capo_mod.live_gedeckt(repo, vps, 901, "a" * 40, "b" * 40) is zettel
+
+
+@pytest.mark.parametrize("zettel", [True, False])
+def test_1207_rueckfall_alter_stand_exit_2_nur_eigener_zettel(tmp_path: Path, zettel: bool) -> None:
+    """Deckungs-Befehl antwortet mit Exit 2 (falscher Aufruf, argparse): Antwort zählt nicht."""
+    from to_spawn import capo as capo_mod
+
+    alt = "import sys\nprint('{\"gedeckt\": true}')\nsys.exit(2)\n"
+    repo, vps = _live_gedeckt_welt(tmp_path, zettel, alt)
+    assert (
+        capo_mod.live_gedeckt(repo, vps, 901, "a" * 40, "b" * 40) is False
+    )  # Fix-Runde 2 (M1): kein Rückfall auf den eigenen Zettel
+
+
+@pytest.mark.parametrize("zettel", [True, False])
+def test_1207_rueckfall_zeitlimit_nur_eigener_zettel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, zettel: bool
+) -> None:
+    from to_spawn import capo as capo_mod
+
+    repo, vps = _live_gedeckt_welt(tmp_path, zettel, "print('{\"gedeckt\": true}')\n")
+
+    def haengt(befehl: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(befehl, 60)
+
+    monkeypatch.setattr(capo_mod.subprocess, "run", haengt)
+    assert (
+        capo_mod.live_gedeckt(repo, vps, 901, "a" * 40, "b" * 40) is False
+    )  # Fix-Runde 2 (M1): kein Rückfall auf den eigenen Zettel
+
+
+# --- #1207 Fix-Runde 2: Bereich bis zur master-Spitze (H1), Fehler → nicht gedeckt (M1) ---------
+
+
+def test_1207_sha_zettel_auf_der_spitze_deckt_frueheren_ticket_commit(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """H1: Zettel auf der master-Spitze (späterer Schritt) deckt #901 wie in der Schlange → live erwartet."""
+    _vps_deckung(welt, monkeypatch, zettel=[], davor=("docs: Notiz", {"docs/notiz.md": "n\n"}))
+    spitze = _commit(welt["repo"], "feat: Später (#903)", {"web/spaeter.py": "z = 1\n"})
+    (welt["tmp"] / "live_freigabe" / spitze[:7]).write_text("ok\n", encoding="utf-8")
+    _capo(welt)
+    assert any(k.startswith("Aufseher: vps_ungleich_origin") for k in _kommentare(welt, "901"))
+
+
+def _antwort_skript(code: int, ausgabe: str) -> str:
+    return f"import sys\nprint({ausgabe!r})\nsys.exit({code})\n"
+
+
+@pytest.mark.parametrize(
+    "skript",
+    [
+        _antwort_skript(2, '{"gedeckt": true}'),  # Exit 2 (falscher Aufruf)
+        _antwort_skript(3, '{"gedeckt": true}'),  # Exit ≠ 0/1
+        _antwort_skript(0, "kaputt"),  # Nicht-JSON
+        _antwort_skript(0, "[true]"),  # kein dict
+        _antwort_skript(1, '{"gedeckt": true}'),  # Widerspruch Exit ↔ gedeckt
+    ],
+    ids=["exit2", "exit3", "kein_json", "kein_dict", "widerspruch"],
+)
+def test_1207_fehler_nicht_gedeckt_trotz_eigenem_zettel_mit_warnung(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, skript: str
+) -> None:
+    """M1: Befehl da, Antwort unbrauchbar → nicht gedeckt + Warnzeile, nie Rückfall auf den eigenen Zettel."""
+    from to_spawn import capo as capo_mod
+
+    repo, vps = _live_gedeckt_welt(tmp_path, True, skript)
+    with caplog.at_level("WARNING"):
+        assert capo_mod.live_gedeckt(repo, vps, 901, "a" * 40, "b" * 40) is False
+    assert "nicht prüfbar" in caplog.text
+
+
+def test_1207_zeitlimit_nicht_gedeckt_trotz_eigenem_zettel_mit_warnung(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from to_spawn import capo as capo_mod
+
+    repo, vps = _live_gedeckt_welt(tmp_path, True, "print('{\"gedeckt\": true}')\n")
+
+    def haengt(befehl: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(befehl, 60)
+
+    monkeypatch.setattr(capo_mod.subprocess, "run", haengt)
+    with caplog.at_level("WARNING"):
+        assert capo_mod.live_gedeckt(repo, vps, 901, "a" * 40, "b" * 40) is False
+    assert "nicht prüfbar" in caplog.text
+
+
+def test_1207_befehl_bekommt_bis_spitze(tmp_path: Path) -> None:
+    """Bereichs-Wahl liegt im Befehl: capo übergibt nur ``--bis-spitze``, rechnet keinen Bereich."""
+    from to_spawn import capo as capo_mod
+
+    skript = (
+        "import json, sys\n"
+        "ok = '--bis-spitze' in sys.argv\n"
+        "print(json.dumps({'gedeckt': ok, 'offen': []}))\n"
+        "sys.exit(0 if ok else 1)\n"
+    )
+    repo, vps = _live_gedeckt_welt(tmp_path, False, skript)
+    assert capo_mod.live_gedeckt(repo, vps, 901, "a" * 40, "b" * 40) is True

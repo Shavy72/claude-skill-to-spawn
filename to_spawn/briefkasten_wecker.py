@@ -74,7 +74,9 @@ BAU_TEXT = "Briefkasten: Antwort auf Frage {id} liegt — jetzt `{befehl}` nachs
 
 KOMMENTAR_TEXT = (
     "Abnahme-Issue #{ticket}: neuer Kommentar des Menschen (Kritik oder „passt“) — jetzt "
-    "`gh issue view {ticket} --comments` lesen und darauf reagieren, nicht auf den eigenen Weckruf warten."
+    "`gh issue view {ticket} --comments` lesen und darauf reagieren (bei „passt“ des Menschen = "
+    "Live-Freigabe: direkt `to_spawn.py live <S>` ohne Briefkasten-Frage/zweites Live-Ja), "
+    "nicht auf den eigenen Weckruf warten."
 )
 
 ZU_TEXT = (

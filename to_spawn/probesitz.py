@@ -652,12 +652,36 @@ def staffel_hook_vorhanden(repo: Path, skill: Path = SKILL_ORDNER) -> bool:
     ).is_file()
 
 
+def staffel_deaktiviert_grund(konfig: dict[str, Any] | None) -> str | None:
+    """Grund, wenn die Staffel in der Repo-Konfig ausgeschaltet ist (``staffel.aktiv`` oder ``max_staffeln <= 1``)."""
+    if not isinstance(konfig, dict):
+        return None
+    staffel = konfig.get("staffel")
+    if not isinstance(staffel, dict):
+        return None
+    if not staffel.get("aktiv", True):
+        return "übersprungen (staffel.aktiv ist aus)"
+    max_staffeln = staffel.get("max_staffeln")
+    if max_staffeln is not None:
+        try:
+            grenze = int(max_staffeln)
+        except (TypeError, ValueError):
+            grenze = None
+        if grenze is not None and grenze <= 1:
+            return f"übersprungen (staffel.max_staffeln={grenze})"
+    return None
+
+
 def werte_bau_log(
-    zeilen: Iterable[dict[str, Any]], *, runner: str = werkzeug.STANDARD_RUNNER
+    zeilen: Iterable[dict[str, Any]],
+    *,
+    runner: str = werkzeug.STANDARD_RUNNER,
+    konfig: dict[str, Any] | None = None,
 ) -> tuple[Ergebnis, Ergebnis]:
     """Punkte 5 und 6 aus den Bau-Log-Zeilen des Wegwerf-Tickets."""
     zeilen = list(zeilen)
     ist_agy = runner == "agy"
+    staffel_aus = staffel_deaktiviert_grund(konfig)
     log_hinweis = (
         "agy-Transkript unter ~/.gemini/antigravity-cli/brain/<id> (bau.py trägt session_ende nach)"
         if ist_agy
@@ -671,7 +695,7 @@ def werte_bau_log(
     if not zeilen:
         return (
             _rot(5, "keine Bau-Log-Zeile", log_hinweis),
-            _rot(6, "keine Bau-Log-Zeile", staffel_hinweis),
+            _gruen(6, staffel_aus) if staffel_aus else _rot(6, "keine Bau-Log-Zeile", staffel_hinweis),
         )
     enden = [z for z in zeilen if z.get("typ") == "session_ende"]
     mit_token = [z for z in enden if isinstance(z.get("tokens"), dict) and int(z["tokens"].get("gesamt") or 0) > 0]
@@ -698,6 +722,8 @@ def werte_bau_log(
             f"{len(zeilen)} Zeile(n), aber keine session_ende",
             log_hinweis,
         )
+    if staffel_aus:
+        return p5, _gruen(6, staffel_aus)
     handoffs = [z for z in zeilen if z.get("typ") == "handoff"]
     starts_2 = [z for z in zeilen if z.get("typ") == "session_start" and int(z.get("staffel") or 0) == 2]
     if handoffs and starts_2:
@@ -892,7 +918,7 @@ def wegwerf_lauf(
             argv, cwd=worktree, env=env, zeitlimit_s=zeitlimit_s, beobachter=beobachter, ticket=ticket, ausgabe=ausgabe
         )
         # Worktree-Datei + Rückfall-Laufdatei im Hauptbaum (Zeilen vor dem Worktree, #257)
-        p5, p6 = werte_bau_log(bau_log.lese(worktree, ticket, hauptbaum=repo), runner=eff_runner)
+        p5, p6 = werte_bau_log(bau_log.lese(worktree, ticket, hauptbaum=repo), runner=eff_runner, konfig=konfig)
         p2 = pruefe_push(repo, ticket, zweig, laeufer)
         auszug = _log_auszug(worktree, ticket)
         if auszug:

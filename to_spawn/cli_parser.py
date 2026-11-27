@@ -433,6 +433,19 @@ def baue_parser() -> _Parser:
     p_befund.add_argument("--stufe", required=True, choices=list(befund.STUFEN))
     p_befund.add_argument("--text", required=True, help="was fehlt / der Hinweis")
     p_befund.add_argument("--dry-run", action="store_true", help="nur zeigen, nichts tun")
+    # Aufseher-Kommentar (#899, Folge #1522): einzige CLI-Tür durch befund.kommentiere (2-Zeilen-Kürzung).
+    p_kommentiere = unter.add_parser(
+        "kommentiere",
+        help="Ticket auf GitHub kommentieren (zwingend durch 2-Zeilen-Kürzung, #899)",
+    )
+    p_kommentiere.add_argument("ticket", type=int, help="Ticket-Nummer")
+    p_kommentiere.add_argument("text", help="Kommentartext (wird auf höchstens 2 Zeilen gekürzt)")
+    p_kommentiere.add_argument(
+        "--reopen",
+        action="store_true",
+        help="Ticket zugleich wieder öffnen (statt nur zu kommentieren)",
+    )
+    p_kommentiere.add_argument("--gh-repo", default="", help="owner/name (sonst aus origin)")
     # Hausmeister (#1368): alten Arbeitsordner prüfen (Trockenlauf) bzw. aufräumen.
     p_aufr = unter.add_parser(
         "aufraeumen",
@@ -499,4 +512,16 @@ def baue_parser() -> _Parser:
     regel_pruefung.richte_parser_ein(unter)
     # Lesende Zweig- und Issue-Prüfung (#888, aus App #1208).
     zweig_pruefung.richte_parser_ein(unter)
+    # Warten auf fremden Lauf ohne Selbst-Treffer (#870 / #1456, Fehlerkatalog S16/P16).
+    p_warte = unter.add_parser(
+        "warte-lauf",
+        description=(
+            "Wartet, bis ein Lauf (Regex auf Kommandozeile) endet; schließt die eigene "
+            "Aufrufkette aus. Exit 0 = fertig, 1 = Frist abgelaufen, 2 = Fehler/nicht "
+            "unterstützt (ungültige Regex, Windows)."
+        ),
+        help="warten, bis ein Lauf (Regex auf Kommandozeile) endet; Exit 0 fertig, 1 Frist abgelaufen, 2 Fehler/nicht unterstützt",
+    )
+    p_warte.add_argument("muster", help="Regex auf die Kommandozeile des Laufs")
+    p_warte.add_argument("--frist", type=float, default=900, help="höchstens so viele Sekunden warten (Vorgabe 900)")
     return ap

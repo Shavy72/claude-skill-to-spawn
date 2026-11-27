@@ -1,0 +1,14 @@
+# Eigene cgroup-Slice für das Deploy-Gate (#887 / App #1184).
+# Bewusst getrennt von bau-sessions.slice und ohne ManagedOOMMemoryPressure=kill:
+# geraten Bau-Sessions unter Speicherdruck, beendet systemd-oomd nur Bau-Sessions,
+# während das Deploy-Gate mit eigenem Speicher-Deckel (6 GB) weiterläuft.
+# Einrichten (automatisch über nest/nest_server.sh Abschnitt 5b oder von Hand):
+#   mkdir -p ~/.config/systemd/user
+#   cp nest/bau-gate.slice ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+[Unit]
+Description=to-spawn: Deploy-Gate-Slice mit eigenem Speicherdeckel (#887)
+
+[Slice]
+MemoryAccounting=yes
+MemoryMax=6G

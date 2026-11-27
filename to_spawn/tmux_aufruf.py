@@ -15,8 +15,9 @@ import logging
 import os
 import re
 import subprocess
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 from to_spawn import config, prozessbaum, starter
 
@@ -52,29 +53,39 @@ class FensterWeg(TmuxFehler):
     """Das Ziel-Fenster/-Pane gibt es nicht mehr (Session hat sich selbst beendet)."""
 
 
-def aufrufen(*argumente: str, eingabe: str | None = None, start: bool = False) -> str:
+def aufrufen(
+    *argumente: str,
+    eingabe: str | None = None,
+    start: bool = False,
+    env: Mapping[str, str] | None = None,
+) -> str:
     """Ein tmux-Aufruf; Ausgabe als Text, jeder Fehler als :class:`TmuxFehler`.
 
-    ``start=True``: der Aufruf startet etwas (``new-window``) und geht durch die Start-Tür.
+    ``start=True``: der Aufruf startet etwas (``new-window``/``new-session``) und geht durch die
+    Start-Tür. Mit ``env`` lässt sich eine bereinigte Umgebung (z. B. :func:`sitzung_env.ohne_sitzung`)
+    übergeben.
     """
     from to_spawn import capo  # spät: capo nutzt sitzung_* aus diesem Modul
 
     unterbefehl = argumente[0] if argumente else ""
     # tmux spricht UTF-8; ohne ``encoding`` liest Windows cp1252 und ``●``/``❯`` brechen (#602).
-    lauf_args = {
+    lauf_args: dict[str, Any] = {
         "input": eingabe,
         "capture_output": True,
         "text": True,
         "encoding": "utf-8",
         "errors": "replace",
-        "check": True,
         "timeout": 30,
     }
+    if env is not None:
+        lauf_args["env"] = dict(env)
     try:
         if start:
-            fertig = starter.starte([*capo._tmux_befehl(), *argumente], warten=True, **lauf_args)
+            fertig = starter.starte([*capo._tmux_befehl(), *argumente], warten=True, check=True, **lauf_args)
         else:
-            fertig = subprocess.run([*capo._tmux_befehl(), *argumente], **lauf_args, **prozessbaum.fensterlos())
+            fertig = subprocess.run(
+                [*capo._tmux_befehl(), *argumente], check=True, **lauf_args, **prozessbaum.fensterlos()
+            )
     except subprocess.CalledProcessError as fehler:
         stderr = str(fehler.stderr or "")
         if "can't find window" in stderr or "can't find pane" in stderr:

@@ -5,21 +5,23 @@ from __future__ import annotations
 import os
 import re
 import shlex
+import sys
 import time
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 from _hookbasis import (
     BELEG,
     LOG,
     ausfuehren,
-    befehl as git_befehl,
     dateien_anhaengen,
     lade_sitzung,
     python_skript,
     route,
     speichere_sitzung,
 )
+from _hookbasis import befehl as git_befehl
 from merker import nicht_merken, start_sha_merken
 
 # git [-C pfad | -c k=v]* commit — nicht commit-tree o. ä.
@@ -178,6 +180,61 @@ def commit_dateien_merken(eingabe: dict[str, Any], befehl: str, repo: Path) -> N
     speichere_sitzung(sid, sitzung)
 
 
+def _sofort_modul() -> ModuleType | None:
+    """Lädt ``to_spawn.pruef.sofort`` aus dem Repo oder installiertem Skill-Ordner (eine Wahrheitsquelle)."""
+    eltern = Path(__file__).resolve().parents
+    kandidaten: list[Path] = []
+    if len(eltern) > 1:
+        kandidaten.append(eltern[1])
+    if len(eltern) > 2:
+        kandidaten.append(eltern[2] / "skills" / "to-spawn")
+    for basis in kandidaten:
+        if (basis / "to_spawn" / "pruef" / "sofort.py").is_file():
+            text = str(basis)
+            if text not in sys.path:
+                sys.path.insert(0, text)
+            break
+    try:
+        from to_spawn.pruef import sofort as sofort_mod
+    except ImportError as fehler:
+        LOG.warning("Beleg-Schlüssel-Sperre nicht geladen: %s", fehler)
+        return None
+    return sofort_mod
+
+
+def _beleg_schluessel_pruefen(befehl: str, repo: Path) -> str | None:
+    """Blockiert Commits mit Schlüsseln/Secrets im Beleg-Ordner (#863, ohne Mail-Alarm E40)."""
+    sofort_mod = _sofort_modul()
+    if sofort_mod is None:
+        return None
+    try:
+        wurzel = Path(_git_namen(repo, "rev-parse", "--show-toplevel")[0].strip()).resolve()
+        dateien = commit_dateien(befehl, repo)
+    except (RuntimeError, OSError, IndexError) as fehler:
+        LOG.warning("Beleg-Schlüssel-Sperre übersprungen: %s", fehler)
+        return None
+    rel_pfade: list[str] = []
+    for datei in dateien:
+        try:
+            rel_pfade.append(datei.resolve().relative_to(wurzel).as_posix())
+        except ValueError:
+            continue
+    ordner = sofort_mod.belege_ordner_liste(wurzel)
+    beleg_pfade = [p for p in rel_pfade if sofort_mod.ist_im_beleg_ordner(p, ordner)]
+    if not beleg_pfade:
+        return None
+    nutze_index = not pathspec_aus_befehl(befehl) and not hat_a_flag(befehl)
+    inhalte: dict[str, str] | None = None
+    if nutze_index:
+        inhalte = {}
+        for pfad in beleg_pfade:
+            text = sofort_mod._git_datei_text(wurzel, f":{pfad}")
+            if text is not None:
+                inhalte[pfad] = text
+    erg = sofort_mod.pruefe_beleg_dateien(wurzel, beleg_pfade, ordner=ordner, inhalte=inhalte)
+    return None if erg.ok else erg.bericht()
+
+
 def _kontext(text: str, **extra: str) -> dict[str, Any]:
     return {
         "hookSpecificOutput": {
@@ -194,6 +251,15 @@ def haupt(eingabe: dict[str, Any]) -> dict[str, Any] | None:
     if repo is None:
         return None
     commit_dateien_merken(eingabe, befehl, repo)
+    schluessel_befund = _beleg_schluessel_pruefen(befehl, repo)
+    if schluessel_befund is not None:
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": schluessel_befund,
+            }
+        }
     # `-a`/`--all`/`-am` sieht ungestagte Änderungen mit → dann Diff über git diff HEAD
     # (getrackte Dateien) statt nur --staged.
     diff_quelle = [] if hat_a_flag(befehl) else ["--staged"]

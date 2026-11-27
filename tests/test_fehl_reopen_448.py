@@ -41,7 +41,14 @@ class FakeGh:
         self.fehler: set[str] = set()
         self.schliess_zeiten: list[str] = []  # Timeline: created_at der closed-Ereignisse
 
-    def lauf(self, args: list[str], cwd: Path | None = None) -> tuple[int, str]:
+    def lauf(
+        self,
+        args: list[str],
+        cwd: Path | None = None,
+        timeout: float | None = None,
+        *,
+        fehlertext: bool = False,
+    ) -> tuple[int, str]:
         self.aufrufe.append(list(args))
         if args[:1] == ["issue"] and len(args) > 1 and args[1] in self.fehler:
             return 1, ""
@@ -479,3 +486,21 @@ def test_timeline_nicht_lesbar_keine_ruecknahme(
 
     assert fake_gh.schliessen() == [], erg.zeilen
     assert f"#{N} Rücknahme ausgesetzt: Issue-Verlauf nicht lesbar (gh)" in erg.zeilen, erg.zeilen
+
+
+def test_gruenes_fehl_reopen_startet_bei_gescheiterter_ruecknahme_keine_folge_runde(
+    welt: dict[str, Path],  # noqa: F811
+    fake_gh: FakeGh,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sind die Regeln grün (#448), startet #862 auch bei gescheiterter Rücknahme keine Folge-Runde."""
+    _umbenennung_415(welt)
+    geschlossen = _iso(timedelta(minutes=30))
+    _erledigt_setzen(welt, f"{N}|test_ersetzt|{geschlossen}")
+    _kinder(monkeypatch, _issue())
+    fake_gh.fehler.add("close")
+
+    erg = _tick(welt)
+
+    assert not any("Folge-Runde" in z for z in erg.zeilen), erg.zeilen
+    assert not any("dependencies/blocked_by" in " ".join(a) for a in fake_gh.aufrufe), fake_gh.aufrufe

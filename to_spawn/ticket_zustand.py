@@ -29,6 +29,11 @@ from typing import Any, Literal
 
 #: Label der Deploy-Schlange (#1527): Ticket liegt grün auf Staging, wartet nur noch auf Live.
 STAGING_FERTIG_LABEL = "staging:fertig"
+#: Labels, mit denen ``bau.py`` ein Ticket weder startet noch fortsetzt (#887 / App #1184).
+#: ``bau:lokal`` fehlt bewusst: es heißt nur „nicht auf dem Bau-Server“ — am PC läuft es.
+BAU_SPERR_LABELS: frozenset[str] = frozenset({"bau:pause", "wontfix"})
+#: Vorgabe-Label für Abnahme-Tickets (überschreibbar über ``regularien.checkpoint_label``, #854).
+CHECKPOINT_LABEL = "checkpoint:human"
 
 Stufe = Literal["offen", "fertig_gebaut", "zu", "verworfen"]
 #: Alle Anzeige-Stufen; ``verworfen`` = geschlossen als „nicht geplant“ oder Duplikat (nie gebaut).
@@ -66,6 +71,44 @@ def fertig_gebaut(ticket: Mapping[str, Any] | None) -> bool:
     return stufe(ticket) != "offen"
 
 
+def abnahme_label(repo: Path | None = None) -> str:
+    """Abnahme-Label aus ``regularien.checkpoint_label`` der Repo-Konfig, sonst :data:`CHECKPOINT_LABEL`."""
+    if repo is None:
+        return CHECKPOINT_LABEL
+    from to_spawn import config, manifest
+
+    return manifest.checkpoint_label(config.lade(repo))
+
+
+def ist_abnahme(
+    ticket: Mapping[str, Any] | None,
+    *,
+    checkpoint_label: str | None = None,
+    repo: Path | None = None,
+) -> bool:
+    """Trägt das Ticket das Abnahme-Label (``checkpoint:human`` / ``regularien.checkpoint_label``)? (#854)
+
+    Gilt unabhängig von weiteren Labels (auch bei gleichzeitigem ``ready-for-agent``): ein
+    Abnahme-Ticket wartet auf den Nutzer und startet nie als Bau-Session.
+    """
+    label = checkpoint_label if checkpoint_label is not None else abnahme_label(repo)
+    return bool(label) and label in label_namen(ticket)
+
+
+def bau_startbar(
+    ticket: Mapping[str, Any] | None,
+    *,
+    checkpoint_label: str | None = None,
+    repo: Path | None = None,
+) -> bool:
+    """Die eine Auswahl-Regel für startbare Bau-Tickets (#854).
+
+    Offen (nicht :func:`fertig_gebaut`) UND kein Abnahme-Ticket (:func:`ist_abnahme`),
+    unabhängig von weiteren Labels wie ``ready-for-agent``.
+    """
+    return not fertig_gebaut(ticket) and not ist_abnahme(ticket, checkpoint_label=checkpoint_label, repo=repo)
+
+
 def endgueltig_zu(ticket: Mapping[str, Any] | None) -> bool:
     """Issue geschlossen (auch „verworfen“): echter Schluss."""
     return stufe(ticket) in ENDGUELTIG_ZU_STUFEN
@@ -93,6 +136,12 @@ def label_namen(ticket: Mapping[str, Any] | None) -> set[str]:
     if isinstance(labels, Mapping):  # GraphQL: ``labels { nodes { name } }``
         labels = labels.get("nodes") or ()
     return {str(x.get("name") if isinstance(x, Mapping) else x) for x in labels}
+
+
+def sperre_grund(ticket: Mapping[str, Any] | None) -> str | None:
+    """Grund, warum ein Ticket per Sperr-Label (:data:`BAU_SPERR_LABELS`) nicht starten darf; sonst ``None``."""
+    gesperrt = sorted(label_namen(ticket) & BAU_SPERR_LABELS)
+    return f"Label {', '.join(gesperrt)}" if gesperrt else None
 
 
 def wortlaut(ticket: Mapping[str, Any] | None) -> str:

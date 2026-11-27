@@ -186,7 +186,7 @@ AUSNAHMEN: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
     ),
     ("to_spawn/bau_log.py", "bau-log-ordner"): (
         (
-            "- Versionierte Datei ``docs/agents/bau_log/<N>.jsonl``: schreibt nu",
+            "``docs/agents/bau_log/<N>.jsonl`` erhalten.",
             "``eintrag``, schreibt ``docs/agents/bau_log/``) weicht nie aus: eine",
         ),
         _DOKU,

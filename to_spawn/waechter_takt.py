@@ -58,8 +58,11 @@ from . import (
     capo,
     config,
     gh,
+    halt,
     leitstand,
     manifest,
+    melder,
+    sitzung_filter,
     sitzungsjob,
     starter,
     ticket_zustand,
@@ -100,7 +103,7 @@ CAPO_ABBRUCH = (
 Eintrag = tuple[str, str, Any]
 
 _PROMPT_ROH = (
-    """Aufseher-Takt Spec #{S} ({REPO}). Einmaliger Lauf: kein Handoff, kein /loop, kein ScheduleWakeup — nach dieser Liste endest du. Ziel: Spec {S} vollständig, sauber, autonom fertig. {BEFUGNIS} Klasse 3 im besten Interesse des Menschen (Nordstern, Doktrinen). Nur Label checkpoint:human bleibt für den Menschen. Du baust nichts und sprichst keine Bau-Session an. Ticket neu zu → Belegseite unter docs/verify-hard/ per Grep prüfen (Akzeptanz erfüllt? Live-Klick-Weg-Beleg mit Rolle da?), bei Mangel 2-Zeilen-Kommentar „Aufseher: … fehlt“ + `gh issue reopen`. capo-Verstoß: capo hat schon geöffnet/kommentiert — nicht doppelt tun. {ABSCHLUSS} Abschlussbericht als Kommentar auf #{S} (max. 10 Zeilen). Kontext sparen: Tickets nie voll laden, Belegseiten per Grep/limit.
+    """Aufseher-Takt Spec #{S} ({REPO}). Einmaliger Lauf: kein Handoff, kein /loop, kein ScheduleWakeup — nach dieser Liste endest du. Ziel: Spec {S} vollständig, sauber, autonom fertig. {BEFUGNIS} Klasse 3 im besten Interesse des Menschen (Nordstern, Doktrinen). Nur Label checkpoint:human bleibt für den Menschen. Du baust nichts und sprichst keine Bau-Session an. Ticket neu zu → Belegseite unter docs/verify-hard/ per Grep prüfen (Akzeptanz erfüllt? Live-Klick-Weg-Beleg mit Rolle da?), bei Mangel per `python {SKILL}/to_spawn.py kommentiere <N> "Aufseher: … fehlt" --reopen` (2-Zeilen-Kürzung; Kommentare auf Tickets nur über `python {SKILL}/to_spawn.py kommentiere <N> "<text>"`, nie direkt per `gh`). capo-Verstoß: capo hat schon geöffnet/kommentiert — nicht doppelt tun. {ABSCHLUSS} Abschlussbericht als Kommentar auf #{S} (max. 10 Zeilen). Kontext sparen: Tickets nie voll laden, Belegseiten per Grep/limit.
 
 Zu entscheiden:
 {LISTE}
@@ -504,7 +507,17 @@ def claude_befehl(claude: str, konfig: dict[str, Any], spec: int) -> list[str]:
     modelle = konfig.get("modelle") if isinstance(konfig.get("modelle"), dict) else {}
     modell = str(modelle.get("waechter") or MODELL)
     ausweich = str(modelle.get("waechter_ausweich") or "")
-    cmd = waechter_lauf.befehl(claude, modell, ausweich, False, spec, "", effort=waechter_lauf.effort(konfig))
+    mcp_pfad = sitzung_filter.schlanke_mcp_datei(logger=log)
+    cmd = waechter_lauf.befehl(
+        claude,
+        modell,
+        ausweich,
+        False,
+        spec,
+        "",
+        effort=waechter_lauf.effort(konfig),
+        mcp_pfad=mcp_pfad,
+    )
     return [*claude_start(claude), *cmd[1:-1], "-p"]
 
 
@@ -590,6 +603,31 @@ def _fehler(spec: int, text: str) -> int:
     return 1
 
 
+def ist_ruhig(
+    repo: Path,
+    spec: int,
+    gh_repo: str,
+    konfig: dict[str, Any],
+    merker: dict[str, Any] | None,
+) -> bool:
+    """Nach „Spec fertig“ hört der Aufseher auf (#885) — erst, wenn der Abschluss erledigt ist.
+
+    Ohne eingerichteten Mail-Versand heißt „fertig“ sofort ruhig. Mit Mail-Versand ruht der Takt,
+    sobald der Morgen-Bericht bzw. die Abschluss-Mail raus ist (und keine neuen Folge-Tickets
+    offen sind).
+    """
+    if not (merker or {}).get("fertig"):
+        return False
+    if _abschluss_paket().abschluss_faellig(repo, spec).neue_tickets:
+        return False
+    if not melder.mail_eingerichtet(konfig):
+        return True
+    return any(
+        melder.schon_gesendet(repo, schluessel, gh_repo)
+        for schluessel in (f"morgen_bericht|{spec}", f"abschluss_{spec}", f"spec_fertig|{spec}")
+    )
+
+
 def takt(
     repo: Path,
     spec: int,
@@ -617,9 +655,20 @@ def takt(
         print(f"Takt #{spec} läuft schon — steige aus.")
         return 0
     with schein:
+        # Halt der Spec (#1444): prüft die Bedingung und hebt ihn ggf. selbst auf.
+        angehalten = halt.pruefen(repo, aufheben=not dry_run, wer="takt")
+        if angehalten is not None:
+            print(f"Takt #{spec}: {angehalten.text()} — steige aus.")
+            return 0
         konfig = config.lade(repo)
         try:
             merker = leitstand.lese_zustand().get("takt", {}).get(str(spec))
+            if ist_ruhig(repo, spec, gh_repo, konfig, merker):
+                ruhe = (
+                    "Abschluss ist erledigt" if melder.mail_eingerichtet(konfig) else "kein Mail-Versand eingerichtet"
+                )
+                print(f"Takt #{spec}: Spec fertig — Aufseher hört auf ({ruhe}).")
+                return 0
             eintraege, neu = pruefe(repo, spec, gh_repo, konfig, merker, dry_run=dry_run)
         except (RuntimeError, OSError) as fehler:
             return _fehler(spec, str(fehler))

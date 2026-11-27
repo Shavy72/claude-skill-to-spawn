@@ -390,6 +390,20 @@ STARTSPERRE_ANTEIL = 0.05
 INODE_WARN_ANTEIL = 0.70
 #: Ab diesem belegten Inode-Anteil der Temp-Wurzel startet keine neue Session (#355).
 INODE_SPERRE_ANTEIL = 0.90
+#: Hindernis-Arten des Start-Checks; ein gesunder Check schließt alle (#1471, #896).
+#: ``_spur`` nimmt nur diese Konstanten (Test ``test_jede_gemeldete_art_wird_geschlossen``).
+ART_PLATTE_VOLL = "platte_voll"
+ART_PLATTE_UNMESSBAR = "platte_unmessbar"
+ART_HAUSMEISTER_FEHLER = "hausmeister_fehler"
+ART_TEMP_INODES_VOLL = "temp_inodes_voll"
+ART_TEMP_INODES_KNAPP = "temp_inodes_knapp"
+HINDERNIS_ARTEN = (
+    ART_PLATTE_VOLL,
+    ART_PLATTE_UNMESSBAR,
+    ART_HAUSMEISTER_FEHLER,
+    ART_TEMP_INODES_VOLL,
+    ART_TEMP_INODES_KNAPP,
+)
 #: Marker-Datei eigener pytest-Temp-Ordner ``pt-*`` (#177, #355) — einzige Quelle auch für ``tests/conftest.py``.
 PT_MARKER = ".pt-lauf"
 #: Normale Schonfrist toter ``pt-*``-Reste in Sekunden (#177, #355).
@@ -640,8 +654,17 @@ def rundgang(*, loeschen: bool, jetzt: float | None = None, docker: bool = False
     return _rundgang_sicher(loeschen=loeschen, jetzt=jetzt, docker=docker)
 
 
+def _testlauf_ohne_freigabe() -> bool:
+    """``True`` unter Test (``PYTEST_CURRENT_TEST``/``TO_SPAWN_TESTLAUF``) ohne ausdrückliche
+    Test-Wurzel-Freigabe in ``TO_SPAWN_HAUSMEISTER_WURZELN`` (#873)."""
+    return starter.unter_test() and not os.environ.get("TO_SPAWN_HAUSMEISTER_WURZELN", "").strip()
+
+
 def _rundgang_sicher(*, loeschen: bool, jetzt: float | None, docker: bool) -> Rundgang:
     """Kern von :func:`rundgang`; ``docker=True`` nur aus :func:`aufraeumen_alles`."""
+    if loeschen and _testlauf_ohne_freigabe():
+        log.warning("Hausmeister: Löschlauf unter Test ohne TO_SPAWN_HAUSMEISTER_WURZELN blockiert")
+        return Rundgang(False, "Testlauf ohne Test-Wurzel-Freigabe (TO_SPAWN_HAUSMEISTER_WURZELN)")
     try:
         return _rundgang(loeschen=loeschen, jetzt=jetzt, docker=docker)
     except Exception as fehler:  # Vertrag: wirft nie
@@ -779,7 +802,7 @@ def start_erlaubt(
     except Exception as fehler:  # Vertrag: wirft nie, im Zweifel starten
         log.exception("Hausmeister: Start-Check gescheitert")
         satz = f"Platte: Start-Check gescheitert ({fehler}) — Start erlaubt"
-        _spur("hausmeister_fehler", satz)
+        _spur(ART_HAUSMEISTER_FEHLER, satz)
         return True, satz
 
 
@@ -844,6 +867,9 @@ def _hintergrund_anstossen() -> bool:
 
 
 def _start_pruefen(loeschen: bool, nur_messen: bool = False, synchron_nur_bei_sperre: bool = False) -> tuple[bool, str]:
+    if loeschen and _testlauf_ohne_freigabe():
+        log.warning("Hausmeister: Start-Check-Löschlauf unter Test ohne TO_SPAWN_HAUSMEISTER_WURZELN blockiert")
+        nur_messen = True
     anteil = _frei_anteil()
     inodes = _temp_inode_anteil()
     zusatz = ""
@@ -868,11 +894,11 @@ def _start_pruefen(loeschen: bool, nur_messen: bool = False, synchron_nur_bei_sp
             f"Temp-Wurzel voll: {_prozent(inodes)} der Inodes belegt (Startsperre ab "
             f"{_prozent(INODE_SPERRE_ANTEIL)}), {nach} — keine neue Session"
         )
-        _spur("temp_inodes_voll", satz, inodes_belegt=round(inodes, 4))
+        _spur(ART_TEMP_INODES_VOLL, satz, inodes_belegt=round(inodes, 4))
         return False, satz
     if anteil is None:
         satz = f"Platte nicht messbar — kein Urteil, Start erlaubt{zusatz}"
-        _spur("platte_unmessbar", satz)
+        _spur(ART_PLATTE_UNMESSBAR, satz)
         return True, satz
     if anteil < STARTSPERRE_ANTEIL:
         nach = "trotz gescheitertem Aufräumen" if zusatz else "auch nach dem Aufräumen"
@@ -880,14 +906,15 @@ def _start_pruefen(loeschen: bool, nur_messen: bool = False, synchron_nur_bei_sp
             f"Platte voll: nur {_prozent(anteil)} frei (Startsperre unter "
             f"{_prozent(STARTSPERRE_ANTEIL)}), {nach} — keine neue Session"
         )
-        _spur("platte_voll", satz, frei_anteil=round(anteil, 4))
+        _spur(ART_PLATTE_VOLL, satz, frei_anteil=round(anteil, 4))
         return False, satz
     if _ist_inode_knapp(inodes):
         assert inodes is not None
         warn = f"Temp-Wurzel knapp: {_prozent(inodes)} der Inodes belegt (Warnschwelle {_prozent(INODE_WARN_ANTEIL)})"
         log.warning("Hausmeister: %s", warn)
-        _spur("temp_inodes_knapp", warn, inodes_belegt=round(inodes, 4))
+        _spur(ART_TEMP_INODES_KNAPP, warn, inodes_belegt=round(inodes, 4))
         return True, f"Platte frei: {_prozent(anteil)} frei{zusatz} ({warn})"
+    hindernis.erledigt(*HINDERNIS_ARTEN)  # #1471/#896: gesunder Check = Hindernisse vorbei
     return True, f"Platte frei: {_prozent(anteil)} frei{zusatz}"
 
 
@@ -2789,11 +2816,14 @@ def _temp_inodes_im_takt() -> None:
     if not _ist_inode_knapp(inodes):
         return
     assert inodes is not None
-    art = "temp_inodes_voll" if _ist_inode_voll(inodes) else "temp_inodes_knapp"
-    schwelle = INODE_SPERRE_ANTEIL if art == "temp_inodes_voll" else INODE_WARN_ANTEIL
+    ist_voll = _ist_inode_voll(inodes)
+    schwelle = INODE_SPERRE_ANTEIL if ist_voll else INODE_WARN_ANTEIL
     satz = f"Temp-Wurzel: {_prozent(inodes)} der Inodes belegt (Schwelle {_prozent(schwelle)})"
     log.warning("Hausmeister: %s", satz)
-    _spur(art, satz, inodes_belegt=round(inodes, 4))
+    if ist_voll:
+        _spur(ART_TEMP_INODES_VOLL, satz, inodes_belegt=round(inodes, 4))
+    else:
+        _spur(ART_TEMP_INODES_KNAPP, satz, inodes_belegt=round(inodes, 4))
 
 
 def _frei_anteil() -> float | None:
@@ -2874,7 +2904,7 @@ def _aufpasser_log(satz: str) -> None:
 
 def _wurzeln() -> list[str]:
     roh = os.environ.get("TO_SPAWN_HAUSMEISTER_WURZELN")
-    if roh:
+    if roh is not None:
         muster = roh.split(os.pathsep)
     else:
         maschine = config.maschine()

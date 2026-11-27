@@ -52,10 +52,12 @@ unabhängig von den Sessions, die gerade auf der Testmaschine laufen. Ebenso
 from __future__ import annotations
 
 import ctypes
+import itertools
 import json
 import logging
 import math
 import os
+import shutil
 import sys
 import time
 from collections.abc import Callable
@@ -68,6 +70,10 @@ log = logging.getLogger("to_spawn.speicher")
 
 #: Vorgabe, falls die Konfig den Block ``speicher`` nicht kennt — eine Quelle: ``config.DEFAULTS``.
 VORGABE: dict[str, int] = dict(config.DEFAULTS["speicher"])
+#: Vorgabe des cgroup-/OOM-Schutzblocks ``bau_schutz`` (#887 / App #1184) — eine Quelle: ``config.DEFAULTS``.
+BAU_SCHUTZ_VORGABE: dict[str, Any] = dict(config.DEFAULTS["bau_schutz"])
+#: Laufende Nummer je Prozess für eindeutige Scope-Namen in :func:`slice_praefix`.
+_UNIT_ZAEHLER = itertools.count(1)
 
 #: Exit-Code der CLI (``to_spawn.py speicher``) und der Starter, wenn kein Platz ist.
 EXIT_VOLL = 5
@@ -598,6 +604,100 @@ def grenzen(konfig: dict[str, Any] | None) -> dict[str, int]:
 def staffel_s(konfig: dict[str, Any] | None) -> int:
     """Pause in Sekunden zwischen zwei Fenster-Starts."""
     return grenzen(konfig)["staffel_s"]
+
+
+def bau_schutz(konfig: dict[str, Any] | None) -> dict[str, Any]:
+    """Einstellungen aus ``konfig["bau_schutz"]``, fehlende aus :data:`BAU_SCHUTZ_VORGABE` (#887)."""
+    block = (konfig or {}).get("bau_schutz") if isinstance(konfig, dict) else None
+    werte: dict[str, Any] = dict(BAU_SCHUTZ_VORGABE)
+    if isinstance(block, dict):
+        for name in BAU_SCHUTZ_VORGABE:
+            if name in block:
+                werte[name] = block[name]
+    return werte
+
+
+def _slice_befehl(
+    slice_name: str,
+    einheit: str,
+    *,
+    choom_wert: int | None,
+    uid: int | None = None,
+    hat: Callable[[str], object] | None = None,
+    bus_da: Callable[[Path], bool] | None = None,
+) -> list[str]:
+    """Baut das ``systemd-run --user --scope``-Präfix für eine cgroup-Slice (Linux), sonst ``[]``."""
+    if sys.platform != "linux" or not slice_name or os.environ.get("TO_SPAWN_BAU_SLICE") == "aus":
+        return []
+    finde = hat or shutil.which
+    noetig = ("systemd-run", "choom") if choom_wert is not None else ("systemd-run",)
+    fehlt = [w for w in noetig if not finde(w)]
+    getuid = getattr(os, "getuid", None)
+    nutzer = uid if uid is not None else (getuid() if getuid is not None else None)
+    if nutzer is None:
+        return []
+    laufzeit = f"/run/user/{nutzer}"  # Text, nicht Path: bleibt auch in Windows-Tests POSIX
+    if fehlt or not (bus_da or Path.exists)(Path(laufzeit, "bus")):
+        log.warning(
+            "Start ohne cgroup-Slice %s: %s", slice_name, f"fehlt {', '.join(fehlt)}" if fehlt else "kein User-Bus"
+        )
+        return []
+    choom_teil = ["choom", "-n", str(int(choom_wert)), "--"] if choom_wert is not None else []
+    return [
+        "env",
+        f"XDG_RUNTIME_DIR={laufzeit}",
+        f"DBUS_SESSION_BUS_ADDRESS=unix:path={laufzeit}/bus",
+        "systemd-run",
+        "--user",
+        "--scope",
+        "--quiet",
+        f"--slice={slice_name}",
+        f"--unit={einheit}-{os.getpid()}-{next(_UNIT_ZAEHLER)}",
+        "--",
+        *choom_teil,
+    ]
+
+
+def slice_praefix(
+    konfig: dict[str, Any] | None,
+    einheit: str,
+    *,
+    uid: int | None = None,
+    hat: Callable[[str], object] | None = None,
+    bus_da: Callable[[Path], bool] | None = None,
+) -> list[str]:
+    """Präfix-Wörter, die eine Bau-Session in die Bau-Slice legen (#887 / App #1184), sonst ``[]``.
+
+    ``systemd-run --user --scope --slice=<slice> --unit=<einheit>-<pid>-<n> -- choom -n <n> --`` —
+    ``--scope`` und ``choom`` führen per ``exec`` aus, die PID bleibt die der Session (Aufpasser und
+    Zählung sehen sie weiter). Außerhalb von Linux, bei leerem ``slice``, fehlendem Werkzeug oder ohne
+    User-Bus kommt ``[]`` mit Warnung, nie Abbruch. Jeder Aufruf liefert einen eigenen Unit-Namen
+    (Zähler je Prozess), damit Staffel-Runden nie an „unit already exists“ scheitern.
+    ``uid``/``hat``/``bus_da`` = Test-Türen; ``TO_SPAWN_BAU_SLICE=aus`` schaltet ab.
+    """
+    werte = bau_schutz(konfig)
+    ziel = str(werte.get("slice") or "").strip()
+    choom_roh = werte.get("choom")
+    choom_wert = int(choom_roh) if isinstance(choom_roh, (int, float)) and not isinstance(choom_roh, bool) else 300
+    return _slice_befehl(ziel, einheit, choom_wert=choom_wert, uid=uid, hat=hat, bus_da=bus_da)
+
+
+def gate_slice_praefix(
+    konfig: dict[str, Any] | None,
+    einheit: str,
+    *,
+    uid: int | None = None,
+    hat: Callable[[str], object] | None = None,
+    bus_da: Callable[[Path], bool] | None = None,
+) -> list[str]:
+    """Präfix-Wörter für das Deploy-Gate in seiner eigenen cgroup-Slice (``gate_slice``, #887).
+
+    Getrennt von ``bau-sessions.slice`` und ohne Bau-OOM-Aufschlag (kein ``choom``): geraten
+    Bau-Sessions unter Druck, beendet ``systemd-oomd`` nur Bau-Sessions, nie das Gate.
+    """
+    werte = bau_schutz(konfig)
+    ziel = str(werte.get("gate_slice") or "").strip()
+    return _slice_befehl(ziel, einheit, choom_wert=None, uid=uid, hat=hat, bus_da=bus_da)
 
 
 def platz_frei(

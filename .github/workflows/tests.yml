@@ -1,10 +1,11 @@
-# Volle Skill-Suite bei GitHub Actions (#537): Linux blockiert, Windows nur Anzeige (#68).
+# Volle Skill-Suite bei GitHub Actions (#537, #927): Linux blockiert, Windows nur Anzeige (#68).
+# Takt-PRs (ticket/*-welle*) laufen gebündelt über den Merge-Zug (zug/*), nicht einzeln.
 name: Tests
 
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, "zug/*"]
   workflow_dispatch:
 
 permissions:
@@ -17,6 +18,7 @@ concurrency:
 jobs:
   pytest:
     name: pytest (${{ matrix.os }})
+    if: ${{ github.event_name != 'pull_request' || !(startsWith(github.head_ref, 'ticket/') && contains(github.head_ref, '-welle')) }}
     runs-on: ${{ matrix.os }}
     # Windows nur Anzeige, bis #68 abgearbeitet ist.
     continue-on-error: ${{ matrix.os == 'windows-latest' }}

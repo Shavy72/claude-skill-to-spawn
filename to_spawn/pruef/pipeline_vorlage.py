@@ -476,6 +476,7 @@ def eigenanschluss_yaml(workflow_ref: str = "./.github/workflows/pipeline-stufe-
         "\n"
         "jobs:\n"
         "  pipeline-stufe-0-1:\n"
+        "    if: ${{ github.event_name != 'pull_request' || !(startsWith(github.head_ref, 'ticket/') && contains(github.head_ref, '-welle')) }}\n"
         f"    uses: {workflow_ref}\n"
         "    with:\n"
         '      python-version: "3.13"\n'
