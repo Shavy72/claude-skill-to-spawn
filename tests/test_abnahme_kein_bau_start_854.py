@@ -26,15 +26,13 @@ from typing import Any
 
 import pytest
 
+from to_spawn import aufpasser, cli_befehle, startstelle, ticket_zustand
+
 SKILL = Path(__file__).resolve().parent.parent
 LAUF = SKILL / "tests" / "hilfen" / "bau_lauf_97.py"
 GH_STUB = SKILL / "tests" / "hilfen" / "gh_stub.py"
 TO_TICKETS = SKILL / "kette" / "skills" / "to-tickets" / "SKILL.md"
 GRILL_PROBE = SKILL / "probe" / "gemeinsam" / "docs" / "GRILL_probe.md"
-
-sys.path.insert(0, str(SKILL))
-
-from to_spawn import aufpasser, cli_befehle, startstelle, ticket_zustand  # noqa: E402
 
 
 # --- 1. Die eine Regel: ticket_zustand.bau_startbar / ist_abnahme -------------

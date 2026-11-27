@@ -614,8 +614,7 @@ def _pruefen(ticket: str, cwd: Path | None, pruefer: TicketPruefer | None) -> En
     if ticket_zustand.ist_abnahme(daten, repo=cwd):
         label = ticket_zustand.abnahme_label(cwd)
         grund = (
-            f"bau {ticket}: nichts zu tun (Abnahme-Ticket mit Label „{label}“) — "
-            "wartet auf den Nutzer, kein Bau-Start."
+            f"bau {ticket}: nichts zu tun (Abnahme-Ticket mit Label „{label}“) — wartet auf den Nutzer, kein Bau-Start."
         )
         log.info("%s", grund)
         return Entscheidung(False, grund, art="nichts")
