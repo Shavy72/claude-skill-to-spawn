@@ -2026,6 +2026,8 @@ def katalog_pflegen(repo: Path, konfig: dict[str, Any], vorfaelle: list[vorfall.
     if not vorfaelle:
         return []
     pfad = vorfall.katalog_pfad(repo, konfig)
+    lock_pfad = pfad.with_name(pfad.name + ".lock")
+    ordner_vorher = pfad.parent.exists()
     with contextlib.ExitStack() as stapel:
         try:
             frei = stapel.enter_context(sperre(pfad, _sperr_wartezeit()))
@@ -2034,6 +2036,17 @@ def katalog_pflegen(repo: Path, konfig: dict[str, Any], vorfaelle: list[vorfall.
         if not frei:
             return ["Katalog: ein anderer Lauf hält die Datei — dieser Tick lässt sie aus"]
         erg = vorfall.in_katalog(pfad, vorfaelle)
+    # #951: Lock-Datei nach Freigabe nicht ungespeichert im Klon liegen lassen.
+    if lock_pfad.is_file():
+        try:
+            lock_pfad.unlink()
+        except OSError:
+            pass
+    if not ordner_vorher and pfad.parent.is_dir():
+        try:
+            pfad.parent.rmdir()
+        except OSError:
+            pass
     zeilen: list[str] = []
     if erg.nummern:
         zeilen.append(f"Katalog: {len(erg.nummern)} neue Zeile(n) — {' '.join(erg.nummern)}")
@@ -2527,6 +2540,9 @@ def _tick(
             if ticket_zustand.stufe(issue) == "verworfen":
                 aktionen.append(f"#{n} zu als {grund} — keine Regeln")
                 continue
+            if ticket_zustand.ist_abnahme(issue, checkpoint_label=checkpoint, repo=repo) and not eigene:
+                aktionen.append(f"#{n} Abnahme-Ticket zu — keine Bau-/Beleg-Regeln")
+                continue
             nur_melden = OK_LABEL in label_namen(issue)
             if regeln_aus:
                 continue
@@ -2586,8 +2602,10 @@ def _tick(
             # #284: wieder offen bringt nichts, wenn niemand weiterbaut.
             # ``issue`` ist der Stand vor dem Wieder-Öffnen; gefragt wird der Stand danach.
             jetzt_offen = {**issue, "state": "open"}
-            if ticket_zustand.fertig_gebaut(jetzt_offen):
-                # #275: grün auf Staging — ein zweiter Bau-Start wäre Doppelbau.
+            if ticket_zustand.fertig_gebaut(jetzt_offen) or ticket_zustand.ist_abnahme(
+                jetzt_offen, checkpoint_label=checkpoint, repo=repo
+            ):
+                # #275, #951: grün auf Staging oder Abnahme-Ticket — keine Bau-Folge-Runde.
                 aktionen.append(f"#{n} {ticket_zustand.wortlaut(jetzt_offen)} — keine Folge-Runde")
                 continue
             aktionen += _folge_runde(
@@ -2833,6 +2851,7 @@ def _tick(
     bau_tickets = [i for i in liste if checkpoint not in label_namen(i)]
     abnahme_tickets = [i for i in liste if checkpoint in label_namen(i)]
     komplett_haelt = False
+    abnahme_neu_zu: list[int] = []
     if not teilauswahl and bau_tickets and all(ticket_zustand.fertig_gebaut(i) for i in bau_tickets):
         komplett_haelt = _komplett_alle_auf_staging(repo, spec, konfig, aktionen, dry_run)
         if (
@@ -2852,9 +2871,12 @@ def _tick(
                 aktionen,
                 dry_run=dry_run,
                 spec_tickets=[int(i["number"]) for i in liste],
+                geschlossen=abnahme_neu_zu,
             )
         ):
             sichern()
+    if abnahme_neu_zu:
+        offen = max(0, offen - len(abnahme_neu_zu))
 
     # #1407: unlesbares Staging ist kein „fehlt“, aber auch kein Beleg „liegt drauf“ — Abschluss zurückhalten.
     unlesbar_takte = int(zustand.get("staging_unlesbar_takte") or 0) + 1 if staging_stand.unlesbar else 0
@@ -2938,17 +2960,14 @@ def _tick(
         and not zustand.get("aufraeumen_erledigt")
     ):
         erg.zeilen += _hausmeister_schluss(spec, zustand, jetzt, dry_run)
-    # Letzter Schritt der Kette (#543): Spec-Issue schließen, dort hängt das Aufseher-Fenster.
-    # Nur bei positivem Beleg: ``staging.ohne: true`` (Vorgabe False, kaputte Datei → False) oder
-    # Staging-Repo mit Merker „Live ist gelaufen“ (#546, :func:`live_gelaufen`). Ein Repo ganz ohne
-    # Staging-Eintrag wird bewusst nicht von selbst geschlossen.
+    # Letzter Schritt der Kette (#543, #546, #951): Spec-Issue schließen (beide Varianten: mit und
+    # ohne Staging nach Live) und danach Spec-Reste (saubere Ticket-Worktrees, gemergte ticket/*-Zweige,
+    # Lock-Reste) sowie die Spec-tmux-Sitzung aufräumen.
     war_zu = bool(zustand.get("spec_geschlossen"))
-    if (
-        zustand.get("aufraeumen_erledigt")
-        and not war_zu
-        and (config.staging_bewusst_ohne(konfig) or (config.hat_staging(konfig) and live_gelaufen(repo, spec, gh_repo)))
-    ):
+    if zustand.get("aufraeumen_erledigt") and not war_zu and _darf_spec_schliessen(repo, spec, gh_repo, konfig):
         erg.zeilen += _spec_schliessen_schritt(repo, spec, gh_repo, zustand, jetzt, dry_run)
+    if not war_zu and zustand.get("spec_geschlossen") and not dry_run:
+        erg.zeilen += _spec_ende_aufraeumen(repo, spec)
 
     if MAIL_AUS in erg.zeilen:  # je Tick nur einmal, nicht je Meldung
         erste = erg.zeilen.index(MAIL_AUS)
@@ -3005,6 +3024,40 @@ def _werkzeug_fehler(quelle: str, titel: str, fehler: BaseException, *, spec: in
     if dry_run:
         return
     fehlermeldung.melde(quelle, titel, ausnahme=fehler, kontext={"spec": spec})
+
+
+def _darf_spec_schliessen(repo: Path, spec: int, gh_repo: str, konfig: dict[str, Any]) -> bool:
+    """Positiver Beleg zum Schließen der Spec (#543, #546, #951).
+
+    - Mit Staging: nur nach Live-Merker (:func:`live_gelaufen`).
+    - Bewusst ohne Staging (``staging.ohne: true``): sofort, außer ``live.befehl`` ist konfiguriert
+      (und nicht ``live.ohne: true``) — dann ebenfalls erst nach :func:`live_gelaufen`.
+    - Ohne Staging-Eintrag oder bei kaputter Konfig: nie von selbst.
+    """
+    if config.hat_staging(konfig):
+        return live_gelaufen(repo, spec, gh_repo)
+    if config.staging_bewusst_ohne(konfig):
+        live_pflicht = bool(config.live_schritt(konfig)["befehl"]) and not config.live_bewusst_ohne(konfig)
+        return live_gelaufen(repo, spec, gh_repo) if live_pflicht else True
+    return False
+
+
+def _spec_ende_aufraeumen(repo: Path, spec: int) -> list[str]:
+    """Spec-Ende-Aufräumen nach dem Schließen der Spec (#951); Fehler nur loggen (Takt bleibt grün)."""
+    from to_spawn import hausmeister  # spät: hausmeister importiert aufpasser
+
+    try:
+        erg = hausmeister.spec_aufraeumen(repo, spec, loeschen=True)
+    except Exception as fehler:  # der Takt endet nie rot am Aufräumen
+        log.exception("Spec-Ende-Aufräumen Spec #%s gescheitert", spec)
+        _werkzeug_fehler("capo.spec_aufraeumen", "Spec-Ende-Aufräumen: unerwarteter Fehler", fehler, spec=spec)
+        return []
+    zeile = (
+        f"Spec-Aufräumen #{spec}: {len(erg.worktrees_entfernt)} Worktree(s), "
+        f"{len(erg.lokale_zweige_geloescht)} lokale + {len(erg.remote_zweige_geloescht)} remote Zweige, "
+        f"{len(erg.locks_entfernt)} Lock(s) entfernt ({len(erg.worktrees_behalten)} behalten)."
+    )
+    return [zeile]
 
 
 def _spec_fenster_wegraeumen(repo: Path, spec: int) -> None:
@@ -3079,14 +3132,16 @@ def _live_nach_abnahme_passt(
     *,
     dry_run: bool = False,
     spec_tickets: Iterable[str | int] | None = None,
+    geschlossen: list[int] | None = None,
 ) -> bool:
-    """Abnahme-Kommentar „passt“ gilt als Live-Freigabe und startet Komplett-Prüfung + Live (#924).
+    """Abnahme-Kommentar „passt“ gilt als Live-Freigabe und startet Komplett-Prüfung + Live (#924, #951).
 
     Die eine Stelle für alle Wege (capo-Takt und Wege ohne capo-Takt wie ``leitstand.py`` über
     :func:`abnahme_passt_live_pruefen`). Läuft nur, wenn alle Bau-Tickets fertig sind und das Repo
     nicht bewusst ohne Live arbeitet (``live.ohne: true``). Offene Briefkasten-Live-Fragen der Spec
     werden nach „passt“ als beantwortet (``ja``) eingetragen; danach startet :func:`live_tuer.starte`
-    (Komplett-Prüfung genau einmal, dann Live), sofern noch kein Live-Merker liegt. Rückgabe ``True``,
+    (Komplett-Prüfung genau einmal, dann Live), sofern noch kein Live-Merker liegt. Ist Live grün,
+    gilt das Abnahme-Ticket als fertig und wird ohne Bau-Runde geschlossen (#951). Rückgabe ``True``,
     wenn ``erledigt`` ergänzt wurde (Aufrufer sichert).
     """
     if config.live_bewusst_ohne(konfig):
@@ -3103,9 +3158,10 @@ def _live_nach_abnahme_passt(
     bereits_live = live_gelaufen(repo, spec, gh_repo)
     live_konfiguriert = bool(config.live_schritt(konfig)["befehl"] or config.pruef_befehl(konfig, "komplett"))
     hat_live_fragen = briefkasten.hat_offene_live_fragen(alle_tickets, hauptbaum=repo)
-    if (bereits_live or not live_konfiguriert) and not hat_live_fragen:
+    hat_offene_abnahme = any(not ticket_zustand.endgueltig_zu(i) for i in abnahme_tickets)
+    if (bereits_live or not live_konfiguriert) and not hat_live_fragen and not (bereits_live and hat_offene_abnahme):
         return False
-    treffer: tuple[int, dict[str, Any]] | None = None
+    treffer: tuple[int, dict[str, Any], dict[str, Any]] | None = None
     for issue in abnahme_tickets:
         n = int(issue["number"])
         kommentare = issue_kommentare(gh_repo, n)
@@ -3113,11 +3169,11 @@ def _live_nach_abnahme_passt(
             continue
         kommentar = abnahme_passt_kommentar(kommentare)
         if kommentar is not None:
-            treffer = (n, kommentar)
+            treffer = (n, kommentar, issue)
             break
     if treffer is None:
         return False
-    n, kommentar = treffer
+    n, kommentar, abnahme_issue = treffer
     if dry_run:
         if hat_live_fragen:
             zeilen.append(f"#{n} [Probe] Abnahme „passt“ — würde offene Briefkasten-Live-Fragen mit „ja“ beantworten.")
@@ -3134,13 +3190,27 @@ def _live_nach_abnahme_passt(
                 zeilen.append(
                     f"#{t_nr} Briefkasten-Live-Frage {fid} durch Abnahme „passt“ an #{n} mit „ja“ beantwortet."
                 )
+
+    def _abnahme_schliessen() -> None:
+        if ticket_zustand.endgueltig_zu(abnahme_issue) or not live_gelaufen(repo, spec, gh_repo):
+            return
+        text = f"{WAECHTER_KOPF} Abnahme „passt“ und Live grün — Abnahme-Ticket ohne Bau-Runde geschlossen."
+        if befund.kommentiere(n, gh_repo, text, befehl="close"):
+            zeilen.append(f"#{n} Abnahme-Ticket nach „passt“ + Live geschlossen.")
+            if geschlossen is not None and n not in geschlossen:
+                geschlossen.append(n)
+        else:
+            log.warning("Abnahme-Ticket #%s nach passt + Live nicht geschlossen (gh).", n)
+
     if bereits_live or not live_konfiguriert:
+        _abnahme_schliessen()
         return False
     from to_spawn import live_tuer  # spät: live_tuer importiert capo
 
     sperre_pfad = _live_merker_datei(repo, spec, gh_repo).with_suffix(".live.lock")
     with _sperre.halte(sperre_pfad, warten=0) as gehalten:
         if not gehalten or live_gelaufen(repo, spec, gh_repo):
+            _abnahme_schliessen()
             return False
         try:
             code, live_zeilen = live_tuer.starte(repo, spec, konfig, gh_repo=gh_repo)
@@ -3153,6 +3223,7 @@ def _live_nach_abnahme_passt(
             return False
     if code == 0:
         zeilen.append(f"#{n} Abnahme „passt“ — Live-Schritt gestartet ({'; '.join(live_zeilen)}).")
+        _abnahme_schliessen()
         return False
     if code == 2:
         schluessel = f"abnahme_live_hand|{spec}|{n}|{kommentar.get('id', '')}"

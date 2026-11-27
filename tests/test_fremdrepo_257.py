@@ -371,7 +371,7 @@ def test_worktree_pfad_ohne_feld_altes_verhalten(tmp_path: Path, monkeypatch: py
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.chdir(repo)
     ergebnis = config.worktree_pfad("1")
-    assert ergebnis == f"{Path.home().as_posix()}/wt/wt-1"
+    assert ergebnis == f"{Path.home().as_posix()}/wt/duoplus/wt-1"
 
 
 def test_sicherstellen_frisch_setzt_repo_namen_in_worktree_basis(tmp_path: Path) -> None:

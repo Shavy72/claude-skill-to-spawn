@@ -64,7 +64,7 @@ def _start(repo: Path) -> startstelle.Entscheidung:
 
 def test_gleiche_nummer_zwei_repos_eigene_ordner_ohne_weigerung(welt: dict[str, Path]) -> None:
     wt_a = _pfad(welt["a"])
-    assert wt_a == welt["heim"] / "wt" / f"wt-{TICKET}", "erstes Repo: gewohnter Ordner"
+    assert wt_a == welt["heim"] / "wt" / "probe-mit" / f"wt-{TICKET}", "erstes Repo: immer mit Repo-Namen (#951)"
     _git(welt["a"], "worktree", "add", "-q", "-b", f"ticket/{TICKET}-a", str(wt_a))
 
     wt_b = _pfad(welt["b"])
