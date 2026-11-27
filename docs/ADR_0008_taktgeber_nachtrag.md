@@ -10,7 +10,7 @@ Bezug: ADR 0008 (Bau-Server, Leitstand und Aufseher-Takt), Beschlüsse E3, E18, 
    - Zwei Läufe hintereinander oder zwei gleichzeitige Läufe erzeugen denselben GitHub-Endstand (Idempotenz und Gleichlauf über OS-Dateisperre je Ticket ohne Zustandsdatei).
 
 2. **Aufgabenverteilung und Regeln an genau einer Stelle:**
-   - Alle 4 maschinellen Schließ-Regeln (Commit-Nummer, Belegseite in fester Form auf dem Hauptzweig, kein Test ersetzt, Commit grün auf dem Hauptzweig) liegen ausschließlich im Prüfer (`to_spawn/schliess_pruefer.py` nach #864; bis dahin Delegation an `capo.reopen_funde` ohne VPS-Prüfung). Der Taktgeber enthält keine eigene Fertig-Regel.
+   - Alle 4 maschinellen Schließ-Regeln (Commit-Nummer, Belegseite in fester Form auf dem Hauptzweig, kein Test ersetzt, Commit grün auf dem Hauptzweig) liegen ausschließlich im Prüfer (`to_spawn/schliess_pruefer.py` aus #864). Der Taktgeber enthält keine eigene Fertig-Regel.
    - Tickets mit `checkpoint:human` (Konfig `regularien.checkpoint_label`) schließt der Taktgeber nie.
    - Ist ein Ticket grün auf Staging, aber noch nicht live, setzt der Taktgeber das Label `staging:fertig` („Fertig auf Staging, wartet auf Live“), öffnet nicht wieder und schließt erst nach Live-Meldung der Deploy-Schlange (dabei wird das Label wieder entfernt).
    - Wiedereröffnete Tickets weckt der Taktgeber genau einmal über die eine Start-Stelle (`to_spawn/startstelle.py`) mit Sperre je Ticket.

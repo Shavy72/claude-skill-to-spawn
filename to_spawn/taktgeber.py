@@ -15,16 +15,14 @@ den GitHub-Stand (Unter-Tickets der Spec, Labels, Kommentare der Deploy-Schlange
 - Jede ausgeführte Handlung (``geschlossen``, ``label_gesetzt``, ``geweckt``)
   wird über :func:`to_spawn.bau_log.schreibe` protokolliert (``wer="taktgeber"``).
 
-Die Fertig-Regeln stehen ausschließlich im Prüfer (``to_spawn.schliess_pruefer``
-aus #864, solange nicht vorhanden Delegation an :func:`to_spawn.capo.reopen_funde`
-ohne VPS-Prüfung); dieses Modul enthält keine eigene Fertig-Regel.
+Die Fertig-Regeln stehen ausschließlich im Prüfer (:mod:`to_spawn.schliess_pruefer`
+aus #864); dieses Modul enthält keine eigene Fertig-Regel.
 """
 
 from __future__ import annotations
 
 import argparse
 import html
-import importlib
 import logging
 import os
 import re
@@ -49,6 +47,7 @@ from . import (
     manifest,
     pc_fenster,
     prozessbaum,
+    schliess_pruefer,
     sperre,
     starter,
     startstelle,
@@ -244,14 +243,6 @@ def braucht_live(konfig: dict[str, Any]) -> bool:
 # --- Prüfer-Tür (keine eigene Fertig-Regel im Taktgeber) ------------------------
 
 
-def _schliess_pruefer_modul() -> Any | None:
-    """Lädt ``to_spawn.schliess_pruefer`` (#864), sobald im Paket vorhanden; sonst ``None``."""
-    try:
-        return importlib.import_module("to_spawn.schliess_pruefer")
-    except ModuleNotFoundError:
-        return None
-
-
 def _pruefer_antwort_normieren(antwort: Any) -> PruefErgebnis:
     if isinstance(antwort, PruefErgebnis):
         return antwort
@@ -276,32 +267,16 @@ def pruefe_mit_pruefer(
     *,
     gruen_sha: str | None,
 ) -> PruefErgebnis:
-    """Fragt ausschließlich den Prüfer — dieses Modul trägt keine eigene Fertig-Regel.
-
-    Ist ``to_spawn.schliess_pruefer`` (#864) vorhanden, wird direkt dessen Tür
-    ``pruefe(stand)`` aufgerufen. Solange #864 noch nicht eingespielt ist, delegiert
-    diese Stelle an :func:`to_spawn.capo.reopen_funde` ohne VPS-Prüfung plus das
-    GitHub-Grün-Signal der Deploy-Schlange.
-    """
-    pruefer_mod = _schliess_pruefer_modul()
-    if pruefer_mod is not None and callable(getattr(pruefer_mod, "pruefe", None)):
-        stand = {
-            "repo": repo,
-            "ref": ref,
-            "ticket": ticket,
-            "commits": commits,
-            "konfig": konfig,
-            "gruen_sha": gruen_sha,
-        }
-        return _pruefer_antwort_normieren(pruefer_mod.pruefe(stand))
-
-    gruende: list[str] = []
-    if not gruen_sha:
-        gruende.append("kein „grün auf Hauptzweig“-Kommentar mit vollem Commit-Hash")
-    eigene = capo.ticket_commits(commits, ticket)
-    funde = capo.reopen_funde(repo, ref, ticket, eigene, capo.belege_ordner(konfig), {}, None, [])
-    gruende.extend(f"{f.regel}: {f.text}" for f in funde)
-    return PruefErgebnis(ok=not gruende, gruende=tuple(gruende))
+    """Fragt ausschließlich :func:`to_spawn.schliess_pruefer.pruefe` (#864) — keine eigene Fertig-Regel."""
+    stand = schliess_pruefer.Stand(
+        repo=repo,
+        ticket=ticket,
+        ref=ref,
+        belege_ordner=schliess_pruefer.belege_ordner(konfig),
+        eigene=schliess_pruefer.ticket_commits(commits, ticket),
+        gruen_auf_hauptzweig=gruen_sha,
+    )
+    return _pruefer_antwort_normieren(schliess_pruefer.pruefe(stand))
 
 
 # --- GitHub-Schreibaktionen (idempotent) ----------------------------------------
@@ -453,9 +428,62 @@ def wecke_ticket(
 # --- Einzelticket-Entscheidung & Hauptlauf --------------------------------------
 
 
+#: Zuordnung Taktgeber-Aktion → Ereignis-Protokoll-Typ (#902/#903/#906).
+_AKTION_TYP: dict[str, str] = {
+    "geschlossen": "schliessen",
+    "label_gesetzt": "taktgeber",
+    "geweckt": "taktgeber",
+}
+
+
+def _aktion_was(ticket: int, aktion: str, felder: Mapping[str, Any]) -> str:
+    if aktion == "geschlossen":
+        return f"Ticket #{ticket} geschlossen"
+    if aktion == "label_gesetzt":
+        label = str(felder.get("label") or ticket_zustand.STAGING_FERTIG_LABEL)
+        return f"Label {label} auf #{ticket} gesetzt"
+    if aktion == "geweckt":
+        return f"Bau-Session für #{ticket} geweckt"
+    return f"Taktgeber-Aktion {aktion} auf #{ticket}"
+
+
 def _protokolliere(repo: Path, ticket: int, aktion: str, **felder: Any) -> None:
     """Jede Handlung geht ausschließlich über :func:`bau_log.schreibe` (``wer="taktgeber"``)."""
-    bau_log.schreibe(repo, ticket, "taktgeber", wer=WER, aktion=aktion, **felder)
+    rest = dict(felder)
+    typ = _AKTION_TYP.get(aktion, "taktgeber")
+    was = str(rest.pop("was", "") or "").strip() or _aktion_was(ticket, aktion, rest)
+    commit_wert = str(rest.pop("commit", "") or "").strip() or bau_log.git_kopf_kurz(repo, ticket)
+    grund_text = str(rest.pop("grund", "") or "").strip() or was
+    session_wert = str(rest.pop("session", "") or "").strip() or WER
+    kontextstand = rest.pop("kontextstand", None)
+    if kontextstand is None:
+        kontextstand = bau_log.kontextstand_aktuell(repo, ticket)
+    idempotenz = str(rest.pop("idempotenz_schluessel", "") or "").strip()
+    if not idempotenz:
+        if aktion == "label_gesetzt":
+            label = str(rest.get("label") or ticket_zustand.STAGING_FERTIG_LABEL)
+            idempotenz = f"taktgeber:{aktion}:{ticket}:{label}:{commit_wert}"
+        elif aktion == "geschlossen":
+            idempotenz = f"taktgeber:{aktion}:{ticket}:{commit_wert}"
+        else:
+            idempotenz = f"taktgeber:{aktion}:{ticket}:{commit_wert}:{grund_text[:80]}"
+    try:
+        bau_log.schreibe(
+            typ,
+            repo=repo,
+            ticket=ticket,
+            wer=WER,
+            was=was,
+            session=session_wert,
+            commit=commit_wert,
+            grund=grund_text,
+            kontextstand=kontextstand,
+            aktion=aktion,
+            idempotenz_schluessel=idempotenz,
+            **rest,
+        )
+    except (OSError, ValueError, TimeoutError) as fehler:
+        log.warning("Taktgeber #%s: Ereignis-Protokoll (%s/%s) nicht geschrieben: %s", ticket, typ, aktion, fehler)
 
 
 def _bearbeite_ticket(
@@ -629,12 +657,13 @@ def lauf(
 # --- Idempotente Cron-Einrichtung (Bau-Server, nur Linux) -----------------------
 
 
-def log_datei(spec: int) -> Path:
+def log_datei(spec: int, *, anlegen: bool = True) -> Path:
     """Logdatei für die Cron- und Windows-Aufgaben-Ausgabe des Taktgebers (kein Zustand, reines Lauf-Log)."""
     ordner = Path(
         os.environ.get("TO_SPAWN_TAKTGEBER_LOG") or (Path.home() / ".local" / "state" / "to-spawn" / "taktgeber")
     )
-    ordner.mkdir(parents=True, exist_ok=True)
+    if anlegen:
+        ordner.mkdir(parents=True, exist_ok=True)
     return ordner / f"{spec}.log"
 
 
@@ -678,7 +707,7 @@ def cron_einrichten(spec: int, repo: Path, *, trocken: bool = False) -> str:
     """Taktgeber alle 5 min als Cron-Zeile (idempotent, über stdin, nur Linux)."""
     from . import aufpasser
 
-    ziel_log = log_datei(spec)
+    ziel_log = log_datei(spec, anlegen=False)
     befehl = cron_befehl(spec, repo, ziel_log)
     alt = aufpasser._crontab("-l")
     zeilen = alt.stdout.splitlines() if alt.returncode == 0 else []
@@ -688,6 +717,7 @@ def cron_einrichten(spec: int, repo: Path, *, trocken: bool = False) -> str:
         return f"Cron unverändert: {zeile}"
     if trocken:
         return f"[trocken] Cron würde eingerichtet: {zeile}"
+    ziel_log.parent.mkdir(parents=True, exist_ok=True)
     stempel = time.strftime("%Y%m%d-%H%M%S")
     (ziel_log.parent / f"crontab.vorher.{stempel}").write_text(alt.stdout, encoding="utf-8")
     ergebnis = aufpasser._crontab("-", eingabe="\n".join(neu) + "\n")
