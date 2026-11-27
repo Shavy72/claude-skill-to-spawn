@@ -7,7 +7,7 @@ Absender: Leit-Session Bau-System auf dem Bau-Server, im Auftrag des Menschen, n
    - anlegen: `TMPDIR=$(python3 ~/.claude/skills/to-spawn/to_spawn.py helfer-temp anlegen <sitzung>-<issue>)` und dieses `TMPDIR` für jeden Test-Aufruf setzen,
    - aufräumen: `python3 ~/.claude/skills/to-spawn/to_spawn.py helfer-temp aufraeumen <sitzung>-<issue>`,
    - alte Reste: `python3 ~/.claude/skills/to-spawn/to_spawn.py helfer-temp aufraeumen --aelter-als-tage 7`,
-   - Altbestand im Home (`~/tmp-l<N>-…`, #615): `python3 ~/.claude/skills/to-spawn/to_spawn.py aufraeumen --helfer-altbestand [--aelter-als-tage 1] [--loeschen]` (ohne `--loeschen` = Trockenlauf).
+   - Altbestand im Home (`~/tmp-l<N>-…`, #615): `python3 ~/.claude/skills/to-spawn/to_spawn.py aufraeumen --helfer-altbestand [--aelter-als-tage 1] [--zeitgrenze 60] [--loeschen]` (ohne `--loeschen` = Trockenlauf). Kennt der installierte Skill `--helfer-altbestand` noch nicht, Skill aus dem Repo aktualisieren (`./install.sh` auf Linux, `.\install.ps1` auf Windows) oder `to_spawn.py` direkt aus dem Skill-Repo aufrufen.
    Kein `rm`, kein `mkdir` im Home für Temp-Ordner.
 3. Rot-Beweis vor dem Fix: neuer oder geschärfter Test läuft erst rot (Ausgabe merken), dann Fix, dann grün.
 4. Nur gezielte Tests (einzelne Dateien, `python3 -m pytest <datei> -q`). Keine volle Suite auf dem Server – die Pflicht-Prüfung ist der Linux-Lauf bei GitHub.

@@ -7,6 +7,7 @@ registriert; die Verteilung auf die Zielmodule liegt in :mod:`to_spawn.cli_befeh
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -48,6 +49,17 @@ KOMPLETT_MOMENTE: dict[str, Moment] = {
 
 #: Schlüssel für ``set_defaults``: Exit-Code bei falschen Argumenten dieses Unterbefehls (#505).
 ARGUMENTFEHLER_EXIT = "argumentfehler_exit"
+
+
+def _zeitgrenze_arg(roh: str) -> float:
+    """Parst ``--zeitgrenze`` als endliche positive Sekundenzahl (#615)."""
+    try:
+        wert = float(roh)
+    except ValueError as fehler:
+        raise argparse.ArgumentTypeError(f"Zeitgrenze muss eine Zahl > 0 sein, nicht {roh!r}") from fehler
+    if not math.isfinite(wert) or wert <= 0:
+        raise argparse.ArgumentTypeError(f"Zeitgrenze muss endlich und > 0 sein, nicht {roh!r}")
+    return wert
 
 
 class _Parser(argparse.ArgumentParser):
@@ -421,7 +433,15 @@ def baue_parser() -> _Parser:
     p_befund.add_argument("--text", required=True, help="was fehlt / der Hinweis")
     p_befund.add_argument("--dry-run", action="store_true", help="nur zeigen, nichts tun")
     # Hausmeister (#1368): alten Arbeitsordner prüfen (Trockenlauf) bzw. aufräumen.
-    p_aufr = unter.add_parser("aufraeumen", help="alten Arbeitsordner aufräumen (Vorgabe: Trockenlauf)")
+    p_aufr = unter.add_parser(
+        "aufraeumen",
+        help="alten Arbeitsordner aufräumen (Vorgabe: Trockenlauf)",
+        epilog=(
+            "Hinweis (#615): Kennt der installierte Skill --helfer-altbestand noch nicht, "
+            "Skill aus dem Repo aktualisieren (Linux: ./install.sh, Windows: .\\install.ps1) "
+            "oder to_spawn.py direkt aus dem Skill-Repo aufrufen."
+        ),
+    )
     p_aufr.add_argument("ordner", type=Path, nargs="?")
     p_aufr.add_argument("--loeschen", action="store_true", help="wirklich sichern und löschen")
     # Hausmeister am Laptop (#1373): alle Ordner, tägliche Windows-Aufgabe, Altbestand-Liste.
@@ -438,6 +458,13 @@ def baue_parser() -> _Parser:
         default=None,
         metavar="N",
         help="mit --helfer-altbestand: Mindestalter in Tagen (Vorgabe: 1, >= 1)",
+    )
+    p_aufr.add_argument(
+        "--zeitgrenze",
+        type=_zeitgrenze_arg,
+        default=None,
+        metavar="SEK",
+        help="mit --helfer-altbestand: Zeitgrenze in Sekunden (Vorgabe: 60, > 0)",
     )
     p_aufr.add_argument("--aufgabe-einrichten", action="store_true", help="tägliche Windows-Aufgabe einrichten")
     p_aufr.add_argument("--trocken", action="store_true", help="mit --aufgabe-einrichten: nur zeigen")

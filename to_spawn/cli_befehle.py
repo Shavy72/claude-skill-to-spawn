@@ -304,17 +304,21 @@ def _aufraeumen(args: argparse.Namespace, ap: argparse.ArgumentParser) -> int:
         return 1 if erg.fehler else 0
     if args.aelter_als_tage is not None and not args.helfer_altbestand:
         ap.error("--aelter-als-tage gilt nur mit --helfer-altbestand")
+    if args.zeitgrenze is not None and not args.helfer_altbestand:
+        ap.error("--zeitgrenze gilt nur mit --helfer-altbestand")
     if args.helfer_altbestand:
         tage = args.aelter_als_tage if args.aelter_als_tage is not None else hausmeister.HELFER_ALTBESTAND_TAGE
+        zeitgrenze_s = args.zeitgrenze if args.zeitgrenze is not None else hausmeister.HELFER_ALTBESTAND_ZEITGRENZE_S
         ergebnisse = hausmeister.helfer_altbestand_aufraeumen(
             loeschen=args.loeschen,
             aelter_als_tage=tage,
+            zeitgrenze_s=zeitgrenze_s,
         )
     elif args.alles:
         rund = hausmeister.rundgang(loeschen=args.loeschen, docker=args.loeschen)
         for erg in rund.ergebnisse:
             modus = "trocken" if erg.trocken else "echt"
-            print(f"{erg.ordner}: {erg.art} ({erg.grund}) [{modus}]")
+            print(f"{erg.ordner}: {hausmeister.log_art(erg)} ({erg.grund}) [{modus}]")
         if not rund.gelaufen:
             if rund.wartet:
                 print(f"Hausmeister wartet: {rund.grund}")
@@ -335,7 +339,7 @@ def _aufraeumen(args: argparse.Namespace, ap: argparse.ArgumentParser) -> int:
         )
     for erg in ergebnisse:
         modus = "trocken" if erg.trocken else "echt"
-        print(f"{erg.ordner}: {erg.art} ({erg.grund}) [{modus}]")
+        print(f"{erg.ordner}: {hausmeister.log_art(erg)} ({erg.grund}) [{modus}]")
     return 1 if any(e.fehler for e in ergebnisse) else 0
 
 

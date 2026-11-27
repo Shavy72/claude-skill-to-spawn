@@ -137,8 +137,8 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Iterable, Mapping, Sequence
-from contextlib import ExitStack, nullcontext
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from contextlib import ExitStack, contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -3576,6 +3576,76 @@ def _ist_windows() -> bool:
     return _PLATTFORM == "win32"
 
 
+#: Lauf-Zwischenspeicher für Linux-``/proc``-Pfade (#615; gesetzt über :func:`_linux_prozess_lauf_cache`).
+#: ``None`` = kein Cache aktiv (jeder Aufruf liest frisch); nie über Läufe hinweg.
+_LINUX_PROZESSE_CACHE: ContextVar[dict[str, Any] | None] = ContextVar(
+    "hausmeister_linux_prozesse_cache",
+    default=None,
+)
+
+
+@contextmanager
+def _linux_prozess_lauf_cache(*, aktiv: bool = True, praefixe: tuple[str, ...] | None = None) -> Iterator[None]:
+    """Aktiviert oder pausiert den Lauf-Zwischenspeicher für Linux-``/proc``-Scans (#615).
+
+    Bei vielen Zielordnern unter derselben Wurzel (z. B. :func:`helfer_altbestand_aufraeumen`)
+    wird ``/proc`` einmalig pro Lauf gescannt statt je Ordner erneut. Mit ``praefixe`` werden
+    nur Pfade unterhalb der relevanten Wurzeln gemerkt.
+    """
+    norm = tuple(dict.fromkeys(p.rstrip("/") or "/" for p in praefixe)) if praefixe else None
+    token = _LINUX_PROZESSE_CACHE.set({"praefixe": norm} if aktiv else None)
+    try:
+        yield
+    finally:
+        _LINUX_PROZESSE_CACHE.reset(token)
+
+
+def _pfad_unter_praefix(ziel: str, praefix: str) -> bool:
+    """True, wenn ``ziel`` gleich ``praefix`` ist oder direkt darunter liegt."""
+    if praefix == "/":
+        return ziel.startswith("/")
+    return ziel == praefix or ziel.startswith(praefix + "/")
+
+
+def _linux_proc_pfade(praefixe: tuple[str, ...] | None = None) -> list[tuple[int, str]]:
+    """Liest einmalig ``/proc`` (cwd, exe, fd) und liefert ``(pid, ziel)`` für passende Präfixe."""
+    try:
+        with os.scandir("/proc") as it:
+            pids = [int(e.name) for e in it if e.name.isdigit()]
+    except OSError:
+        raise _Bleibt("Prozessliste nicht lesbar", fehler=True) from None
+
+    treffer: list[tuple[int, str]] = []
+    for pid in pids:
+        basis_str = f"/proc/{pid}"
+        basis = Path(basis_str)
+        try:
+            with open(f"{basis_str}/stat", encoding="utf-8", errors="replace") as f:
+                stat_text = f.read()
+        except OSError:
+            continue  # Prozess schon weg
+        if stat_text.rsplit(")", 1)[-1].split()[:1] == ["Z"]:
+            continue  # Zombie: kein cwd, keine Dateien
+        ziele: list[str] = []
+        for teil in ("cwd", "exe"):
+            ziel = _link_lesen(pid, basis / teil)
+            if ziel is not None:
+                ziele.append(ziel)
+        try:
+            with os.scandir(f"{basis_str}/fd") as fd_it:
+                for fd in fd_it:
+                    try:
+                        ziele.append(os.readlink(fd.path))
+                    except OSError:
+                        continue  # inzwischen geschlossen
+        except OSError as fehler:
+            _unlesbar_pruefen(pid, basis, fehler)
+        for z in ziele:
+            if praefixe is None or any(_pfad_unter_praefix(z, p) for p in praefixe):
+                treffer.append((pid, z))
+    return treffer
+
+
 def _kein_prozess(ordner: Path, *, probe: bool = False) -> None:
     """Regel 7: ``_Bleibt``, falls ein Prozess im Ordner arbeitet (cwd, exe, offene
     Datei) oder das nicht feststellbar ist. Linux über ``/proc``; Windows über die
@@ -3593,41 +3663,25 @@ def _kein_prozess(ordner: Path, *, probe: bool = False) -> None:
         except hausmeister_windows.Bleibt as b:
             raise _Bleibt(b.grund, fuer_mensch=b.fuer_mensch, fehler=b.fehler) from None
         return
-    proc = Path("/proc")
-    try:
-        pids = [int(p.name) for p in proc.iterdir() if p.name.isdigit()]
-    except OSError:
-        raise _Bleibt("Prozessliste nicht lesbar", fehler=True) from None
-
-    def drin(ziel: str | Path) -> bool:
-        pfad = Path(ziel)
-        return pfad == ordner or pfad.is_relative_to(ordner)
-
-    for pid in pids:
-        basis = proc / str(pid)
-        try:
-            stat = (basis / "stat").read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue  # Prozess schon weg
-        if stat.rsplit(")", 1)[-1].split()[:1] == ["Z"]:
-            continue  # Zombie: kein cwd, keine Dateien
-        ziele: list[str] = []
-        for teil in ("cwd", "exe"):
-            ziel = _link_lesen(pid, basis / teil)
-            if ziel is not None:
-                ziele.append(ziel)
-        try:
-            fds = list((basis / "fd").iterdir())
-        except OSError as fehler:
-            fds = []
-            _unlesbar_pruefen(pid, basis, fehler)
-        for fd in fds:
+    ordner_s = str(ordner).rstrip("/") or "/"
+    cache = _LINUX_PROZESSE_CACHE.get()
+    if cache is not None and not probe:
+        if "wert" not in cache:
             try:
-                ziele.append(os.readlink(fd))
-            except OSError:
-                continue  # inzwischen geschlossen
-        if any(drin(z) for z in ziele):
-            raise _Bleibt(f"Prozess {pid} arbeitet im Ordner oder hat Dateien offen")
+                cache["wert"] = _linux_proc_pfade(cache.get("praefixe"))
+            except _Bleibt as fehler:
+                cache["wert"] = fehler
+                raise
+        wert = cache["wert"]
+        if isinstance(wert, _Bleibt):
+            raise wert
+        for pid, ziel in wert:
+            if _pfad_unter_praefix(ziel, ordner_s):
+                raise _Bleibt(f"Prozess {pid} arbeitet im Ordner oder hat Dateien offen")
+        return
+    treffer = _linux_proc_pfade((ordner_s,))
+    if treffer:
+        raise _Bleibt(f"Prozess {treffer[0][0]} arbeitet im Ordner oder hat Dateien offen")
 
 
 def _link_lesen(pid: int, link: Path) -> str | None:
@@ -3785,9 +3839,22 @@ def helfer_ordner_loeschen(ort: Path, name: str) -> bool:
 HELFER_ALTBESTAND_MUSTER = re.compile(r"^tmp-l[1-9]\d*-[a-z0-9][a-z0-9_-]*$")
 #: #615: Vorgabe-Mindestalter in Tagen für :func:`helfer_altbestand_aufraeumen`.
 HELFER_ALTBESTAND_TAGE = 1.0
+#: #615: Vorgabe-Zeitgrenze in Sekunden für :func:`helfer_altbestand_aufraeumen`.
+HELFER_ALTBESTAND_ZEITGRENZE_S = 60.0
 
 
-def _baum_alter_pruefen(ordner: Path, *, jetzt: float, mindestalter_s: float) -> None:
+class _ZeitgrenzeErreicht(Exception):
+    """Zeitgrenze eines Aufräum-Laufs erreicht (#615)."""
+
+
+def _baum_alter_pruefen(
+    ordner: Path,
+    *,
+    jetzt: float,
+    mindestalter_s: float,
+    frist: float | None = None,
+    uhr: Callable[[], float] = time.monotonic,
+) -> None:
     """Prüft ohne Symlink-Verfolgung, dass weder ``ordner`` noch ein Eintrag darin zu jung ist."""
     try:
         wurzel_info = os.lstat(ordner)
@@ -3795,24 +3862,28 @@ def _baum_alter_pruefen(ordner: Path, *, jetzt: float, mindestalter_s: float) ->
         raise _Bleibt(f"Ordner nicht lesbar: {_kurz(fehler)}", fehler=True) from None
     if jetzt - wurzel_info.st_mtime < mindestalter_s:
         raise _Bleibt("frisch (jünger als Mindestalter)")
-    stapel = [ordner]
+    stapel: list[str] = [str(ordner)]
     while stapel:
+        if frist is not None and uhr() >= frist:
+            raise _ZeitgrenzeErreicht()
         aktuell = stapel.pop()
         try:
             with os.scandir(aktuell) as it:
                 eintraege = list(it)
         except OSError as fehler:
             raise _Bleibt(f"Ordner nicht lesbar: {_kurz(fehler)}", fehler=True) from None
-        for eintrag in eintraege:
+        for idx, eintrag in enumerate(eintraege):
+            if frist is not None and idx and idx % 256 == 0 and uhr() >= frist:
+                raise _ZeitgrenzeErreicht()
             try:
                 info = eintrag.stat(follow_symlinks=False)
             except OSError as fehler:
                 raise _Bleibt(f"Eintrag nicht lesbar ({eintrag.name}): {_kurz(fehler)}", fehler=True) from None
-            rel = Path(eintrag.path).relative_to(ordner).as_posix()
             if jetzt - info.st_mtime < mindestalter_s:
+                rel = Path(eintrag.path).relative_to(ordner).as_posix()
                 raise _Bleibt(f"frisch ({rel})")
             if stat.S_ISDIR(info.st_mode):
-                stapel.append(Path(eintrag.path))
+                stapel.append(eintrag.path)
 
 
 def helfer_altbestand_aufraeumen(
@@ -3821,6 +3892,8 @@ def helfer_altbestand_aufraeumen(
     aelter_als_tage: float = HELFER_ALTBESTAND_TAGE,
     jetzt: float | None = None,
     heim: Path | None = None,
+    zeitgrenze_s: float | None = HELFER_ALTBESTAND_ZEITGRENZE_S,
+    uhr: Callable[[], float] = time.monotonic,
 ) -> list[Ergebnis]:
     """Räumt alte ``~/tmp-l<N>-…``-Helfer-Ordner direkt im Home sicher weg (#615).
 
@@ -3832,6 +3905,10 @@ def helfer_altbestand_aufraeumen(
     """
     if isinstance(aelter_als_tage, bool) or not math.isfinite(aelter_als_tage) or aelter_als_tage < 1:
         raise ValueError(f"Helfer-Altbestand: --aelter-als-tage {aelter_als_tage!r} abgelehnt (endliche Zahl >= 1)")
+    if zeitgrenze_s is not None and (
+        isinstance(zeitgrenze_s, bool) or not math.isfinite(zeitgrenze_s) or zeitgrenze_s <= 0
+    ):
+        raise ValueError(f"Helfer-Altbestand: --zeitgrenze {zeitgrenze_s!r} abgelehnt (endliche Zahl > 0)")
     basis = heim if heim is not None else config.heim_ordner()
     if basis.is_symlink() or not basis.is_dir():
         log.warning("Hausmeister: Helfer-Altbestand-Basis %s ist kein echter Ordner", basis)
@@ -3839,6 +3916,7 @@ def helfer_altbestand_aufraeumen(
     basis_echt = basis.resolve()
     jetzt_ts = time.time() if jetzt is None else jetzt
     mindestalter_s = aelter_als_tage * 86400
+    frist = (uhr() + zeitgrenze_s) if zeitgrenze_s is not None else None
     uid = os.getuid() if hasattr(os, "getuid") else None
     geschuetzt = set(_geschuetzte_ordner())
     trocken = not loeschen
@@ -3851,85 +3929,118 @@ def helfer_altbestand_aufraeumen(
         log.warning("Hausmeister: Helfer-Altbestand in %s nicht lesbar: %s", basis, fehler)
         return [Ergebnis(basis, "bleibt", f"Home nicht lesbar: {_kurz(fehler)}", None, trocken=trocken, fehler=True)]
 
-    for eintrag in eintraege:
-        if not HELFER_ALTBESTAND_MUSTER.match(eintrag.name):
-            continue
-        ordner = Path(eintrag.path)
-        try:
-            info = os.lstat(ordner)
-        except OSError as fehler:
-            erg = Ergebnis(ordner, "bleibt", f"nicht prüfbar: {_kurz(fehler)}", None, trocken=trocken, fehler=True)
-            _log_schreiben(erg)
-            ergebnisse.append(erg)
-            continue
-        if stat.S_ISLNK(info.st_mode):
-            erg = Ergebnis(ordner, "bleibt", "Helfer-Altbestand: Symlink", None, trocken=trocken)
-            _log_schreiben(erg)
-            ergebnisse.append(erg)
-            continue
-        if not stat.S_ISDIR(info.st_mode):
-            continue
-        try:
-            if ordner.name in geschuetzt:
-                raise _Bleibt("geschützter Ordner")
-            if uid is not None and info.st_uid != uid:
-                raise _Bleibt("fremder Besitzer")
-            if ordner.resolve().parent != basis_echt:
-                raise _Bleibt("liegt aufgelöst nicht direkt im Home")
-            if os.path.lexists(ordner / ".git"):
-                raise _Bleibt("enthält .git — über regulären Hausmeister prüfen")
-            _baum_alter_pruefen(ordner, jetzt=jetzt_ts, mindestalter_s=mindestalter_s)
-            _kein_prozess(ordner)
-        except _Bleibt as b:
-            erg = Ergebnis(ordner, "bleibt", b.grund, None, trocken=trocken, fehler=b.fehler)
-            _log_schreiben(erg)
-            ergebnisse.append(erg)
-            continue
+    kandidaten = [e for e in eintraege if HELFER_ALTBESTAND_MUSTER.match(e.name)]
+    gesamt = len(kandidaten)
+    bearbeitet = 0
 
-        grund = f"Helfer-Altbestand (Muster tmp-l<N>-…, älter als {aelter_als_tage:g} Tag(e), kein Prozess)"
-        erg = Ergebnis(ordner, "gelöscht", grund, None, trocken=trocken)
-        if trocken:
-            _log_schreiben(erg)
-            ergebnisse.append(erg)
-            continue
+    def _zeitgrenze_melden() -> None:
+        offen = max(gesamt - bearbeitet, 0)
+        assert zeitgrenze_s is not None
+        meldung = (
+            f"Zeitgrenze ({zeitgrenze_s:g} s) erreicht — {bearbeitet} von {gesamt} Ordner(n) geprüft, "
+            f"{offen} noch offen; Befehl einfach erneut starten"
+        )
+        log.warning("Hausmeister: Helfer-Altbestand: %s", meldung)
+        erg_zeit = Ergebnis(basis, "bleibt", meldung, None, trocken=trocken, fehler=True)
+        _log_schreiben(erg_zeit)
+        ergebnisse.append(erg_zeit)
 
-        try:
-            info_neu = os.lstat(ordner)
-            if stat.S_ISLNK(info_neu.st_mode) or not stat.S_ISDIR(info_neu.st_mode):
-                raise _Bleibt("Helfer-Altbestand: kein echter Ordner mehr (Symlink?)")
-            if (info_neu.st_dev, info_neu.st_ino) != (info.st_dev, info.st_ino):
-                raise _Bleibt("Helfer-Altbestand: Ordner während der Prüfung ersetzt")
-            if ordner.resolve().parent != basis_echt:
-                raise _Bleibt("liegt aufgelöst nicht direkt im Home")
-            _kein_prozess(ordner, probe=True)
-        except _Bleibt as b:
-            erg = Ergebnis(ordner, "bleibt", b.grund, None, trocken=False, fehler=b.fehler)
-            _log_schreiben(erg)
-            ergebnisse.append(erg)
-            continue
-        except OSError as fehler:
-            erg = Ergebnis(
-                ordner, "bleibt", f"Gegenprobe gescheitert: {_kurz(fehler)}", None, trocken=False, fehler=True
-            )
-            _log_schreiben(erg)
-            ergebnisse.append(erg)
-            continue
+    praefixe = tuple(dict.fromkeys((str(basis), str(basis_echt))))
+    cache_ctx = _linux_prozess_lauf_cache(praefixe=praefixe) if not _ist_windows() else nullcontext()
+    with cache_ctx:
+        for eintrag in kandidaten:
+            if frist is not None and uhr() >= frist:
+                _zeitgrenze_melden()
+                break
+            ordner = Path(eintrag.path)
+            try:
+                info = os.lstat(ordner)
+            except OSError as fehler:
+                erg = Ergebnis(ordner, "bleibt", f"nicht prüfbar: {_kurz(fehler)}", None, trocken=trocken, fehler=True)
+                _log_schreiben(erg)
+                ergebnisse.append(erg)
+                bearbeitet += 1
+                continue
+            if stat.S_ISLNK(info.st_mode):
+                erg = Ergebnis(ordner, "bleibt", "Helfer-Altbestand: Symlink", None, trocken=trocken)
+                _log_schreiben(erg)
+                ergebnisse.append(erg)
+                bearbeitet += 1
+                continue
+            if not stat.S_ISDIR(info.st_mode):
+                bearbeitet += 1
+                continue
+            try:
+                if ordner.name in geschuetzt:
+                    raise _Bleibt("geschützter Ordner")
+                if uid is not None and info.st_uid != uid:
+                    raise _Bleibt("fremder Besitzer")
+                if ordner.resolve().parent != basis_echt:
+                    raise _Bleibt("liegt aufgelöst nicht direkt im Home")
+                if os.path.lexists(ordner / ".git"):
+                    raise _Bleibt("enthält .git — über regulären Hausmeister prüfen")
+                _baum_alter_pruefen(ordner, jetzt=jetzt_ts, mindestalter_s=mindestalter_s, frist=frist, uhr=uhr)
+                _kein_prozess(ordner)
+            except _ZeitgrenzeErreicht:
+                _zeitgrenze_melden()
+                break
+            except _Bleibt as b:
+                erg = Ergebnis(ordner, "bleibt", b.grund, None, trocken=trocken, fehler=b.fehler)
+                _log_schreiben(erg)
+                ergebnisse.append(erg)
+                bearbeitet += 1
+                continue
 
-        if not _log_schreiben(erg):
-            erg = replace(
-                erg,
-                art="bleibt",
-                grund="Hausmeister-Log nicht schreibbar — ohne Log kein Löschen",
-                fehler=True,
-            )
+            grund = f"Helfer-Altbestand (Muster tmp-l<N>-…, älter als {aelter_als_tage:g} Tag(e), kein Prozess)"
+            erg = Ergebnis(ordner, "gelöscht", grund, None, trocken=trocken)
+            if trocken:
+                _log_schreiben(erg)
+                ergebnisse.append(erg)
+                bearbeitet += 1
+                continue
+
+            try:
+                info_neu = os.lstat(ordner)
+                if stat.S_ISLNK(info_neu.st_mode) or not stat.S_ISDIR(info_neu.st_mode):
+                    raise _Bleibt("Helfer-Altbestand: kein echter Ordner mehr (Symlink?)")
+                if (info_neu.st_dev, info_neu.st_ino) != (info.st_dev, info.st_ino):
+                    raise _Bleibt("Helfer-Altbestand: Ordner während der Prüfung ersetzt")
+                if ordner.resolve().parent != basis_echt:
+                    raise _Bleibt("liegt aufgelöst nicht direkt im Home")
+                if _ist_windows():
+                    _kein_prozess(ordner, probe=True)
+            except _Bleibt as b:
+                erg = Ergebnis(ordner, "bleibt", b.grund, None, trocken=False, fehler=b.fehler)
+                _log_schreiben(erg)
+                ergebnisse.append(erg)
+                bearbeitet += 1
+                continue
+            except OSError as fehler:
+                erg = Ergebnis(
+                    ordner, "bleibt", f"Gegenprobe gescheitert: {_kurz(fehler)}", None, trocken=False, fehler=True
+                )
+                _log_schreiben(erg)
+                ergebnisse.append(erg)
+                bearbeitet += 1
+                continue
+
+            if not _log_schreiben(erg):
+                erg = replace(
+                    erg,
+                    art="bleibt",
+                    grund="Hausmeister-Log nicht schreibbar — ohne Log kein Löschen",
+                    fehler=True,
+                )
+                ergebnisse.append(erg)
+                bearbeitet += 1
+                continue
+            try:
+                temp_ordner_loeschen(ordner, erwartet=(info.st_dev, info.st_ino))
+            except (RuntimeError, OSError) as fehler:
+                erg = replace(erg, art="bleibt", grund=f"Löschen gescheitert: {_kurz(fehler)}", fehler=True)
+                _log_schreiben(erg)
             ergebnisse.append(erg)
-            continue
-        try:
-            temp_ordner_loeschen(ordner, erwartet=(info.st_dev, info.st_ino))
-        except (RuntimeError, OSError) as fehler:
-            erg = replace(erg, art="bleibt", grund=f"Löschen gescheitert: {_kurz(fehler)}", fehler=True)
-            _log_schreiben(erg)
-        ergebnisse.append(erg)
+            bearbeitet += 1
     return ergebnisse
 
 
@@ -4104,12 +4215,20 @@ def _log_pfad() -> Path:
     return config.expand_heim(roh) if roh else config.heim_ordner() / ".claude" / "to-spawn" / "hausmeister.jsonl"
 
 
+def log_art(erg: Ergebnis) -> str:
+    """Lesbare Aktions-Bezeichnung für Log und Ausgabe (#615): im Trockenlauf „würde …“."""
+    if erg.trocken and erg.art != "bleibt":
+        return f"würde {erg.art}"
+    return erg.art
+
+
 def _log_schreiben(erg: Ergebnis) -> bool:
     """Eine JSON-Zeile anhängen; False = nicht schreibbar."""
+    art_text = log_art(erg)
     zeile = {
         "zeit": datetime.now().astimezone().isoformat(timespec="seconds"),
         "ordner": str(erg.ordner),
-        "art": erg.art,
+        "art": art_text,
         "grund": erg.grund,
         "ticket": erg.ticket,
         "sicherung": erg.sicherung,
@@ -4118,7 +4237,7 @@ def _log_schreiben(erg: Ergebnis) -> bool:
         "fuer_david": erg.fuer_mensch,  # Übergangs-Alias (#325)
         "fehler": erg.fehler,
     }
-    log.info("Hausmeister: %s — %s (%s)", erg.ordner, erg.art, erg.grund)
+    log.info("Hausmeister: %s — %s (%s)", erg.ordner, art_text, erg.grund)
     return _log_zeile(zeile)
 
 

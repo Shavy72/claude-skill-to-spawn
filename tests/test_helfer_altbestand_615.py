@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import logging
 import os
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -215,3 +217,137 @@ def test_schutz_hooks_erlauben_helfer_altbestand_befehl() -> None:
             check=False,
         )
         assert erg.returncode == 0, erg.stdout + erg.stderr
+
+
+def test_trockenlauf_log_meldet_wuerde_geloescht_statt_geloescht(
+    welt: tuple[Path, Path],
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#615 Befund 1: Im Trockenlauf steht im Log und in der Ausgabe „würde gelöscht“, nie „gelöscht“."""
+    heim, log_datei = welt
+    alt = _ordner(heim / "tmp-l234-trocken", alter_tage=3)
+
+    with caplog.at_level(logging.INFO, logger=hausmeister.log.name):
+        erg = hausmeister.helfer_altbestand_aufraeumen(loeschen=False)
+
+    assert len(erg) == 1 and erg[0].trocken is True
+    assert alt.is_dir()
+    assert "würde gelöscht" in caplog.text
+    assert "— gelöscht (" not in caplog.text
+
+    zeilen = [json.loads(z) for z in log_datei.read_text(encoding="utf-8").splitlines()]
+    assert len(zeilen) == 1
+    assert zeilen[0]["art"] == "würde gelöscht"
+    assert zeilen[0]["trocken"] is True
+
+    spec = importlib.util.spec_from_file_location("to_spawn_cli_615_b1", SKILL / "to_spawn.py")
+    assert spec and spec.loader
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+    assert cli.main(["aufraeumen", "--helfer-altbestand"]) == 0
+    aus = capsys.readouterr().out
+    assert "würde gelöscht" in aus and "[trocken]" in aus
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux-Prozess-Suche über /proc (#615)")
+def test_weg_linux_prozess_suche_scannt_proc_einmal_und_ist_schnell(
+    welt: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#615 Befund 2: Echter Weg-Test unter tmp_path — /proc wird pro Lauf höchstens einmal gescannt."""
+    heim, _ = welt
+    alte = [_ordner(heim / f"tmp-l{300 + i}-615", alter_tage=3) for i in range(25)]
+    frische = [_ordner(heim / f"tmp-l{400 + i}-frisch", alter_tage=0.1) for i in range(2)]
+
+    proc_scans = 0
+    echt_scandir = os.scandir
+    echt_iterdir = Path.iterdir
+
+    def zaehle_scandir(pfad: os.PathLike[str] | str = "."):
+        nonlocal proc_scans
+        if str(pfad) == "/proc":
+            proc_scans += 1
+        return echt_scandir(pfad)
+
+    def zaehle_iterdir(self: Path):
+        nonlocal proc_scans
+        if str(self) == "/proc":
+            proc_scans += 1
+        return echt_iterdir(self)
+
+    monkeypatch.setattr(os, "scandir", zaehle_scandir)
+    monkeypatch.setattr(Path, "iterdir", zaehle_iterdir)
+
+    start = time.monotonic()
+    erg = hausmeister.helfer_altbestand_aufraeumen(loeschen=True, aelter_als_tage=1)
+    dauer = time.monotonic() - start
+
+    assert proc_scans == 1, f"/proc wurde {proc_scans}x statt 1x gescannt (Dauer {dauer:.3f}s)"
+    assert dauer < 5.0, f"Lauf zu langsam: {dauer:.3f}s für 25 Ordner"
+    assert all(not p.exists() for p in alte)
+    assert all(p.is_dir() for p in frische)
+    assert sum(1 for e in erg if e.art == "gelöscht" and not e.trocken) == 25
+
+
+def test_zeitgrenze_bricht_sauber_mit_klarer_meldung_ab(
+    welt: tuple[Path, Path],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#615 Befund 2: Bei erreichter Zeitgrenze bricht der Lauf sauber mit klarer Meldung ab."""
+    heim, _ = welt
+    ordner = [_ordner(heim / f"tmp-l{500 + i}-zeit", alter_tage=3) for i in range(5)]
+
+    takt = iter([0.0, 0.2, 0.4, 1.5, 2.0, 2.5, 3.0])
+    letzter = 0.0
+
+    def fake_uhr() -> float:
+        nonlocal letzter
+        letzter = next(takt, letzter + 1.0)
+        return letzter
+
+    with caplog.at_level(logging.WARNING, logger=hausmeister.log.name):
+        erg = hausmeister.helfer_altbestand_aufraeumen(
+            loeschen=True,
+            zeitgrenze_s=1.0,
+            uhr=fake_uhr,
+        )
+
+    assert any(p.is_dir() for p in ordner), "Nach Zeitgrenze müssen restliche Ordner stehen bleiben"
+    letztes = erg[-1]
+    assert letztes.art == "bleibt" and letztes.fehler is True
+    assert "Zeitgrenze" in letztes.grund and "noch offen" in letztes.grund and "erneut" in letztes.grund
+    assert "Zeitgrenze" in caplog.text
+
+
+@pytest.mark.parametrize("sekunden", [0, -5, float("nan"), float("inf")])
+def test_unsinnige_zeitgrenze_abgelehnt(welt: tuple[Path, Path], sekunden: float) -> None:
+    heim, _ = welt
+    alt = _ordner(heim / "tmp-l600-zeit", alter_tage=5)
+    with pytest.raises(ValueError):
+        hausmeister.helfer_altbestand_aufraeumen(loeschen=True, zeitgrenze_s=sekunden)
+    assert alt.is_dir()
+
+
+def test_cli_hilfe_nennt_aktualisierung_und_zeitgrenze(capsys: pytest.CaptureFixture[str]) -> None:
+    """#615 Befund 3: Hilfe nennt Weg zum Aktualisieren, falls der installierte Skill veraltet ist."""
+    spec = importlib.util.spec_from_file_location("to_spawn_cli_615_b3", SKILL / "to_spawn.py")
+    assert spec and spec.loader
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+
+    with pytest.raises(SystemExit) as aus:
+        cli.main(["aufraeumen", "--help"])
+    assert aus.value.code == 0
+    hilfe = capsys.readouterr().out
+    assert "--helfer-altbestand" in hilfe
+    assert "--zeitgrenze" in hilfe
+    assert "install.sh" in hilfe
+    assert "~/.claude/skills/to-spawn" not in hilfe
+
+    with pytest.raises(SystemExit) as err1:
+        cli.main(["aufraeumen", "--helfer-altbestand", "--zeitgrenze", "0"])
+    assert err1.value.code == 2
+
+    with pytest.raises(SystemExit) as err2:
+        cli.main(["aufraeumen", "--zeitgrenze", "30", "--alles"])
+    assert err2.value.code == 2
