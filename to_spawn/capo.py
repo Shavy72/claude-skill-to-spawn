@@ -51,7 +51,7 @@ import tarfile
 import tempfile
 import time
 import urllib.parse
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -69,6 +69,7 @@ from . import (
     konsole,
     melder,
     mensch_noetig,
+    schliess_pruefer,
     sitzung_env,
     staging_schalter,
     starter,
@@ -95,21 +96,6 @@ MAIL_AUS = "INFO: Mail nicht eingerichtet (mail.befehl leer) — Meldungen stehe
 #: Sekunden, die ein Tick auf die Sperre eines anderen Laufs wartet.
 SPERRE_S = 30.0
 
-_TEST_DATEI = re.compile(r"(^|/)(tests?/|test_[^/]*\.py$|[^/]*_test\.py$|[^/]*\.(test|spec)\.[cm]?[jt]sx?$)")
-#: Kopien von Tests (Belege, Archiv, Mutanten) sind keine Testdateien.
-_KEINE_TESTDATEI = re.compile(r"(^|/)(docs|archive)/|(^|/)mutants/")
-_PY_TEST = re.compile(r"^-[ \t]*(?:async[ \t]+)?def[ \t]+(test_\w+)", re.MULTILINE)
-_JS_TEST = re.compile(r"""^-[ \t]*(?:it|test)\([ \t]*(["'`])(.+?)\1""", re.MULTILINE)
-#: Vermerk im Commit-Text für eine bewusste Test-Umbenennung (#448), z. B.
-#: ``test-umbenannt: tests/t.py::test_alt -> tests/t.py::test_neu``.
-_UMBENANNT = re.compile(r"(?im)^[ \t]*test-umbenannt[ \t]*:(.*)$")
-_PFEIL = re.compile(r"[ \t]*(?:→|->|=>)[ \t]*")
-_PY_NAME = re.compile(r"test_\w+")
-#: Pfad vor ``::`` im Vermerk: ``test-umbenannt: tests/a.py::test_alt -> test_neu`` (#1205).
-_VERMERK_PFAD = re.compile(r"([^\s:]+\.py)::")
-#: JS-Testname in Anführungszeichen im Vermerk: ``test-umbenannt: 'alt' -> 'neu'``.
-_ZITAT = re.compile(r"""(["'`])(.+?)\1""")
-
 
 #: Regel → Vorfall für die Lernschleife (#286): Klasse, Symptom, Ursache, Lösung.
 #: Die Worte sind je Regel fest — so steht eine Regel genau einmal im Katalog,
@@ -126,6 +112,12 @@ REGEL_VORFALL: dict[str, tuple[str, str, str, str]] = {
         "Ticket zu, aber niemand kann den Beweis nachlesen",
         "Keine Belegseite unter dem Beleg-Ordner zum Ticket",
         "Belegseite anlegen (docs/verify-hard/<N>_*.md) und neu schließen",
+    ),
+    "beleg_form": (
+        "prozess",
+        "Belegseite vorhanden, erfüllt aber die feste Form nicht",
+        "Pflichtfelder, Klickweg-Abschnitt, Platzhalter oder Bilder fehlen/ungültig",
+        "Belegseite nach fester Form vervollständigen und auf dem Hauptzweig ablegen",
     ),
     "test_ersetzt": (
         "prozess",
@@ -197,11 +189,9 @@ class Verstoss:
     kern: str = ""
 
 
-@dataclass
-class Commit:
-    sha: str
-    betreff: str
-    zeit: int
+Commit = schliess_pruefer.Commit
+BELEGE_ORDNER = schliess_pruefer.BELEGE_ORDNER
+_NichtPruefbar = schliess_pruefer._NichtPruefbar
 
 
 @dataclass
@@ -241,422 +231,74 @@ def _git(repo: Path, *args: str) -> tuple[int, str]:
     return fertig.returncode, fertig.stdout.rstrip("\n")
 
 
-def _git_wiederholen(repo: Path, *args: str) -> tuple[int, str]:
-    """``_git`` mit genau einer Wiederholung bei Zeitablauf (Exit 124, Infrastruktur, #861)."""
-    code, text = _git(repo, *args)
-    if code == 124:
-        log.warning("git %s Zeitablauf (Exit 124) — einmaliger Wiederholungsversuch", args[:2])
-        code, text = _git(repo, *args)
-    return code, text
-
-
-def _nicht_pruefbar_grund(befehl: str, code: int) -> str:
-    """Fehlertext für :class:`_NichtPruefbar`; Exit 124 wird als Infrastruktur gekennzeichnet (#861)."""
-    if code == 124:
-        return f"{befehl} Zeitablauf (Infrastruktur, Exit 124)"
-    return f"{befehl} Exit {code}"
-
-
 def haupt_ref(repo: Path) -> str | None:
     """Weiterleitung auf :func:`bau_log.haupt_ref` (#375)."""
     return bau_log.haupt_ref(repo)
 
 
+# --- Schließ-Regeln: eine Quelle der Wahrheit in ``to_spawn.schliess_pruefer`` (#864) ---
+
+betreff_hat_nummer = schliess_pruefer.betreff_hat_nummer
+ticket_commits = schliess_pruefer.ticket_commits
+belege_ordner = schliess_pruefer.belege_ordner
+beleg_passt = schliess_pruefer.beleg_passt
+ist_doku = schliess_pruefer.ist_doku
+ist_testdatei = schliess_pruefer.ist_testdatei
+entfernte_tests = schliess_pruefer.entfernte_tests
+umbenannte_tests = schliess_pruefer.umbenannte_tests
+
+
+def _verstoss_aus_grund(ticket: int, grund: schliess_pruefer.Grund | None) -> Verstoss | None:
+    if grund is None:
+        return None
+    return Verstoss(ticket, grund.regel, grund.text, kern=grund.kern)
+
+
 def alle_commits(repo: Path, ref: str) -> list[Commit]:
-    code, text = _git(repo, "log", ref, "--format=%H%x1f%s%x1f%ct")
-    if code != 0:
-        return []
-    commits = []
-    for zeile in text.splitlines():
-        teile = zeile.split("\x1f")
-        if len(teile) == 3 and teile[2].isdigit():
-            commits.append(Commit(teile[0], teile[1], int(teile[2])))
-    return commits
-
-
-def betreff_hat_nummer(betreff: str, ticket: int) -> bool:
-    """Betreff endet mit ``(#N)`` (optional `` [skip ci]``) oder beginnt mit ``typ(#N):`` (E1).
-
-    ``docs(#N): …`` zählt nicht: so heißen Nachträge (Aufseher, Handoff), nicht der Bau.
-    """
-    if re.search(rf"\(#{ticket}\)(?: \[skip ci\])?\s*$", betreff):
-        return True
-    treffer = re.match(rf"([a-z]+)\(#{ticket}\)!?:", betreff)
-    return treffer is not None and treffer.group(1) != "docs"
-
-
-def ticket_commits(commits: list[Commit], ticket: int) -> list[Commit]:
-    return [c for c in commits if betreff_hat_nummer(c.betreff, ticket)]
+    """Weiterleitung auf :func:`schliess_pruefer.alle_commits`."""
+    return schliess_pruefer.alle_commits(repo, ref, git_lauf=_git)
 
 
 def _dateien(repo: Path, sha: str, *, streng: bool = False) -> list[tuple[str, str]]:
-    """(Status, Pfad) je Datei eines Commits, Umbenennungen als Status ``R`` mit neuem Pfad.
-
-    Mit ``streng=True`` (Testverlust-Pfad, #861) wird bei Exit 124 einmal wiederholt und jeder
-    git-Fehler mit Warnung als :class:`_NichtPruefbar` gemeldet statt still ``[]`` zurückzugeben.
-    """
-    abruf = _git_wiederholen if streng else _git
-    code, text = abruf(repo, "show", "--format=", "--name-status", "-M", sha)
-    if code != 0:
-        if streng:
-            grund = _nicht_pruefbar_grund("git show --name-status", code)
-            log.warning("git show --name-status %s gescheitert (%s) — Testverlust nicht prüfbar", sha[:7], grund)
-            raise _NichtPruefbar(grund)
-        return []
-    ergebnis = []
-    for zeile in text.splitlines():
-        teile = zeile.split("\t")
-        if len(teile) >= 2:
-            ergebnis.append((teile[0][:1], teile[-1]))
-    return ergebnis
-
-
-_DATUM = re.compile(r"\d{4}-\d{2}-\d{2}")
-
-
-def beleg_passt(pfad: str, ticket: int) -> bool:
-    """Nummer als eigenes Zahlwort im Pfad unterhalb des Beleg-Ordners (Datei oder Ordner).
-
-    Belegseiten liegen als Datei (``213_gruen.txt``) oder als Ordner
-    (``2026-09-18_203_staffel/BEWEIS.md``); ein Datum im Namen zählt nie als Nummer.
-    """
-    ohne_datum = _DATUM.sub("-", pfad)
-    return re.search(rf"(^|\D){ticket}(\D|$)", ohne_datum) is not None
-
-
-# --- Regeln --------------------------------------------------------------------
-
-
-def regel_commit(ticket: int, eigene: list[Commit]) -> Verstoss | None:
-    if eigene:
-        return None
-    return Verstoss(
-        ticket,
-        "commit_ohne_nummer",
-        f"kein Commit auf dem Hauptzweig endet mit „(#{ticket})“",
-    )
-
-
-#: Beleg-Ordner, wenn ``regularien.belege_ordner`` in der Repo-Konfig fehlt.
-BELEGE_ORDNER = "docs/verify-hard"
-
-
-def belege_ordner(konfig: dict[str, Any]) -> str:
-    """Beleg-Ordner aus ``regularien.belege_ordner`` (ohne Schrägstriche am Rand), sonst Vorgabe."""
-    regularien = konfig.get("regularien") if isinstance(konfig.get("regularien"), dict) else {}
-    return str(regularien.get("belege_ordner") or BELEGE_ORDNER).strip("/") or BELEGE_ORDNER
+    """Weiterleitung auf :func:`schliess_pruefer._dateien`."""
+    return schliess_pruefer._dateien(repo, sha, streng=streng, git_lauf=_git)
 
 
 def belegseiten(repo: Path, ticket: int, *, ref: str = "HEAD", ordner: str | None = None) -> list[str]:
-    """Belegseiten eines Tickets: Repo-Pfade unter dem Beleg-Ordner am Stand ``ref`` (``git ls-tree``).
-
-    ``ordner`` fehlt → aus der Repo-Konfig. Git nicht lesbar → leere Liste (wie „kein Beleg“).
-    """
-    ordner = (ordner if ordner is not None else belege_ordner(config.lade(repo))).strip("/") or BELEGE_ORDNER
-    code, text = _git(repo, "ls-tree", "-r", "--name-only", ref, "--", ordner)
-    namen = text.splitlines() if code == 0 else []
-    return [pfad for pfad in namen if beleg_passt(pfad[len(ordner) + 1 :], ticket)]
-
-
-def regel_beweis(repo: Path, ref: str, ticket: int, eigene: list[Commit], ordner: str) -> Verstoss | None:
-    ordner = ordner.strip("/") or BELEGE_ORDNER
-    if belegseiten(repo, ticket, ref=ref, ordner=ordner):
-        return None
-    namen = [pfad for commit in eigene for _, pfad in _dateien(repo, commit.sha) if pfad.startswith(ordner + "/")]
-    if any(beleg_passt(pfad[len(ordner) + 1 :], ticket) for pfad in namen):
-        return None
-    if eigene and all(_nur_doku(repo, c.sha) for c in eigene):
-        # Reines Doku-Ticket: die Doku ist der Beleg (E4) — aber nur Doku außerhalb
-        # des Beleg-Ordners; eine fremde Belegseite (z. B. 9010 statt 901) zählt nicht.
-        doku = [pfad for c in eigene for _, pfad in _dateien(repo, c.sha)]
-        if any(not pfad.startswith(ordner + "/") for pfad in doku):
-            return None
-    return Verstoss(
-        ticket,
-        "beweis_fehlt",
-        f"keine Belegseite (Datei oder Ordner) mit „{ticket}“ im Namen unter {ordner}/",
-    )
-
-
-def ist_doku(pfad: str) -> bool:
-    return pfad.startswith("docs/") or pfad.lower().endswith(".md")
-
-
-def _nur_doku(repo: Path, sha: str) -> bool:
-    dateien = _dateien(repo, sha)
-    return bool(dateien) and all(ist_doku(pfad) for _, pfad in dateien)
-
-
-def ist_testdatei(pfad: str) -> bool:
-    """Echte Testdatei — nicht deren Kopien unter ``docs/``, ``archive/`` oder ``mutants/``."""
-    return bool(_TEST_DATEI.search(pfad)) and not _KEINE_TESTDATEI.search(pfad)
-
-
-def _test_abschnitte(diff: str) -> dict[str, str]:
-    """Diff je Datei (neuer Pfad → Abschnitt), nur echte Testdateien."""
-    abschnitte: dict[str, str] = {}
-    for teil in re.split(r"(?m)^(?=diff --git )", diff):
-        kopf = re.match(r"diff --git a/(\S+) b/(\S+)", teil)
-        if kopf and (ist_testdatei(kopf.group(1)) or ist_testdatei(kopf.group(2))):
-            abschnitte[kopf.group(2)] = teil
-    return abschnitte
-
-
-def entfernte_tests(diff: str) -> list[str]:
-    """Namen entfernter Testfälle, die im selben Diff nicht wieder auftauchen."""
-    plus = "\n".join(z for z in diff.splitlines() if z.startswith("+") and not z.startswith("+++"))
-    namen: list[str] = []
-    for treffer in _PY_TEST.finditer(diff):
-        name = treffer.group(1)
-        if not re.search(rf"\b{re.escape(name)}\b", plus):
-            namen.append(name)
-    for treffer in _JS_TEST.finditer(diff):
-        name = treffer.group(2)
-        if not any(f"{q}{name}{q}" in plus for q in ("'", '"', "`")):
-            namen.append(name)
-    return list(dict.fromkeys(namen))
-
-
-def umbenannte_tests(
-    diff: str,
-    commit_text: str,
-    an_spitze: Callable[[str], str | None] | None = None,
-) -> set[str]:
-    """Alte Namen bewusst umbenannter Python-Tests (#448) — kein Verlust.
-
-    Quelle ist der Vermerk ``test-umbenannt: alt -> neu`` (auch ``→``/``=>``, mehrere
-    Paare mit ``,``/``;`` getrennt, Pfade wie ``tests/t.py::test_x`` erlaubt) im
-    Commit-Text. Ein Paar zählt nur, wenn der neue Test als ``+def`` im selben
-    Test-Abschnitt (:func:`_test_abschnitte`, also derselben Datei) steht, aus dem
-    der alte als ``-def`` verschwindet. Ein Diff-Ausschnitt ohne ``diff --git``-Kopf
-    gilt als ein einziger Abschnitt. Eine stille Umbenennung ohne Vermerk bleibt ein
-    Ersatz (Test ``test_test_ersetzt_oeffnet_wieder`` aus #213).
-
-    Seit #1205 (Vermerk darf in einem späteren Ticket-Commit stehen) gilt bei Python-Paaren
-    zusätzlich: nennt der Vermerk einen Pfad (``tests/a.py::test_alt``), zählt nur dieser
-    Datei-Abschnitt; mit ``an_spitze`` (Pfad → Dateiinhalt am neuesten Ticket-Commit)
-    muss der neue Test dort in derselben Datei noch stehen — sonst versteckte ein Vermerk
-    „umbenannt, dann gelöscht“.
-    """
-    mit_kopf = bool(re.search(r"(?m)^diff --git ", diff))
-    abschnitte: list[tuple[str | None, str]] = list(_test_abschnitte(diff).items()) if mit_kopf else [(None, diff)]
-    teile = [teil for _, teil in abschnitte]
-    alte: set[str] = set()
-    for vermerk in _UMBENANNT.finditer(commit_text):
-        zitate = [z[1] for z in _ZITAT.findall(vermerk.group(1))]
-        if zitate:
-            # JS-Namen (#826) dürfen Kommas und Pfeile enthalten: Paare aus Zitaten.
-            for alt, neu in zip(zitate[::2], zitate[1::2]):
-                if any(_steht_drin(neu, teil, "+") and (not mit_kopf or _steht_drin(alt, teil, "-")) for teil in teile):
-                    alte.add(alt)
-            continue
-        for paar in re.split(r"[,;]", vermerk.group(1)):
-            seiten = _PFEIL.split(paar.strip())
-            if len(seiten) != 2:
-                continue
-            links, rechts = (_PY_NAME.findall(seite) for seite in seiten)
-            if not links or not rechts:
-                continue
-            alt, neu = links[-1], rechts[-1]
-            vermerk_pfad = _VERMERK_PFAD.search(seiten[0])
-            if any(
-                _def_zeile("+", neu, teil)
-                and (not mit_kopf or _def_zeile("-", alt, teil))
-                and _paar_passt_zur_datei(pfad, neu, vermerk_pfad.group(1) if vermerk_pfad else None, an_spitze)
-                for pfad, teil in abschnitte
-            ):
-                alte.add(alt)
-    return alte
-
-
-def _paar_passt_zur_datei(
-    pfad: str | None,
-    neu: str,
-    vermerk_pfad: str | None,
-    an_spitze: Callable[[str], str | None] | None,
-) -> bool:
-    """Datei-Bedingungen eines Python-Vermerks (#1205), siehe :func:`umbenannte_tests`."""
-    if pfad is None:
-        return True
-    if vermerk_pfad is not None and vermerk_pfad != pfad:
-        return False
-    if an_spitze is None:
-        return True
-    text = an_spitze(pfad)
-    return text is not None and _steht_drin(neu, text)
-
-
-def _def_zeile(zeichen: str, name: str, diff: str) -> bool:
-    """Steht ``def <name>`` als ``+``- bzw. ``-``-Zeile im Diff?"""
-    muster = rf"(?m)^{re.escape(zeichen)}[ \t]*(?:async[ \t]+)?def[ \t]+{re.escape(name)}\b"
-    return re.search(muster, diff) is not None
-
-
-class _NichtPruefbar(Exception):
-    """Testverlust eines Commits nicht feststellbar (git-Fehler/Zeitablauf, #1210)."""
-
-
-def _test_verluste(
-    repo: Path,
-    sha: str,
-    spitze: str | None = None,
-    basis: str | None = None,
-    vermerke: str | None = None,
-) -> list[str]:
-    """Entfernte Tests eines Commits; mit ``spitze`` nur der Netto-Verlust (#826).
-
-    ``spitze`` ist der neueste Ticket-Commit. Ein Python-Test, der in dessen Baum in
-    derselben Datei wieder als ``def <name>`` steht, ist kein Verlust — ebenso eine
-    gelöschte Testdatei, die dort wieder existiert.
-
-    ``vermerke`` sind die ``test-umbenannt:``-Zeilen aller Ticket-Commits (#1205): ein
-    Vermerk darf in einem späteren Commit desselben Tickets nachgetragen werden, weil
-    ein gepushter Commit nicht mehr änderbar ist. Das Paar muss trotzdem zu diesem
-    Diff passen (:func:`umbenannte_tests`, neuer Test als ``+def`` in derselben Datei).
-    Ohne ``vermerke`` zählt nur der eigene Commit-Text.
-
-    Scheitert ``git show`` des Commits, wirft die Funktion :class:`_NichtPruefbar`
-    (#1210) — der Aufrufer meldet „nicht prüfbar“ statt „kein Verlust“.
-    """
-    code, diff = _git_wiederholen(repo, "show", "--format=", "-M", "--unified=0", sha)
-    if code != 0:
-        # #1210/#861: Ein gescheitertes ``git show`` ist kein „sauber“ — sonst fällt ein
-        # echter Testverlust still weg und das Ticket bleibt zu.
-        grund = _nicht_pruefbar_grund("git show", code)
-        log.warning("git show %s gescheitert (%s) — Testverlust nicht prüfbar", sha[:7], grund)
-        raise _NichtPruefbar(grund)
-    abschnitte = _test_abschnitte(diff)
-    verluste = entfernte_tests("".join(abschnitte.values()))
-    if verluste:
-        if vermerke is None:
-            code_text, vermerke = _git(repo, "show", "-s", "--format=%B", sha)
-            if code_text != 0:
-                log.warning("Commit-Text von %s nicht lesbar — Vermerke fehlen", sha[:7])
-                vermerke = ""
-        umbenannt = umbenannte_tests(
-            diff,
-            vermerke,
-            (lambda pfad: _datei_an_spitze(repo, spitze, pfad)) if spitze else None,
-        )
-        verluste = [name for name in verluste if name not in umbenannt]
-    if verluste and spitze:
-        verluste = [n for n in verluste if not _kein_netto_verlust(repo, basis, spitze, n, abschnitte)]
-    for status, pfad in _dateien(repo, sha, streng=True):
-        if status != "D" or not ist_testdatei(pfad):
-            continue
-        # Gelöschte Testdatei ohne erkennbare Testfälle: die Datei selbst zählt.
-        abschnitt = abschnitte.get(pfad, "")
-        if _PY_TEST.search(abschnitt) or _JS_TEST.search(abschnitt):
-            continue
-        if spitze and spitze != sha and _datei_an_spitze(repo, spitze, pfad) is not None:
-            continue
-        verluste.append(f"Datei {pfad}")
-    return verluste
+    """Weiterleitung auf :func:`schliess_pruefer.belegseiten`."""
+    return schliess_pruefer.belegseiten(repo, ticket, ref=ref, ordner=ordner, git_lauf=_git)
 
 
 def _datei_an_spitze(repo: Path, spitze: str, pfad: str) -> str | None:
-    """Inhalt von ``pfad`` im Baum von ``spitze``; ``None``, wenn die Datei dort nachweislich fehlt.
-
-    Trennt „Datei fehlt im gültigen Ref“ sauber von git-Fehlern und Zeitabläufen (#861):
-    bei Exit 124 wird einmal wiederholt; bei jedem echten git-Fehler wird eine Warnung geloggt
-    und :class:`_NichtPruefbar` geworfen.
-    """
-    code, text = _git_wiederholen(repo, "show", f"{spitze}:{pfad}")
-    if code == 0:
-        return text
-    if code in (124, 127):
-        grund = _nicht_pruefbar_grund(f"git show {spitze[:7]}:{pfad}", code)
-        log.warning("Datei %s an %s nicht lesbar (%s) — Testverlust nicht prüfbar", pfad, spitze[:7], grund)
-        raise _NichtPruefbar(grund)
-    ls_code, ls_text = _git_wiederholen(repo, "ls-tree", "-r", "--name-only", spitze, "--", pfad)
-    if ls_code == 0 and pfad not in ls_text.splitlines():
-        return None
-    fehler_code = ls_code if ls_code != 0 else code
-    befehl = f"git ls-tree {spitze[:7]}" if ls_code != 0 else f"git show {spitze[:7]}:{pfad}"
-    grund = _nicht_pruefbar_grund(befehl, fehler_code)
-    log.warning("Datei %s an %s nicht lesbar (%s) — Testverlust nicht prüfbar", pfad, spitze[:7], grund)
-    raise _NichtPruefbar(grund)
+    """Weiterleitung auf :func:`schliess_pruefer._datei_an_spitze`."""
+    return schliess_pruefer._datei_an_spitze(repo, spitze, pfad, git_lauf=_git)
 
 
-def _steht_drin(name: str, text: str, zeichen: str = "") -> bool:
-    """Steht der Testfall ``name`` (Python-``def`` oder JS-``it``/``test``) im Text?
-
-    ``zeichen`` = ``"-"``/``"+"`` prüft nur Diff-Zeilen mit diesem Vorzeichen.
-    """
-    vor = re.escape(zeichen)
-    if _PY_NAME.fullmatch(name):
-        muster = rf"(?m)^{vor}[ \t]*(?:async[ \t]+)?def[ \t]+{re.escape(name)}\b"
-    else:
-        muster = rf"""(?m)^{vor}[ \t]*(?:it|test)\([ \t]*(["'`]){re.escape(name)}\1"""
-    return re.search(muster, text) is not None
+def regel_commit(ticket: int, eigene: list[Commit]) -> Verstoss | None:
+    """Weiterleitung auf :func:`schliess_pruefer.regel_commit`."""
+    return _verstoss_aus_grund(ticket, schliess_pruefer.regel_commit(ticket, eigene))
 
 
-def _kein_netto_verlust(repo: Path, basis: str | None, spitze: str, name: str, abschnitte: dict[str, str]) -> bool:
-    """Netto-Diff gegen die Ticket-Basis (#826): kein Verlust, wenn der entfernte Test an
-    der Spitze in derselben Datei wieder steht oder dort schon vor dem Ticket fehlte
-    (im selben Ticket angelegt und wieder ersetzt)."""
-    for pfad, abschnitt in abschnitte.items():
-        if not _steht_drin(name, abschnitt, "-"):
-            continue
-        an_spitze = _datei_an_spitze(repo, spitze, pfad)
-        if an_spitze is not None and _steht_drin(name, an_spitze):
-            log.info(
-                "Test %s in %s an der Spitze %s wieder da — kein Verlust",
-                name,
-                pfad,
-                spitze[:7],
-            )
-            return True
-        if basis is None:
-            continue
-        vorher = _datei_an_spitze(repo, basis, pfad)
-        if vorher is None or not _steht_drin(name, vorher):
-            log.info("Test %s in %s gab es vor dem Ticket nicht — kein Verlust", name, pfad)
-            return True
-    return False
-
-
-def _ticket_vermerke(repo: Path, eigene: list[Commit]) -> str:
-    """``test-umbenannt:``-Zeilen aus allen Commit-Texten des Tickets (#1205)."""
-    zeilen: list[str] = []
-    for commit in eigene:
-        code, text = _git(repo, "show", "-s", "--format=%B", commit.sha)
-        if code != 0:
-            log.warning("Commit-Text von %s nicht lesbar — Vermerke fehlen", commit.sha[:7])
-            continue
-        zeilen += [z for z in text.splitlines() if _UMBENANNT.search(z)]
-    return "\n".join(zeilen)
+def regel_beweis(repo: Path, ref: str, ticket: int, eigene: list[Commit], ordner: str) -> Verstoss | None:
+    """Weiterleitung auf :func:`schliess_pruefer.regel_beweis`."""
+    return _verstoss_aus_grund(
+        ticket,
+        schliess_pruefer.regel_beweis(
+            repo,
+            ref,
+            ticket,
+            eigene,
+            ordner,
+            form_pruefen=False,
+            beleg_auf_hauptzweig=False,
+            git_lauf=_git,
+        ),
+    )
 
 
 def regel_tests(repo: Path, ticket: int, eigene: list[Commit]) -> Verstoss | None:
-    verluste: list[str] = []
-    # Spitze = neuester Ticket-Commit; ``eigene`` kommt aus ``git log`` (neueste zuerst).
-    spitze = sorted(enumerate(eigene), key=lambda p: (-p[1].zeit, p[0]))[0][1].sha if eigene else None
-    # Basis = Elternteil des ältesten Ticket-Commits (Stand vor dem Ticket); bei gleicher
-    # Zeit entscheidet die ``git log``-Reihenfolge (neueste zuerst).
-    basis = None
-    if eigene:
-        aeltester = sorted(enumerate(eigene), key=lambda p: (p[1].zeit, -p[0]))[0][1]
-        code, eltern = _git(repo, "rev-parse", "--verify", "-q", f"{aeltester.sha}^")
-        basis = eltern.strip() if code == 0 and eltern.strip() else None
-    vermerke = _ticket_vermerke(repo, eigene)
-    nicht_pruefbar: list[str] = []
-    for commit in eigene:
-        try:
-            namen = _test_verluste(repo, commit.sha, spitze, basis, vermerke)
-        except _NichtPruefbar as grund:
-            nicht_pruefbar.append(f"{commit.sha[:7]} ({grund})")
-            continue
-        verluste += [f"{name} ({commit.sha[:7]})" for name in namen]
-    if not verluste and not nicht_pruefbar:
-        return None
-    teile: list[str] = []
-    if verluste:
-        liste = ", ".join(verluste[:4]) + (f" (+{len(verluste) - 4})" if len(verluste) > 4 else "")
-        teile.append(f"Test entfernt statt ergänzt: {liste}")
-    if nicht_pruefbar:
-        teile.append(f"Testverlust nicht prüfbar: {', '.join(nicht_pruefbar)}")
-    return Verstoss(ticket, "test_ersetzt", "; ".join(teile))
+    """Weiterleitung auf :func:`schliess_pruefer.regel_tests`."""
+    return _verstoss_aus_grund(ticket, schliess_pruefer.regel_tests(repo, ticket, eigene, git_lauf=_git))
 
 
 def _passt(pfad: str, muster: list[str]) -> bool:
@@ -2352,8 +1994,8 @@ def katalog_pflegen(repo: Path, konfig: dict[str, Any], vorfaelle: list[vorfall.
     return zeilen
 
 
-#: Regeln, nach denen capo ein geschlossenes Ticket wieder öffnet (#448: Grundlage der Rücknahme).
-REOPEN_REGELN = frozenset({"commit_ohne_nummer", "beweis_fehlt", "test_ersetzt", "vps_ungleich_origin"})
+#: Regeln, nach denen capo ein geschlossenes Ticket wieder öffnet (#448, #864).
+REOPEN_REGELN = schliess_pruefer.CAPO_REGELN | frozenset({"vps_ungleich_origin"})
 
 
 def reopen_funde(
@@ -2368,14 +2010,30 @@ def reopen_funde(
     staging_stand: StagingStand | None = None,
     issue: dict[str, Any] | None = None,
 ) -> list[Verstoss]:
-    """Alle Verstöße, die ein geschlossenes Ticket wieder öffnen (regel_vps nur mit VPS-Konfig)."""
-    funde = [
-        regel_commit(n, eigene),
-        regel_beweis(repo, ref, n, eigene, belege),
-        regel_tests(repo, n, eigene),
-        regel_vps(repo, n, eigene, vps, kopf, alle_zeilen, staging_stand, issue) if vps.get("ssh") else None,
-    ]
-    return [f for f in funde if f]
+    """Alle Verstöße, die ein geschlossenes Ticket wieder öffnen.
+
+    Die Schließ-Regeln laufen ausschließlich über :func:`schliess_pruefer.pruefe` (#864);
+    ``regel_vps`` bleibt capos eigene Live-Drift-Prüfung (nur mit VPS-Konfig).
+    """
+    ergebnis = schliess_pruefer.pruefe(
+        schliess_pruefer.Stand(
+            repo=repo,
+            ticket=n,
+            ref=ref,
+            belege_ordner=belege,
+            eigene=eigene,
+            form_pruefen=False,
+            gruen_pruefen=False,
+            beleg_auf_hauptzweig=False,
+            git_lauf=_git,
+        )
+    )
+    funde = [Verstoss(n, g.regel, g.text, kern=g.kern) for g in ergebnis.gruende]
+    if vps.get("ssh"):
+        vps_fund = regel_vps(repo, n, eigene, vps, kopf, alle_zeilen, staging_stand, issue)
+        if vps_fund is not None:
+            funde.append(vps_fund)
+    return funde
 
 
 def _gesehene_schliessungen(n: int, erledigt: set[str]) -> list[datetime]:
