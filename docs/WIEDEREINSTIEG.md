@@ -56,6 +56,23 @@ was zum Weiterbauen nötig ist.
 
 Chronologisch absteigend (neuester Eintrag oben, ältere Einträge als Verlauf darunter; alle Uhrzeiten Europe/Berlin).
 
+- **2026-11-28 09:20 (Europe/Berlin, main 4d1cd96):** Automatisch baubare Skill-Pakete auf dem Bau-Server (Wellen 14–47, 118 Commits seit `7005f9c`, 202 gemergte Pakete im Merge-Zug) abgeschlossen; Abschluss-Kaltstart-Probe M15 („vor fertig“, `#755`):
+  - Wichtige gemergte Bausteine seit `7005f9c` (Auswahl):
+    - **Protokoll, Taktgeber & Härtung:** Ereignis-Protokoll `origin/protokoll` (`#903`/`#904`, PRs 947, 948, 952), Taktgeber-Skill-Teile für Bau-Server und Windows-PC ohne Admin-Rechte (`#906`/`#907`, PRs 940, 945, 949, 959), Schließ-Prüfer & Pre-Push-Hook (`#864`/`#865`/`#888`, PRs 917, 938, 943), Aufseher-/Leiter-Härtung & Klon-Nachziehen (`#890`/`#894`/`#895`/`#897`, PRs 937, 939, 941, 942), Windows-2-Tab-Beleg (`#782` geschlossen).
+    - **Probe-7-Fixes (`-mit` / `-ohne`):** Abnahme-`passt` wirkt an einer gemeinsamen Stelle für beide Wege (`#924`/`#935`, PRs 936, 944), Leitstand-Staffelwechsel an der Handoff-Grenze & Übergabe-Dateien übergehen (`#950`, PR 953), Spec-Ende automatisch schließen und aufräumen (`#951`, PR 954; B11-Weg-Test über `to_spawn.py spec-schliessen 1` am 28.11. in beiden Varianten bestanden).
+    - **Etappe 3b (Prüf-Werkzeugkasten & Messungen):** Mess-Vorstufe 3b-0 (`#98`, PR 958: Entscheidung Variante 3 allein über Abbruch-Kriterien b/c), Prüfzeit unter Last (`#290`, PR 957), M12 Probe-Repo mit zweiter Fehlerreihe 26/26 ohne Übersehen (`#104`, PR 955), 3b-5 M12 DuoPlus nicht anwendbar + Bremse bei 2 Gates `1,29×–1,34× <= 1,5×` (`#105`, PR 960), 3b-6 Vorprüfung Stufe 0–3 + 2. Gate-Platz + M13-Probe-Messung (`#106`, PR 961, `main 4d1cd96`).
+  - **Bau-Server-Sicherung & installierter Skill-Stand:** `to_spawn.py sichern --pruefen` ist auf dem Bau-Server grün (Exit 0, privates Sicherungs-Ziel im Notiz-Tresor, 2 Muster / 5 Quellen, 0 ohne Treffer). Die installierte Kopie unter `~/.claude/skills/to-spawn/STAND.json` steht während laufender Sitzungen noch auf `5fb4af9` und wird nach Abschluss/im Wartungsfenster per `install.sh` nachgezogen.
+  - **Offen im Pull-Request (laut `gh pr list --state open`):** `956` (Issue `#312`, fälschungssichere Handy-Freigabe — auf Entscheidung des Nutzers vorerst geparkt, nicht ohne Freigabe und zweite Prüfung mergen).
+  - **Offene Issues (10 Stück laut `gh issue list --state open`; Etappen-Sammel-Issues 49–53 bereits geschlossen):**
+    - `#755` (diese L5-Abschluss-Kaltstart-Probe M15 „vor fertig“ auf dem Bau-Server).
+    - Skill-Teil gemergt, Rest wartet auf Nutzer-Entscheidung, Windows-PC oder App-Repo: `#98` (Teil b / Verzicht Kriterium a), `#106` (Einbindung in App-Schlange Staging & M13-DuoPlus-Schwellen), `#312` (vorerst geparkt, PR 956), `#426` und Eltern-Spec `#557` (B11-Weg-Test bestanden; neuer voller End-to-End-Probe-Lauf mit automatischem Spec-Ende erst auf ausdrückliches Wort des Nutzers), `#906` (App-Ticket #1400 / Bau-Server-Cron-Aktivierung / App-ADR), `#907` (echter Windows-11-PC-Nachweis ohne Admin + `#906`).
+    - Termin- / Wartungsfenster-Tickets: `#875` (Smart-Zone-14-Tage-Nachmessung, Frist ab 03.12.2026), `#887` (Bau-Server-Swap/Speicherschutz + Units + Neustart-Probe im Wartungsfenster ohne laufende Bau-Sessions).
+  - **Stand Abnahme M1–M15 (`docs/ABNAHME_L1.md`):** `M12` (Probe-Repo + DuoPlus nicht anwendbar), `M14` (Temp-Ordner & Hausmeister Probe 5) und `M15` (Bau-Server + Windows-PC mitten im Bau & Maschinen-Pfade; Abschluss-Probe „vor fertig“ Lauf 5 mit diesem Stand für `#755` belegt); `M1` und `M13` teilweise belegt (M13 DuoPlus-Schwellen ehrlich unbelegt); `M2`–`M11` noch offen (PC, App-Repo bzw. freigegebener Probe-Lauf).
+  - **Als Nächstes:**
+    1. Abschluss-Probe `#755` (PR + Merge + belegtes Schließen) — damit ist die automatisch baubare Skill-Seite abgeschlossen.
+    2. Im Wartungsfenster / auf Wort des Nutzers: Skill auf dem Bau-Server per `install.sh` nachziehen, `#887` (Swap/Units/Neustart-Probe) durchführen, am Windows-PC `#907` (und offene Windows-M-Zeilen) nachweisen, im App-Repo Staging-Einbindungen (`#906`, `#106`) sowie Entscheidungen zu `#98` Teil b, `#312` und ggf. Probe-Lauf (`#426`/`#557`) klären.
+    3. Ab 03.12.2026: `#875` (14-Tage-Nachmessung Smart Zone) auswerten.
+
 - **2026-11-25 19:30 (Europe/Berlin, main 7005f9c):** Welle-13-Pakete gemergt und Windows-Teil von L5 (#756) am PC belegt:
   - Seit `0741c91` gemergt: Pull-Requests 764 (Issue 762, Windows-Test-Härtung), 765 (Issue 755,
     `sichern --pruefen` und Bau-Server-Beleg), 766 (Issue 578, Werkzeug-Fehler-Log), 768 (Issue 760,
@@ -484,13 +501,13 @@ Etappen und Abnahme gilt der Plan. Der Plan-Abschnitt „Stand“ ist ein älter
    PC (Windows): ein Terminal-Tab „Ober-Aufsicht“. Läuft eine Kette, nicht eine zweite starten,
    sondern dieser zuarbeiten.
 3. **Skill installieren (frische Maschine) und Wirklichkeit gegen Dokumente abgleichen:**
-   - **Voraussetzungen:** `git`, Python 3.12+, `pytest`, angemeldetes `gh`, `claude`; unter Windows
+   - **Voraussetzungen:** `git`, Python 3.12+ (unter Linux ggf. als `python3` aufrufen, falls kein `python`-Symlink besteht), `pytest`, angemeldetes `gh`, `claude`; unter Windows
      zusätzlich PowerShell 7 (`pwsh`).
-   - **Erstinstallation**, falls `~/.claude/skills/to-spawn` noch nicht vorhanden ist:
+   - **Erstinstallation**, falls `~/.claude/skills/to-spawn` noch nicht vorhanden ist (beide Skripte installieren Skill, Review-Werkzeug `~/.claude/review/` und Review-Hooks mit):
      - Linux: `git clone https://github.com/Shavy72/claude-skill-to-spawn ~/claude-skill-to-spawn && bash ~/claude-skill-to-spawn/install.sh`
      - Windows (PowerShell 7): `git clone https://github.com/Shavy72/claude-skill-to-spawn "$HOME\claude-skill-to-spawn"` und `pwsh -File "$HOME\claude-skill-to-spawn\install.ps1"` (dauerhafter Klon-Ordner statt Temp, damit `STAND.json` den Klon für spätere Updates und Zweig-Uploads kennt).
    - **Abgleich:** `gh pr list --state open`, `gh issue list`, `git log origin/main -15`, installierter
-     Skill-Stand auf der Maschine (`python ~/.claude/skills/to-spawn/to_spawn.py einrichten --pruefen`,
+     Skill-Stand auf der Maschine (`python3 ~/.claude/skills/to-spawn/to_spawn.py einrichten --pruefen`,
      unter Windows bei Anführungszeichen oder `cmd.exe` mit `"$HOME\.claude\skills\to-spawn\to_spawn.py"`
      statt `"~/..."`). Meldet `--pruefen` `skill_aktuell: weicht_ab` (bzw. `grosse_luecke` beim
      schreibenden `einrichten`), ist der Skill veraltet: im aktiven Skill-Klon `git pull` und danach
@@ -503,6 +520,7 @@ Etappen und Abnahme gilt der Plan. Der Plan-Abschnitt „Stand“ ist ein älter
    Maschine ohne Start-Skript:** ein neues Terminal außerhalb jeder laufenden Claude-Session öffnen
    (oder geerbte Sitzungs-Variablen wie `CLAUDECODE`, `CLAUDE_CODE_SESSION_*`,
    `CLAUDE_CODE_CHILD_SESSION` vor dem Start entfernen — vollständige Liste in `to_spawn/sitzung_env.py`;
+   unter Linux/bash z. B. `unset CLAUDECODE CLAUDE_CODE_CHILD_SESSION $(env | cut -d= -f1 | grep '^CLAUDE_CODE_SESSION_')`,
    unter PowerShell z. B. `Remove-Item Env:CLAUDECODE,Env:CLAUDE_CODE_CHILD_SESSION -ErrorAction SilentlyContinue; Get-ChildItem Env:CLAUDE_CODE_SESSION_* | Remove-Item`)
    und `claude` dort frisch starten. Der Startauftrag lautet:
    „Lies `docs/WIEDEREINSTIEG.md` im Skill-Repo und verfolge das Ziel 1:1 weiter, bis es erreicht
@@ -518,7 +536,9 @@ Etappen und Abnahme gilt der Plan. Der Plan-Abschnitt „Stand“ ist ein älter
 
 - Keine Fragen an den Menschen. Entscheidung und Grund ins Entscheidungs-Log, weiterbauen (L1, L2).
   Echte Sperre (kein Zugriff, Secret fehlt): Eintrag im Entscheidungs-Log, Issue anlegen, mit einem
-  anderen Paket weiterbauen.
+  anderen Paket weiterbauen. Ausdrücklich dem Auftraggeber vorbehaltene Entscheidungen (App-Live,
+  Wartungsfenster, geparkte Sicherheits-Freigaben, ausdrücklich angehaltene Probe-Läufe) bleiben
+  unberührt und werden respektiert, ohne sie eigenmächtig zu übergehen.
 - Der Auftrag wird bei jeder Ablösung im Wortlaut weitergegeben, nie als Zusammenfassung (L2).
 - Erst vergleichen und messen, dann bauen; bewährtes Werkzeug vor Eigenbau (L3).
 - Aufräumen, RAM, Platte, Neustarts landen nie beim Menschen (L4).
