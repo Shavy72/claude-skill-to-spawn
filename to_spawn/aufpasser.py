@@ -1549,6 +1549,26 @@ def session_finden(pane_pid: int, window_id: str, pane_id: str, heim: Path | Non
     return None
 
 
+def _warte_gruppe_weg(pgid: int, frist_s: float = 2.0) -> None:
+    """Wartet kurz, bis nach ``SIGKILL`` auch Enkel in der Prozessgruppe abgeräumt sind.
+
+    ``lauf.communicate()`` wartet nur auf das direkte Kind (``git``); Remote-Helfer in
+    derselben Prozessgruppe können unter Last wenige Millisekunden im Kernel nachlaufen,
+    bis ``init`` sie abräumt (#951).
+    """
+    if not hasattr(os, "killpg"):
+        return
+    ende = _stdlib_time.monotonic() + frist_s
+    while True:
+        try:
+            os.killpg(pgid, 0)
+        except (ProcessLookupError, PermissionError):
+            return
+        if _stdlib_time.monotonic() >= ende:
+            return
+        _stdlib_time.sleep(0.01)
+
+
 def _git(cwd: Path, *args: str, env: dict[str, str] | None = None, zeitgrenze: int = 300) -> str:
     # Eigene Prozessgruppe: nach der Zeitgrenze stirbt die ganze Gruppe, auch
     # Remote-Helfer (ssh, remote-ext), nicht nur git selbst (#1497, B5).
@@ -1570,14 +1590,17 @@ def _git(cwd: Path, *args: str, env: dict[str, str] | None = None, zeitgrenze: i
     try:
         stdout, stderr = lauf.communicate(timeout=zeitgrenze)
     except subprocess.TimeoutExpired:
+        hat_killpg = hasattr(os, "killpg")
         try:
-            if hasattr(os, "killpg"):
+            if hat_killpg:
                 os.killpg(lauf.pid, signal.SIGKILL)
             else:
                 lauf.kill()
         except ProcessLookupError:
             pass
         lauf.communicate()
+        if hat_killpg:
+            _warte_gruppe_weg(lauf.pid)
         raise RuntimeError(f"git {' '.join(args[:3])}: Zeitgrenze {zeitgrenze} s") from None
     if lauf.returncode != 0:
         raise RuntimeError(f"git {' '.join(args[:3])}: {stderr.strip()[:300]}")
