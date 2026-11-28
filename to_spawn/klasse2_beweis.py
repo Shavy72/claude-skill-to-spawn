@@ -382,6 +382,11 @@ def extrahiere_token(text: str) -> str | None:
     return treffer[0]
 
 
+def _text_gleich(a: str, b: str) -> bool:
+    """Konstantzeit-Vergleich für beliebige UTF-8-Texte (auch mit Umlauten)."""
+    return hmac.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
+
+
 def beweis_pruefen(
     token: str,
     schluessel: Sequence[OeffentlicherSchluessel],
@@ -428,7 +433,7 @@ def beweis_pruefen(
     if any(not isinstance(daten.get(feld), str) for feld in erforderlich):
         raise BeweisFehler("Pflichtfeld in der Beweis-Nutzlast fehlt oder hat falschen Typ.")
 
-    if not hmac.compare_digest(daten["key_id"], geprueft_mit.kennung):
+    if not _text_gleich(daten["key_id"], geprueft_mit.kennung):
         raise BeweisFehler("Schlüssel-Kennung im Beweis stimmt nicht mit dem Prüfschlüssel überein.")
     if not daten["wahl"].strip():
         raise BeweisFehler("Leere Wahl im Beweis.")
@@ -436,19 +441,19 @@ def beweis_pruefen(
         raise BeweisFehler("Challenge im Beweis ist zu kurz.")
 
     erwartet_ticket = str(ticket).strip()
-    if not hmac.compare_digest(daten["ticket"], erwartet_ticket):
+    if not _text_gleich(daten["ticket"], erwartet_ticket):
         raise BeweisFehler("Beweis gilt für ein anderes Ticket.")
-    if frage_id is not None and not hmac.compare_digest(daten["id"], str(frage_id)):
+    if frage_id is not None and not _text_gleich(daten["id"], str(frage_id)):
         raise BeweisFehler("Beweis gilt für eine andere Frage-ID.")
     if challenge is not None and (
-        len(str(challenge)) < MIN_CHALLENGE_LAENGE or not hmac.compare_digest(daten["challenge"], str(challenge))
+        len(str(challenge)) < MIN_CHALLENGE_LAENGE or not _text_gleich(daten["challenge"], str(challenge))
     ):
         raise BeweisFehler("Challenge stimmt nicht überein (möglicher Replay).")
-    if frage is not None and not hmac.compare_digest(daten["frage_sha256"], frage_digest(frage)):
+    if frage is not None and not _text_gleich(daten["frage_sha256"], frage_digest(frage)):
         raise BeweisFehler("Fragetext stimmt nicht mit dem signierten Digest überein.")
-    if wahl is not None and not hmac.compare_digest(daten["wahl"], str(wahl)):
+    if wahl is not None and not _text_gleich(daten["wahl"], str(wahl)):
         raise BeweisFehler("Wahl stimmt nicht mit dem signierten Beweis überein.")
-    if grund is not None and not hmac.compare_digest(daten["grund"], str(grund)):
+    if grund is not None and not _text_gleich(daten["grund"], str(grund)):
         raise BeweisFehler("Grund stimmt nicht mit dem signierten Beweis überein.")
 
     return GepruefterBeweis(
@@ -517,17 +522,27 @@ def _sicheres_git() -> str | None:
     return shutil.which("git")
 
 
+def _git_env() -> dict[str, str]:
+    """Bereinigte Umgebung für vertrauenswürdige ``git``-Aufrufe (ohne ``GIT_*``, feste C-Locale)."""
+    env = {k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_")}
+    env["LC_ALL"] = "C"
+    env["LANGUAGE"] = "C"
+    env["LANG"] = "C"
+    return env
+
+
 def _git_lauf(repo: Path, *args: str) -> subprocess.CompletedProcess[str] | None:
     git_bin = _sicheres_git()
     if not git_bin:
         return None
     try:
         return subprocess.run(
-            [git_bin, "-C", str(repo), *args],
+            [git_bin, "--no-replace-objects", "-C", str(repo), *args],
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
+            env=_git_env(),
             timeout=10,
             check=False,
             **prozessbaum.fensterlos(),
@@ -598,18 +613,31 @@ def _parse_konfig_schluessel(text: str, *, quelle: str) -> tuple[OeffentlicherSc
 
 
 def _origin_hauptref(repo: Path) -> str | None:
-    """Ermittelt ``origin/<hauptzweig>`` des Repos oder ``None``, wenn kein Remote-Hauptzweig existiert."""
-    if not (repo / ".git").exists():
+    """Ermittelt ``origin/<hauptzweig>`` des Repos oder ``None``, wenn kein Remote-Hauptzweig existiert.
+
+    Existiert ``.git`` im Repo, ist aber kein sicheres ``git`` auffindbar, wird fail-closed
+    :class:`BeweisKonfigFehler` geworfen (kein stiller Rückfall auf den Arbeitsbaum).
+    """
+    git_eintrag = repo / ".git"
+    if not (git_eintrag.exists() or git_eintrag.is_symlink()):
         return None
+    if not _sicheres_git():
+        raise BeweisKonfigFehler("git fehlt: origin-Hauptzweig für vertrauenswürdige Schlüssel nicht prüfbar.")
     sym = _git_lauf(repo, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
-    if sym is not None and sym.returncode == 0 and sym.stdout.strip().startswith("origin/"):
+    if sym is None:
+        raise BeweisKonfigFehler("git fehlt: origin-Hauptzweig für vertrauenswürdige Schlüssel nicht prüfbar.")
+    if sym.returncode == 0 and sym.stdout.strip().startswith("origin/"):
         ref = sym.stdout.strip()
         pruef = _git_lauf(repo, "rev-parse", "--verify", "--quiet", f"refs/remotes/{ref}")
-        if pruef is not None and pruef.returncode == 0:
+        if pruef is None:
+            raise BeweisKonfigFehler("git fehlt: origin-Hauptzweig für vertrauenswürdige Schlüssel nicht prüfbar.")
+        if pruef.returncode == 0:
             return ref
     for zweig in ("main", "master"):
         pruef = _git_lauf(repo, "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{zweig}")
-        if pruef is not None and pruef.returncode == 0:
+        if pruef is None:
+            raise BeweisKonfigFehler("git fehlt: origin-Hauptzweig für vertrauenswürdige Schlüssel nicht prüfbar.")
+        if pruef.returncode == 0:
             return f"origin/{zweig}"
     return None
 
@@ -630,16 +658,20 @@ def vertraute_schluessel(hauptbaum: Path) -> tuple[OeffentlicherSchluessel, ...]
 
     origin_ref = _origin_hauptref(hauptbaum)
     if origin_ref is not None:
-        obj = f"{origin_ref}:.to-spawn/config.json"
+        konfig_pfad = ".to-spawn/config.json"
+        liste = _git_lauf(hauptbaum, "ls-tree", "-z", "--name-only", origin_ref, "--", konfig_pfad)
+        if liste is None:
+            raise BeweisKonfigFehler("git fehlt: vertrauenswürdige Schlüssel auf origin nicht prüfbar.")
+        if liste.returncode != 0:
+            raise BeweisKonfigFehler(f"git ls-tree für {origin_ref} fehlgeschlagen: {liste.stderr.strip()}")
+        if konfig_pfad not in [e for e in liste.stdout.split("\0") if e]:
+            return ()
+        obj = f"{origin_ref}:{konfig_pfad}"
         erg = _git_lauf(hauptbaum, "cat-file", "-p", obj)
         if erg is None:
             raise BeweisKonfigFehler("git fehlt: vertrauenswürdige Schlüssel auf origin nicht prüfbar.")
         if erg.returncode == 0:
             return _parse_konfig_schluessel(erg.stdout, quelle=obj)
-        # Datei existiert auf origin/<hauptzweig> schlicht nicht → keine Schlüssel im Repo.
-        err = erg.stderr.lower()
-        if any(m in err for m in ("does not exist", "not a valid object name", "exists on disk, but not in")):
-            return ()
         raise BeweisKonfigFehler(f"git cat-file für {obj} fehlgeschlagen: {erg.stderr.strip()}")
 
     lokal = hauptbaum / ".to-spawn" / "config.json"

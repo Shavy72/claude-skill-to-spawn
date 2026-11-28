@@ -76,10 +76,10 @@ def _git(repo: Path, *args: str) -> None:
 def _git_repo_mit_origin(tmp_path: Path, schluessel: list[str]) -> Path:
     """Erstellt ein lokales Repo samt lokalem Bare-Remote ``origin/main`` mit vertrautem Schlüssel."""
     bare = tmp_path / "origin.git"
-    bare.mkdir()
+    bare.mkdir(parents=True, exist_ok=True)
     _git(bare, "init", "--bare", "-q", "-b", "main")
     repo = tmp_path / "repo"
-    repo.mkdir()
+    repo.mkdir(parents=True, exist_ok=True)
     _git(repo, "init", "-q", "-b", "main")
     _git(repo, "config", "user.name", "Test")
     _git(repo, "config", "user.email", "test@example.invalid")
@@ -595,3 +595,273 @@ def test_doku_und_befugnis_text_nennen_variantenvergleich_und_handy_weg() -> Non
     assert "beweis-anfrage" in text and "beweis-antwort" in text
     assert "{" not in text and "}" not in text
     assert "uebertragen" not in text and "Antwort <id>:" not in text
+
+
+# --- 5. Regressionstests aus der Sicherheitsprüfung (Fix-Runde 2, PR #956) -------------------
+
+
+def _git_ausgabe(repo: Path, *args: str, stdin_text: str | None = None) -> str:
+    erg = subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        input=stdin_text,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return erg.stdout.strip()
+
+
+def test_abnahme_1_git_env_und_replace_objects_hebeln_origin_nicht_aus(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``GIT_*``-Env-Variablen (z. B. ``GIT_DIR``) und ``git replace`` hebeln ``origin/main`` nicht aus."""
+    from to_spawn import briefkasten, klasse2_beweis
+
+    handy_seed, handy_pub = klasse2_beweis.schluesselpaar_erzeugen()
+    angreifer_seed, angreifer_pub = klasse2_beweis.schluesselpaar_erzeugen()
+    handy_str = klasse2_beweis.formatiere_oeffentlichen_schluessel(handy_pub)
+    angreifer_str = klasse2_beweis.formatiere_oeffentlichen_schluessel(angreifer_pub)
+
+    repo = _git_repo_mit_origin(tmp_path / "echt", [handy_str])
+    angreifer_repo = _git_repo_mit_origin(tmp_path / "angreifer", [angreifer_str])
+    fid = briefkasten.einwerfen("7", "Live schalten?", "nein", 2, [], hauptbaum=repo)
+    anfrage = briefkasten.beweis_anfrage("7", fid, hauptbaum=repo)
+    angreifer_token = klasse2_beweis.beweis_erzeugen(
+        angreifer_seed,
+        ticket="7",
+        frage_id=fid,
+        frage=anfrage["frage"],
+        challenge=anfrage["challenge"],
+        wahl="ja",
+        grund="git-dir-trick",
+    )
+
+    # (1) GIT_DIR + weitere GIT_*-Variablen zeigen auf das Angreifer-Repo
+    monkeypatch.setenv("GIT_DIR", str(angreifer_repo / ".git"))
+    monkeypatch.setenv("GIT_COMMON_DIR", str(angreifer_repo / ".git"))
+    monkeypatch.setenv("GIT_OBJECT_DIRECTORY", str(angreifer_repo / ".git" / "objects"))
+    monkeypatch.setenv("GIT_ALTERNATE_OBJECT_DIRECTORIES", str(angreifer_repo / ".git" / "objects"))
+    monkeypatch.setenv("GIT_REPLACE_REF_BASE", "refs/evil-replace/")
+
+    schluessel = klasse2_beweis.vertraute_schluessel(repo)
+    assert [k.roh for k in schluessel] == [handy_pub]
+    with pytest.raises(briefkasten.Verweigert):
+        briefkasten.beweis_einreichen("7", angreifer_token, hauptbaum=repo)
+    assert briefkasten.lesen("7", fid, hauptbaum=repo) == briefkasten.NUTZER
+
+    # Auch über die CLI mit gesetztem GIT_DIR scheitert der Angreifer-Beweis
+    cli_angriff = _cli(
+        repo,
+        "beweis-antwort",
+        "7",
+        "--beweis",
+        angreifer_token,
+        env_zusatz={"GIT_DIR": str(angreifer_repo / ".git")},
+    )
+    assert cli_angriff.returncode == 2
+    assert briefkasten.lesen("7", fid, hauptbaum=repo) == briefkasten.NUTZER
+
+    # (2) git replace auf den Konfig-Blob im echten Repo bleibt durch --no-replace-objects wirkungslos
+    monkeypatch.delenv("GIT_DIR", raising=False)
+    monkeypatch.delenv("GIT_COMMON_DIR", raising=False)
+    monkeypatch.delenv("GIT_OBJECT_DIRECTORY", raising=False)
+    monkeypatch.delenv("GIT_ALTERNATE_OBJECT_DIRECTORIES", raising=False)
+    monkeypatch.delenv("GIT_REPLACE_REF_BASE", raising=False)
+
+    orig_blob = _git_ausgabe(repo, "rev-parse", "origin/main:.to-spawn/config.json")
+    angreifer_json = json.dumps({"klasse_2": {"oeffentliche_schluessel": [angreifer_str]}}) + "\n"
+    ersatz_blob = _git_ausgabe(repo, "hash-object", "-w", "--stdin", stdin_text=angreifer_json)
+    _git(repo, "replace", orig_blob, ersatz_blob)
+
+    assert [k.roh for k in klasse2_beweis.vertraute_schluessel(repo)] == [handy_pub]
+    with pytest.raises(briefkasten.Verweigert):
+        briefkasten.beweis_einreichen("7", angreifer_token, hauptbaum=repo)
+
+    # Echter Handy-Beweis funktioniert trotz GIT_DIR und git replace weiterhin
+    monkeypatch.setenv("GIT_DIR", str(angreifer_repo / ".git"))
+    echt_token = klasse2_beweis.beweis_erzeugen(
+        handy_seed,
+        ticket="7",
+        frage_id=fid,
+        frage=anfrage["frage"],
+        challenge=anfrage["challenge"],
+        wahl="ja",
+        grund="Handy ok",
+    )
+    briefkasten.beweis_einreichen("7", echt_token, hauptbaum=repo)
+    antwort = briefkasten.lesen("7", fid, hauptbaum=repo)
+    assert isinstance(antwort, briefkasten.Antwort) and antwort.wahl == "ja" and antwort.von == "nutzer"
+
+
+def test_abnahme_1_json_downgrade_auf_klasse_3_und_nutzer_ohne_beweis_abgelehnt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bei aktiven Schlüsseln zählt ``von == 'nutzer'`` auch nach JSON-Downgrade auf ``klasse=3`` nicht ohne Beweis."""
+    from to_spawn import briefkasten, klasse2_beweis
+
+    handy_seed, handy_pub = klasse2_beweis.schluesselpaar_erzeugen()
+    angreifer_seed, _angreifer_pub = klasse2_beweis.schluesselpaar_erzeugen()
+    sys_datei = tmp_path / "sys" / "klasse2_schluessel.json"
+    sys_datei.parent.mkdir()
+    sys_datei.write_text(
+        json.dumps({"oeffentliche_schluessel": [klasse2_beweis.formatiere_oeffentlichen_schluessel(handy_pub)]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(klasse2_beweis, "_SYSTEM_SCHLUESSEL_DATEI", sys_datei)
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    # (1) Direkter JSON-Downgrade einer Klasse-2-Frage auf klasse=3 + harmloser Text + von="nutzer" ohne Beweis
+    fid_k2 = briefkasten.einwerfen("7", "Live schalten?", "nein", 2, [], ziel="live", art="deploy", hauptbaum=repo)
+    datei7 = repo / ".to-spawn" / "entscheidung-7.json"
+    daten7 = json.loads(datei7.read_text(encoding="utf-8"))
+    daten7["fragen"][-1]["klasse"] = 3
+    daten7["fragen"][-1]["frage"] = "Welche Farbe für den Knopf?"
+    daten7["fragen"][-1]["vorschlag"] = "blau"
+    daten7["fragen"][-1]["ziel"] = ""
+    daten7["fragen"][-1]["art"] = ""
+    daten7["fragen"][-1]["antwort"] = {
+        "ts": "2026-11-28T01:30:00+00:00",
+        "wahl": "ja",
+        "grund": "json-downgrade",
+        "von": "nutzer",
+    }
+    datei7.write_text(json.dumps(daten7), encoding="utf-8")
+
+    assert briefkasten.lesen("7", fid_k2, hauptbaum=repo) == briefkasten.WARTET
+    assert [o["id"] for o in briefkasten.offene(["7"], hauptbaum=repo)] == [fid_k2]
+    assert briefkasten.liste(["7"], hauptbaum=repo) == []
+
+    # Auch mit fremd signiertem Token bleibt eine herabgestufte Nutzer-Antwort ungültig
+    angreifer_token = klasse2_beweis.beweis_erzeugen(
+        angreifer_seed,
+        ticket="7",
+        frage_id=fid_k2,
+        frage=daten7["fragen"][-1]["frage"],
+        challenge=daten7["fragen"][-1]["challenge"],
+        wahl="ja",
+        grund="json-downgrade",
+    )
+    daten7["fragen"][-1]["antwort"]["beweis"] = angreifer_token
+    datei7.write_text(json.dumps(daten7), encoding="utf-8")
+    assert briefkasten.lesen("7", fid_k2, hauptbaum=repo) == briefkasten.WARTET
+    assert briefkasten.liste(["7"], hauptbaum=repo) == []
+
+    # (2) Symmetrisch in _schreibe_antwort / nutzer_antworten: auch Klasse-3-Frage verlangt Handy-Beweis
+    fid_k3 = briefkasten.einwerfen("8", "Welche Farbe für den Knopf?", "blau", 3, [], hauptbaum=repo)
+    with pytest.raises(briefkasten.Verweigert):
+        briefkasten.nutzer_antworten("8", fid_k3, "grün", [], "ohne beweis", hauptbaum=repo)
+    assert briefkasten.lesen("8", fid_k3, hauptbaum=repo) == briefkasten.WARTET
+
+    # Mit echtem Handy-Beweis darf der Nutzer auch Klasse-3 beantworten
+    anfrage8 = briefkasten.beweis_anfrage("8", fid_k3, hauptbaum=repo)
+    echt_token8 = klasse2_beweis.beweis_erzeugen(
+        handy_seed,
+        ticket="8",
+        frage_id=fid_k3,
+        frage=anfrage8["frage"],
+        challenge=anfrage8["challenge"],
+        wahl="grün",
+        grund="Handy ok",
+    )
+    briefkasten.beweis_einreichen("8", echt_token8, hauptbaum=repo)
+    antwort8 = briefkasten.lesen("8", fid_k3, hauptbaum=repo)
+    assert isinstance(antwort8, briefkasten.Antwort) and antwort8.wahl == "grün" and antwort8.von == "nutzer"
+
+    # (3) Aufseher darf normale Klasse-3-Fragen weiter ohne Handy-Beweis beantworten
+    fid_aufseher = briefkasten.einwerfen("9", "Welcher Abstand?", "8px", 3, [], hauptbaum=repo)
+    briefkasten.antworten("9", fid_aufseher, "8px", ["Ticket #9"], "passt", hauptbaum=repo)
+    antwort9 = briefkasten.lesen("9", fid_aufseher, hauptbaum=repo)
+    assert isinstance(antwort9, briefkasten.Antwort) and antwort9.von == "aufseher"
+
+
+def test_vertraute_schluessel_ohne_konfig_auf_origin_unter_deutscher_locale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deutsche Locale darf bei Repos ohne ``.to-spawn/config.json`` auf ``origin/main`` keinen Fehlalarm auslösen."""
+    from to_spawn import briefkasten, klasse2_beweis
+
+    bare = tmp_path / "origin.git"
+    bare.mkdir(parents=True, exist_ok=True)
+    _git(bare, "init", "--bare", "-q", "-b", "main")
+    repo = tmp_path / "repo"
+    repo.mkdir(parents=True, exist_ok=True)
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "config", "user.name", "Test")
+    _git(repo, "config", "user.email", "test@example.invalid")
+    (repo / "README.md").write_text("hallo\n", encoding="utf-8")
+    _git(repo, "add", "README.md")
+    _git(repo, "commit", "-q", "-m", "chore: init")
+    _git(repo, "remote", "add", "origin", str(bare))
+    _git(repo, "push", "-q", "-u", "origin", "main")
+
+    monkeypatch.setenv("LANGUAGE", "de")
+    monkeypatch.setenv("LC_ALL", "de_DE.UTF-8")
+    monkeypatch.setenv("LANG", "de_DE.UTF-8")
+
+    beobachtet: list[tuple[list[str], dict[str, str] | None]] = []
+    echt_run = subprocess.run
+
+    def spion(cmd: list[str], *args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        beobachtet.append((list(cmd), kwargs.get("env") if isinstance(kwargs.get("env"), dict) else None))
+        return echt_run(cmd, *args, **kwargs)  # type: ignore[arg-type,return-value]
+
+    monkeypatch.setattr(klasse2_beweis.subprocess, "run", spion)
+
+    assert klasse2_beweis.vertraute_schluessel(repo) == ()
+    assert beobachtet, "_git_lauf muss subprocess.run aufgerufen haben"
+    for cmd, env in beobachtet:
+        assert "--no-replace-objects" in cmd
+        assert env is not None
+        assert env.get("LC_ALL") == "C"
+        assert env.get("LANGUAGE") == "C"
+        assert not any(k.upper().startswith("GIT_") for k in env)
+
+    fid = briefkasten.einwerfen("10", "Welcher Titel?", "A", 3, [], hauptbaum=repo)
+    assert briefkasten.lesen("10", fid, hauptbaum=repo) == briefkasten.WARTET
+
+
+def test_fehlendes_git_im_git_repo_wirft_beweis_konfig_fehler_kein_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fehlt ``git`` in einem Repo mit ``.git``, sperrt ``vertraute_schluessel`` fail-closed statt Arbeitsbaum-Fallback."""
+    from to_spawn import briefkasten, klasse2_beweis
+
+    _handy_seed, handy_pub = klasse2_beweis.schluesselpaar_erzeugen()
+    angreifer_seed, angreifer_pub = klasse2_beweis.schluesselpaar_erzeugen()
+    repo = _git_repo_mit_origin(
+        tmp_path / "repo_mit_origin", [klasse2_beweis.formatiere_oeffentlichen_schluessel(handy_pub)]
+    )
+    fid = briefkasten.einwerfen("7", "Live schalten?", "nein", 2, [], hauptbaum=repo)
+    anfrage = briefkasten.beweis_anfrage("7", fid, hauptbaum=repo)
+
+    # Angreifer schreibt eigenen Schlüssel in den lokalen Arbeitsbaum
+    _schreibe_konfig(repo, [klasse2_beweis.formatiere_oeffentlichen_schluessel(angreifer_pub)])
+    angreifer_token = klasse2_beweis.beweis_erzeugen(
+        angreifer_seed,
+        ticket="7",
+        frage_id=fid,
+        frage=anfrage["frage"],
+        challenge=anfrage["challenge"],
+        wahl="ja",
+        grund="kein-git-fallback",
+    )
+
+    monkeypatch.setattr(klasse2_beweis, "_sicheres_git", lambda: None)
+
+    with pytest.raises(klasse2_beweis.BeweisKonfigFehler):
+        klasse2_beweis._origin_hauptref(repo)
+    with pytest.raises(klasse2_beweis.BeweisKonfigFehler):
+        klasse2_beweis.vertraute_schluessel(repo)
+    with pytest.raises(briefkasten.Verweigert):
+        briefkasten.beweis_einreichen("7", angreifer_token, hauptbaum=repo)
+    assert briefkasten.lesen("7", fid, hauptbaum=repo) == briefkasten.NUTZER
+
+    # Gegenprobe: reines Verzeichnis ohne .git liest weiterhin lokal ohne git
+    ohne_git = tmp_path / "ohne_git"
+    ohne_git.mkdir()
+    _schreibe_konfig(ohne_git, [klasse2_beweis.formatiere_oeffentlichen_schluessel(handy_pub)])
+    assert [k.roh for k in klasse2_beweis.vertraute_schluessel(ohne_git)] == [handy_pub]

@@ -55,7 +55,7 @@ import sys
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -192,7 +192,7 @@ def _lade(datei: Path) -> dict[str, Any] | None:
 
 
 def _jetzt() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _ist_klasse_2(f: Mapping[str, Any]) -> bool:
@@ -208,17 +208,17 @@ _LIVE_ART_WOERTER = frozenset(
     {"deploy", "deployen", "ausrollen", "live", "schalten", "freigabe", "freigeben", "starten"}
 )
 _LOESCH_WOERTER = frozenset({"lösch", "loesch", "delete", "entfern", "drop", "truncate", "destroy"})
-_NICHT_LIVE_WOERTER = (befugnis._KLASSE_2_WOERTER - {"live", "prod", "vps"}) | _LOESCH_WOERTER  # noqa: SLF001
+_NICHT_LIVE_WOERTER = (befugnis._KLASSE_2_WOERTER - {"live", "prod", "vps"}) | _LOESCH_WOERTER
 
 
 def _enthaelt_nicht_live_klasse_2(f: Mapping[str, Any]) -> bool:
     """True, sobald Frage, Vorschlag, Ziel oder Art ein Nicht-Live-Klasse-2-Wort trägt (Kosten, Konto, Löschen…)."""
     for feld in (f.get("frage"), f.get("vorschlag"), f.get("ziel"), f.get("art")):
-        norm = befugnis._norm(feld)  # noqa: SLF001 — einzige Normalisierung aus befugnis
+        norm = befugnis._norm(feld)  # einzige Normalisierung aus befugnis
         if not norm:
             continue
         teile = re.split(r"\W+", norm)
-        if any(w in norm for w in _NICHT_LIVE_WOERTER) or any(w in teile for w in befugnis._KLASSE_2_GANZWORT):  # noqa: SLF001
+        if any(w in norm for w in _NICHT_LIVE_WOERTER) or any(w in teile for w in befugnis._KLASSE_2_GANZWORT):
             return True
     return False
 
@@ -229,9 +229,9 @@ def ist_live_frage(f: Mapping[str, Any]) -> bool:
         return False
     if _enthaelt_nicht_live_klasse_2(f):
         return False
-    ziel = befugnis._norm(f.get("ziel"))  # noqa: SLF001
-    art = befugnis._norm(f.get("art"))  # noqa: SLF001
-    frage = befugnis._norm(f.get("frage"))  # noqa: SLF001
+    ziel = befugnis._norm(f.get("ziel"))
+    art = befugnis._norm(f.get("art"))
+    frage = befugnis._norm(f.get("frage"))
     ziel_live = any(w in ziel for w in _LIVE_ZIEL_WOERTER)
     art_teile = set(re.split(r"\W+", art)) if art else set()
     art_live = bool(art_teile & _LIVE_ART_WOERTER)
@@ -334,15 +334,15 @@ def _gilt(
     schluessel: Sequence[klasse2_beweis.OeffentlicherSchluessel] = (),
 ) -> bool:
     """Hat ``f`` eine gültige Antwort? Klasse 2 nur ``von`` :data:`NUTZER_VON` — und bei
-    eingerichteten Handy-Schlüsseln zusätzlich nur mit kryptographisch gültigem Ed25519-Beweis (#312)."""
+    eingerichteten Handy-Schlüsseln gilt jede Antwort mit ``von == NUTZER_VON`` (unabhängig
+    von der Frage-Klasse) nur mit kryptographisch gültigem Ed25519-Beweis (#312)."""
     if not _hat_antwort(f):
         return False
-    if not _ist_klasse_2(f):
-        return True
     antwort = f["antwort"]
-    if antwort.get("von") != NUTZER_VON:
+    von_nutzer = antwort.get("von") == NUTZER_VON
+    if _ist_klasse_2(f) and not von_nutzer:
         return False
-    if not schluessel:
+    if not (schluessel and von_nutzer):
         return True
     token = antwort.get("beweis")
     if not isinstance(token, str) or not token.strip():
@@ -425,7 +425,7 @@ def einwerfen(
             raise OSError(f"Ticket {nummer}: {inhalt.stoerung}")
         if inhalt.beiseitelegen:
             # Nie überschreiben, was nicht lesbar ist (Datenverlust): beiseitelegen.
-            stempel = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+            stempel = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
             datei.replace(datei.with_name(f"{datei.name}.kaputt-{stempel}"))
             log.warning("Kaputter Briefkasten %s nach .kaputt-%s verschoben.", datei, stempel)
         daten = daten or {"ticket": str(nummer), "fragen": []}
@@ -825,7 +825,7 @@ def _schreibe_antwort(
         frage = treffer[-1]
         beweis_sauber = str(beweis or "").strip()
         gepruefter_beweis: klasse2_beweis.GepruefterBeweis | None = None
-        if von == NUTZER_VON and ((_ist_klasse_2(frage) and schluessel) or beweis_sauber):
+        if von == NUTZER_VON and (schluessel or beweis_sauber):
             try:
                 gepruefter_beweis = klasse2_beweis.beweis_pruefen(
                     beweis_sauber,
@@ -991,8 +991,11 @@ def liste(
         except ValueError:
             continue
         for f in (daten or {}).get("fragen", []):
-            if konfig_fehler and _ist_klasse_2(f):
-                continue  # Schlüssel-Konfig kaputt: Klasse-2-Antworten nie still durchlassen
+            antwort_roh = f.get("antwort")
+            if konfig_fehler and (
+                _ist_klasse_2(f) or (isinstance(antwort_roh, dict) and antwort_roh.get("von") == NUTZER_VON)
+            ):
+                continue  # Schlüssel-Konfig kaputt: Klasse-2- und Nutzer-Antworten nie still durchlassen
             if not _gilt(f, ticket=nummer, schluessel=schluessel):
                 continue  # Klasse 2 gilt nur mit gültiger Antwort des Nutzers
             antwort = f["antwort"]
