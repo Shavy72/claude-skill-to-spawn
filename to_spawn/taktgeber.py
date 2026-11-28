@@ -22,6 +22,7 @@ aus #864); dieses Modul enthält keine eigene Fertig-Regel.
 from __future__ import annotations
 
 import argparse
+import getpass
 import html
 import logging
 import os
@@ -29,12 +30,14 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from xml.sax.saxutils import escape as xml_escape
 
 from . import (
     auswahl,
@@ -784,6 +787,85 @@ def _schtasks(*args: str) -> subprocess.CompletedProcess[str]:
         raise RuntimeError(f"schtasks {args[0]} hängt (über {SCHTASKS_ZEITLIMIT_S} s)") from fehler
 
 
+def _windows_benutzer_id() -> str:
+    """Aktuelle Windows-Benutzerkennung (``DOMAIN\\USER``) für benutzerbezogenes ``LogonTrigger``-XML."""
+    nutzer = (os.environ.get("USERNAME") or "").strip()
+    if not nutzer:
+        try:
+            nutzer = getpass.getuser().strip()
+        except (KeyError, OSError):
+            nutzer = ""
+    domaene = (os.environ.get("USERDOMAIN") or "").strip()
+    return f"{domaene}\\{nutzer}" if domaene and nutzer else nutzer
+
+
+def windows_anmelde_xml(pythonw: str, argumente: str, *, benutzer: str | None = None) -> str:
+    """Erzeugt Aufgabenplanungs-XML für den Anmelde-Auslöser ohne Admin-Rechte (#907).
+
+    ``schtasks /Create /F /SC ONLOGON`` scheitert auf Windows 11 ohne erhöhte Rechte mit
+    ``Zugriff verweigert``; ``/XML`` mit eigenem ``<UserId>`` im ``<LogonTrigger>`` und
+    ``LeastPrivilege`` legt die Aufgabe im normalen Nutzer-Kontext an.
+    """
+    user_esc = xml_escape((benutzer if benutzer is not None else _windows_benutzer_id()).strip())
+    befehl_esc = xml_escape(pythonw)
+    arg_esc = xml_escape(argumente)
+    return (
+        '<?xml version="1.0" encoding="UTF-16"?>\r\n'
+        '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">\r\n'
+        "  <Triggers>\r\n"
+        "    <LogonTrigger>\r\n"
+        "      <Enabled>true</Enabled>\r\n"
+        f"      <UserId>{user_esc}</UserId>\r\n"
+        "    </LogonTrigger>\r\n"
+        "  </Triggers>\r\n"
+        "  <Principals>\r\n"
+        '    <Principal id="Author">\r\n'
+        f"      <UserId>{user_esc}</UserId>\r\n"
+        "      <LogonType>InteractiveToken</LogonType>\r\n"
+        "      <RunLevel>LeastPrivilege</RunLevel>\r\n"
+        "    </Principal>\r\n"
+        "  </Principals>\r\n"
+        "  <Settings>\r\n"
+        "    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>\r\n"
+        "    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>\r\n"
+        "    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>\r\n"
+        "    <AllowHardTerminate>true</AllowHardTerminate>\r\n"
+        "    <StartWhenAvailable>true</StartWhenAvailable>\r\n"
+        "    <AllowStartOnDemand>true</AllowStartOnDemand>\r\n"
+        "    <Enabled>true</Enabled>\r\n"
+        "    <Hidden>false</Hidden>\r\n"
+        "  </Settings>\r\n"
+        '  <Actions Context="Author">\r\n'
+        "    <Exec>\r\n"
+        f"      <Command>{befehl_esc}</Command>\r\n"
+        f"      <Arguments>{arg_esc}</Arguments>\r\n"
+        "    </Exec>\r\n"
+        "  </Actions>\r\n"
+        "</Task>\r\n"
+    )
+
+
+def _windows_anmelde_aufgabe_anlegen(name: str, pythonw: str, argumente: str) -> subprocess.CompletedProcess[str]:
+    """Legt die Anmelde-Aufgabe per UTF-16-Temp-XML an und löscht die Temp-Datei in ``finally``."""
+    xml_inhalt = windows_anmelde_xml(pythonw, argumente)
+    xml_pfad: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-16",
+            newline="",
+            suffix=".xml",
+            prefix="to-spawn-taktgeber-",
+            delete=False,
+        ) as datei:
+            datei.write(xml_inhalt)
+            xml_pfad = Path(datei.name)
+        return _schtasks("/Create", "/F", "/TN", name, "/XML", str(xml_pfad))
+    finally:
+        if xml_pfad is not None:
+            xml_pfad.unlink(missing_ok=True)
+
+
 def _windows_aufgabe_abfrage(name: str, *, trocken: bool) -> str | None:
     try:
         lauf = _schtasks("/Query", "/TN", name, "/XML")
@@ -808,6 +890,8 @@ def windows_aufgaben_einrichten(
 
     Startet über ``pythonw.exe`` ohne aufpoppendes Konsolenfenster; jeder ``schtasks``-Aufruf
     läuft mit ``CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP`` über :func:`prozessbaum.ohne_fenster`.
+    Die Anmelde-Aufgabe wird über ``/XML`` mit benutzerbezogenem ``<LogonTrigger>`` und
+    ``LeastPrivilege`` angelegt, sodass sie auch ohne Admin-Rechte funktioniert.
     """
     wecker.windows_aufgabe_intervall(takt_min)  # prüft 1–60 Minuten
     repo = repo.resolve()
@@ -819,7 +903,7 @@ def windows_aufgaben_einrichten(
 
     meldungen: list[str] = []
     plaene: tuple[tuple[str, str, bool, list[str]], ...] = (
-        ("Anmelde-Aufgabe", anmelden_tn, True, ["/SC", "ONLOGON"]),
+        ("Anmelde-Aufgabe", anmelden_tn, True, []),
         (f"Takt-Aufgabe (alle {takt_min} min)", takt_tn, False, ["/SC", "MINUTE", "/MO", str(takt_min)]),
     )
     for titel, name, ist_anmelden, zeitplan in plaene:
@@ -841,7 +925,10 @@ def windows_aufgaben_einrichten(
             raise RuntimeError(
                 f"pythonw.exe fehlt neben {python} — ohne sie öffnet die geplante Aufgabe bei jedem Lauf ein Fenster."
             )
-        ergebnis = _schtasks("/Create", "/F", *zeitplan, "/TN", name, "/TR", befehl)
+        if ist_anmelden:
+            ergebnis = _windows_anmelde_aufgabe_anlegen(name, str(pythonw), argumente)
+        else:
+            ergebnis = _schtasks("/Create", "/F", *zeitplan, "/TN", name, "/TR", befehl)
         if ergebnis.returncode != 0:
             raise RuntimeError(f"schtasks /Create ({name}): {(ergebnis.stderr or ergebnis.stdout).strip()[:300]}")
         meldungen.append(f"{titel} eingerichtet: {name} → {befehl}")
