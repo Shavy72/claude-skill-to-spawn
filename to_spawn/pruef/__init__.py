@@ -30,7 +30,10 @@ from to_spawn.pruef import (
     protokoll,
     regeln,
     sofort,
+    vorpruefung,
 )
+
+vorpruefen = vorpruefung.vorpruefen
 
 _ADAPTER: tuple[leiter.Adapter, ...] = (adapter_py.ADAPTER, adapter_node.ADAPTER)
 log = logging.getLogger("to_spawn.pruef")

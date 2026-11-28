@@ -29,6 +29,11 @@ pytest-testmon 2.3.1, pytest-xdist 3.8.0, psutil, coverage. Für `node`: Node 22
   ab `14`) gegen ein Einzel-Gate am selben Stand — entweder auf zwei isolierten Sparse-Kopien eines
   App-Klons (`--repo <klon> --python <venv>/bin/python`) oder eigenständig auf der Probe-Suite.
   `python3 messung/fehler_reihe_duoplus.py --repo <klon-app-repo> --python <venv>/bin/python --arbeiter 4 --dist worksteal --runden 2 --datei-anzahl 60`
+- `m13_vorpruefung_messung.py` (3b-6, #106): fährt 10 gleichzeitige Tickets (inkl. Syntax-Fehler-Rot-Beweis,
+  Nur-Doku, Code-Auswahl und R3) im isolierten Temp-Probe-Repo durch `to_spawn.pruef.vorpruefung.GatePool`
+  (Bremse aus #105, Last `< 12`, RAM-/Swap-Messung) und wertet optional ein Fahrtenbuch (`--schlange`)
+  mit der gemessenen 3b-5-Bremse (`1,29×–1,34×`) ehrlich gegen alle M13-Schwellen aus.
+  `python3 messung/m13_vorpruefung_messung.py --schlange <schlangen-ordner>`
 
 ## Fehlerreihe auf Probe-Repos
 - `gen_py.py` und `gen_node.py`: erzeugen `<probe-ordner>/py/` und `<probe-ordner>/node/` (Dateien, noch kein git).

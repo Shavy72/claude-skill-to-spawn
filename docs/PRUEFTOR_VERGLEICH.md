@@ -292,10 +292,26 @@ darf ein zweiter Gate-Platz in 3b-6 nur unter Last-/Speicherschutz (nicht gleich
 Bau-Sessions, vgl. #290) zugeschaltet werden. Vorbehalt: Messung am 60-Dateien-Schnitt im Sparse-Checkout
 (beide Vergleichsmodi einheitlich Exit `1` wegen einzelner `docs/`-Tests), kein voller 30-Minuten-Parallel-Lauf.
 
-### 4.4 Schlange
+### 4.4 Schlange (Nachtrag 3b-6 mit gemessener 3b-5-Bremse, Issue #106)
 
-Siehe 3.3; Annahmen des Simulators (Rüstzeit gemessen 73 s, Bremse als Faktor, Vorprüfung 120 s mit
-zufälliger Fangquote) in [SIM] „Annahmen“.
+Ausgangs-Simulation siehe 3.3 (Annahmen: Rüstzeit gemessen 73 s, Bremse als Faktor, Vorprüfung 120 s
+mit zufälliger Fangquote [SIM]). Mit der in 3b-5 (#105) real gemessenen Bremse (`1,34×` `worksteal` /
+`1,29×` `loadfile` <= `1,5×`) und real gemessener Stufe-0–3-Vorprüfung (`to_spawn/pruef/vorpruefung.py`,
+`messung/m13_vorpruefung_messung.py`, `~1,4–1,9 s` im Probe-Repo, `5 s` konservativ für die
+Schlangen-Nachrechnung) ergibt sich auf demselben 14-Tage-Fahrtenbuch (`672` Tickets, Seed `2026`):
+
+- **2 Gate-Plätze + Vorprüfung `5 s` (`50–80 %` Fangquote):** Push→Urteil Median **`147 → 121 s`**
+  (Vorher [VZ] `223 s`, Ziel `<= 112 s`), P90 **`2259 → 2063 s`** (Vorher [VZ] `2426 s`, Ziel `<= 1213 s`),
+  Warte `> 15 min` **`2,0 → 1,6 %`** (S0 `9,5 %`), Gate-Min **`7244 → 6006`** (`−31 %`).
+- **10-Ticket-Probe:** Im isolierten Probe-Repo (Last `0,79 < 12`) laufen 10 gleichzeitige Tickets
+  durch `GatePool` (max. `2` Plätze) ohne RAM-Riss (`MemAvailable min 8176 MiB`, Swap `+0 MiB`,
+  max. Wartezeit `0,311 s`), `2/2` Syntax-Fehler-Tickets in Stufe 1 ohne Gate-Platz abgewiesen.
+  Für die DuoPlus-Voll-Laufzeit (`1838 s`) bleiben `84–94 %` der 10-Ticket-Ziehungen über `15 min` Warten.
+- **Ehrlicher Stand M13 DuoPlus:** Erreichbarkeit von Median `<= 112 s`, P90 `<= 1213 s` und
+  `0 % > 15 min` bei 10 parallelen Tickets bleibt **unbelegt / nicht erreicht** (erst ab ~`45 %`
+  kürzerem Voll-Lauf sinken Median/P90 rechnerisch auf `101 / 1125 s`, die 10-Ticket-Spitze liegt
+  selbst dann bei `82 % > 15 min`). Einbindung in die App-Schlange folgt getrennt im App-Repo
+  (Staging zuerst, App-Live bleibt Entscheidung des Nutzers).
 
 ### 4.5 „Nur Doku“ fürs Skill-Repo selbst (`pruefen.doku_pfade`, Stand main `9c7cda9`)
 
@@ -527,6 +543,7 @@ nice -n 15 python3 messung/rueckblick_auswahl_duoplus.py --schlange <schlange> -
 python3 messung/r1_quote_duoplus.py --schlange <schlange> --repo <klon> --seit 2026-11-07 --aus r1_quote.jsonl
 python3 messung/auswertung_3b0.py --rueckblick rueckblick.jsonl --r1-quote r1_quote.jsonl --repo <klon>
 python3 messung/fehler_reihe_duoplus.py --repo <klon> --python <venv>/bin/python --arbeiter 4 --dist worksteal --runden 2 --datei-anzahl 60
+python3 messung/m13_vorpruefung_messung.py --schlange <schlange>
 ```
 
 `schlange_sim.py` liefert bei gleichem `--bis` und Seed byte-gleiche Ausgabe [SIM]. Alle Läufe mit
