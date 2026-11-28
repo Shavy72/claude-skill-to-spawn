@@ -172,11 +172,39 @@ Rückfall-Regeln (Vorschlag aus [PROBE]):
 
 Einschränkung: R1/R2 sind im Skript nachgerechnet, nicht als Werkzeug-Schalter gefahren [PROBE].
 
-**Überanpassung:** R1–R4 sind nachträglich aus genau diesen übersehenen Fällen abgeleitet ([PROBE]
+**Überanpassung (erste Reihe):** R1–R4 sind nachträglich aus genau diesen übersehenen Fällen abgeleitet ([PROBE]
 „Regeln, die die Messung braucht“) und an denselben Fällen gemessen. „0 von 34“ ist darum eine Messung
 an den eigenen Übungsfällen: Nachweis „Regeln decken die bekannten Fehlgriffe“, **kein Nachweis für
 M12**. R2 greift zudem nur, weil die Plugin-Module im Probe-Repo keinen statischen Importeur haben
 (Bauart der Fälle); ein dynamischer Import neben einem statischen Nachbar-Import ist nicht geprüft.
+
+#### Zweite, unbekannte Fehlerreihe (M12-Probe, Paket 3b-2b, Issue #104)
+
+Gegenprobe gegen Überanpassung mit eingefrorenen Regeln vor Messbeginn (`to_spawn/pruef/regeln.py`,
+Stand `regeln@fd7e49f`, Commit `6427e5e`, keine Regel-Änderung in diesem Paket). Ein frischer Helfer
+ohne Kenntnis von `regeln.py`/R1–R4 und ohne Kenntnis von `messung/fehler_reihe.py` entwarf allein
+aus `messung/gen_py.py` und `messung/gen_node.py` **26 neue Fehler** (16 Python `Q01`–`Q16`, 10 Node
+`M01`–`M10`, davon 21 komplett neue Datei-Mutationen; 5 decken sich mit Reihe 1, weil Mini-Dateien
+wie `vitest.config.js` oder `settings.toml` nur 1–2 mutierbare Zeilen haben). Gemessen wurde
+ausschließlich in isolierten Temp-Probe-Repos über `messung/fehler_reihe_2.py` (echter `adapter_py`
+mit eingebautem AST-Import-Graph + `pytest`; echter `adapter_node` über `npm test` mit lokalem
+ESM-Vitest-Läufer aus `tests/pruef_probe_helfer.py` + echtem `node`; Last 6,30 < 12; Gesamtdauer
+37,11 s).
+
+| Repo | eingebaut | voll rot | Auswahl roh übersehen | `pruefen` rot (`regeln@fd7e49f`) | übersehen |
+|---|---|---|---|---|---|
+| Python (`Q01`–`Q16`) | 16 | 16 | **7** (Daten-JSON `Q01`, Template `Q02`, TOML `Q03`, `pytest.ini` `Q04`, `conftest.py` `Q05`, dyn. Import `Q06`, `mock.patch`-String & dyn. Plugin `Q07`) | **16** (9 Auswahl, 7 voll: 3× R1, 2× R2, 2× R3) | **0** |
+| Node (`M01`–`M10`) | 10 | 10 | **4** (fs-JSON `M02`, `vitest.config.js` `M03`, `test/setup.js` `M04`, dyn. `import()` `M05`) | **10** (5 Auswahl, 5 voll: 2× R1, 1× R2, 2× R3) | **0** |
+| **Gesamt** | **26** | **26** | **11** (alle vier Pflicht-Klassen getroffen) | **26** | **0** |
+
+Ergebnis (Abnahme M12-Probe): Für alle 26 Fehler gilt `voll rot ⇒ pruefen rot`, **0 übersehen**, und
+jede Protokoll-Zeile trägt `regeln@fd7e49f`. Die Gegenprobe bestätigt die Schärfe der Reihe: ohne
+Rückfall-Regeln übersieht die rohe statische Auswahl 11 von 26 Fehlern, darunter alle vier
+Pflicht-Klassen (Daten-Datei, Template, dynamischer Import, `mock.patch`-String). Einschränkung wie
+oben: R2 greift für `Q06`/`Q07`/`M05` wegen fehlendem statischem Importeur der Plugin-Module im
+Probe-Repo; eine Kombination aus dynamischem Import und statischem Nachbar-Import ist weiterhin
+nicht Bestandteil des Probe-Repos. Reproduzierbar per `messung/fehler_reihe_2.py` und
+`tests/test_fehler_reihe_2_104.py`.
 
 ### 4.3 DuoPlus-Klon (Stand master `b5b23086c`) [DP][3B0]
 
@@ -285,8 +313,10 @@ keine Abkürzung (voller Lauf startet). Zum Vergleich: volle Suite `-n 4` 459 s 
 - **R1-Quote in DuoPlus (geschlossen in 3b-0 Teil a [3B0]):** Nachgemessen über 302 Tickets seit 07.11.
   (`messung/r1_quote_duoplus.py`): R1 173 (57,3 %), R3 27 (8,9 %), **R1 oder R3 = 179/302 (59,3 %)**
   (im 50er-Rückblick mit R2: 30/50 = 60,0 %). Damit ist Kriterium (b) (≥ 50 %) gerissen.
-- **Überanpassung der Regeln:** R1–R4 nur an den Fällen geprüft, aus denen sie abgeleitet sind (4.2).
-  Zweite, unbekannte Fehlerreihe in 3b-2.
+- **Überanpassung der Regeln:** Erste Reihe (34 Fälle) nur an den Übungsfällen geprüft (4.2). Zweite,
+  unbekannte Fehlerreihe für die Probe-Repos in 3b-2b (#104) nachgeholt: 26 neue Fehler bei eingefrorenen
+  Regeln (`regeln@fd7e49f`), **0 übersehen** (Abschnitt 4.2). Offen bleibt nur die Kombination aus
+  dynamischem Import und statischem Nachbar-Import außerhalb des Probe-Layouts.
 - **RAM-Spitze von impacted in DuoPlus (geschlossen in 3b-0 Teil a [3B0]):** Gemessen über 48 Läufe
   (Prozessbaum RSS): Median **436,5 MB**, Max **446,0 MB** (Eigenbau: Median 64,0 MB, Max 67,0 MB);
   Auswahl-Dauer trotz `archive/`-Ausschluss Median **83,63 s**, P90 **125,54 s** (Max 374,57 s).
@@ -465,6 +495,7 @@ python3 messung/gen_py.py --ziel <probe> && python3 messung/gen_node.py --ziel <
 <probe>/.venv/bin/python messung/fehler_reihe.py --ort <probe> py
 <probe>/.venv/bin/python messung/fehler_reihe.py --ort <probe> py -n 2 --dist worksteal
 <probe>/.venv/bin/python messung/fehler_reihe.py --ort <probe> node
+python3 messung/fehler_reihe_2.py --ort <probe>
 nice -n 15 python3 messung/rueckblick_auswahl_duoplus.py --schlange <schlange> --repo <klon> --venv <venv> \
   --collect collect.txt --aus rueckblick.jsonl --merges 40 --rot 15 --ohne archive --max-s 1020
 python3 messung/r1_quote_duoplus.py --schlange <schlange> --repo <klon> --seit 2026-11-07 --aus r1_quote.jsonl

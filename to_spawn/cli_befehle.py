@@ -380,7 +380,7 @@ def _kommentiere(args: argparse.Namespace) -> int:
 
 
 def _spec_schliessen(args: argparse.Namespace) -> int:
-    """Unterbefehl ``spec-schliessen`` (E2-4): schließt die Spec nur ohne offene Folge-Tickets."""
+    """Unterbefehl ``spec-schliessen`` (E2-4, #951): schließt die Spec ohne offene Folge-Tickets und räumt auf."""
     repo = config.repo_wurzel(_repo_aus_umgebung())
     gh_repo = gh.repo_aus_origin(repo)
     if not gh_repo:
@@ -389,6 +389,14 @@ def _spec_schliessen(args: argparse.Namespace) -> int:
     ergebnis = befund.spec_schliessen(repo, gh_repo, args.spec)
     for zeile in ergebnis.zeilen:
         print(zeile)
+    if ergebnis.ok:
+        from to_spawn import hausmeister, tmux_aufruf
+
+        try:
+            hausmeister.spec_aufraeumen(repo, args.spec, loeschen=True)
+            tmux_aufruf.spec_session_schliessen(repo, args.spec)
+        except (OSError, RuntimeError, tmux_aufruf.TmuxFehler) as fehler:
+            log.warning("Spec-Ende-Aufräumen nach spec-schliessen #%s gescheitert: %s", args.spec, fehler)
     return 0 if ergebnis.ok else 1
 
 

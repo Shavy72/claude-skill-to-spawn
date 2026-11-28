@@ -435,16 +435,17 @@ def worktree_pfad(ticket: str | int, repo: Path | None = None) -> str:
     # sähen sonst C:/dev statt des vorgegebenen Ordners); ohne es die Plattform-Vorgabe.
     if os.environ.get("BAU_WT_DIR"):
         return f"{Path(os.environ['BAU_WT_DIR']).expanduser().as_posix().rstrip('/')}/wt-{ticket}"
-    # Plattform-Vorgabe (#641): ``<basis>/wt-<N>``, außer der Ordner gehört einem anderen Repo —
-    # dann ``<basis>/<Repo-Name>/wt-<N>`` (= ``worktree_basis_vorgabe``). Ein einmal angelegter
-    # Ausweich-Ordner gewinnt immer, damit Leser ihn auch nach dem Aufräumen des anderen finden.
-    # ponytail: Weiche hängt am Zustand beim ersten Aufruf; fest wäre ``worktree_basis`` je Repo.
+    # Plattform-Vorgabe (#641, #951): immer ``<basis>/<Repo-Name>/wt-<N>`` (= ``worktree_basis_vorgabe``),
+    # nie flach ``~/wt/wt-<N>`` (Namens-Kollision mit anderen Repos). Ein schon vorhandener flacher
+    # Altbestand desselben Repos bleibt weiter auffindbar; neu angelegt wird aber immer mit Repo-Namen.
     eigen = repo or Path.cwd()
+    ziel = Path(worktree_basis_vorgabe(eigen)).expanduser() / f"wt-{ticket}"
+    if ziel.is_dir():
+        return ziel.as_posix()
     flach = Path("C:/dev" if sys.platform == "win32" else "~/wt").expanduser() / f"wt-{ticket}"
-    ausweich = Path(worktree_basis_vorgabe(eigen)).expanduser() / f"wt-{ticket}"
-    if ausweich.is_dir() or _fremder_besitzer(flach, eigen):
-        return ausweich.as_posix()
-    return flach.as_posix()
+    if flach.is_dir() and _fremder_besitzer(flach, eigen) is None and _repo_kennung(flach) == _repo_kennung(eigen):
+        return flach.as_posix()
+    return ziel.as_posix()
 
 
 def _adresse_normal(url: str) -> str:

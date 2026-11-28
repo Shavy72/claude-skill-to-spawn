@@ -4308,3 +4308,260 @@ def _log_zeile(zeile: dict[str, object], datei: Path | None = None) -> bool:
         log.warning("Hausmeister-Log nicht schreibbar: %s", fehler)
         return False
     return True
+
+
+# --- Spec-Ende-Aufräumen (#951) -------------------------------------------------
+
+_TICKET_WT_NAME = re.compile(r"^wt-\d+$")
+
+
+@dataclass(frozen=True)
+class SpecAufraeumErgebnis:
+    """Ergebnis von :func:`spec_aufraeumen` am Spec-Ende (#951)."""
+
+    worktrees_entfernt: tuple[Path, ...] = ()
+    worktrees_behalten: tuple[tuple[Path, str], ...] = ()
+    lokale_zweige_geloescht: tuple[str, ...] = ()
+    remote_zweige_geloescht: tuple[str, ...] = ()
+    locks_entfernt: tuple[Path, ...] = ()
+    fehler: tuple[str, ...] = ()
+
+
+def _git_spec_aufraeumen(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Git-Aufruf für :func:`spec_aufraeumen` (fensterlos unter Windows, ohne interaktive Abfrage)."""
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    return subprocess.run(
+        ["git", "-C", str(cwd), *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=gh.FETCH_ZEIT_S if args[:1] in (("fetch",), ("push",)) else gh.GIT_ZEIT_S,
+        check=False,
+        env=env,
+        **prozessbaum.fensterlos(),
+    )
+
+
+def _spec_haupt_ref(haupt: Path) -> tuple[str, bool]:
+    """Bestimmt die Ziel-Ref (``origin/main`` / ``origin/master`` / ``HEAD``) und ob ``origin`` erreichbar war."""
+    hat_origin = False
+    try:
+        origin_url = _git_spec_aufraeumen(haupt, "remote", "get-url", "origin")
+        if origin_url.returncode == 0 and origin_url.stdout.strip():
+            fetch = _git_spec_aufraeumen(haupt, "fetch", "--prune", "origin")
+            hat_origin = fetch.returncode == 0
+    except (OSError, subprocess.SubprocessError) as fehler:
+        log.warning("Spec-Aufräumen: fetch origin in %s gescheitert (%s)", haupt, fehler)
+
+    for kandidat in ("origin/main", "origin/master"):
+        try:
+            probe = _git_spec_aufraeumen(haupt, "rev-parse", "--verify", "-q", kandidat)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if probe.returncode == 0 and probe.stdout.strip():
+            return kandidat, hat_origin
+    try:
+        sym = _git_spec_aufraeumen(haupt, "symbolic-ref", "-q", "refs/remotes/origin/HEAD")
+        if sym.returncode == 0 and sym.stdout.strip():
+            return sym.stdout.strip().removeprefix("refs/remotes/"), hat_origin
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return "HEAD", hat_origin
+
+
+def _ist_ticket_worktree(eintrag: _WorktreeEintrag) -> bool:
+    """True für verknüpfte Ticket-Worktrees (``wt-<N>`` oder Zweig ``ticket/*``)."""
+    return bool(_TICKET_WT_NAME.match(Path(eintrag.pfad).name)) or (eintrag.zweig or "").startswith("ticket/")
+
+
+def spec_aufraeumen(repo: Path, spec: int, *, loeschen: bool = True) -> SpecAufraeumErgebnis:
+    """Räumt am Spec-Ende genau für ``repo`` auf (#951): saubere gemergte Ticket-Worktrees,
+    gemergte ``ticket/*``-Zweige (lokal + remote) und ungespeicherte ``.lock``-Reste unter ``docs/``.
+
+    Schmutzige Worktrees, gesperrte Worktrees und ungemergte Commits/Zweige bleiben unangetastet.
+    Live-Server und andere Repos werden nie angefasst. Wirft nie.
+    """
+    haupt = repo.resolve()
+    wt_weg: list[Path] = []
+    wt_bleibt: list[tuple[Path, str]] = []
+    lokal_weg: list[str] = []
+    remote_weg: list[str] = []
+    locks_weg: list[Path] = []
+    fehler: list[str] = []
+
+    ziel_ref, hat_origin = _spec_haupt_ref(haupt)
+
+    # 1. Saubere, gemergte Ticket-Worktrees entfernen.
+    try:
+        eintraege = _worktree_eintraege(haupt)
+    except (OSError, RuntimeError, subprocess.SubprocessError) as err:
+        fehler.append(f"worktree list gescheitert: {err}")
+        eintraege = []
+
+    for eintrag in eintraege:
+        wt_pfad = Path(eintrag.pfad)
+        try:
+            wt_echt = wt_pfad.resolve()
+        except OSError:
+            wt_echt = wt_pfad
+        if wt_echt == haupt or not _ist_ticket_worktree(eintrag):
+            continue
+        if eintrag.gesperrt:
+            wt_bleibt.append((wt_pfad, "gesperrt"))
+            continue
+        if not wt_pfad.is_dir():
+            continue
+        try:
+            status = _git_spec_aufraeumen(wt_pfad, "status", "--porcelain", "--untracked-files=all")
+        except (OSError, subprocess.SubprocessError) as err:
+            wt_bleibt.append((wt_pfad, f"Status unlesbar ({err})"))
+            continue
+        if status.returncode != 0 or status.stdout.strip():
+            wt_bleibt.append((wt_pfad, "ungespeicherte Änderungen"))
+            continue
+        try:
+            kopf = _git_spec_aufraeumen(wt_pfad, "rev-parse", "HEAD")
+            wt_sha = kopf.stdout.strip() if kopf.returncode == 0 else ""
+            if not wt_sha:
+                wt_bleibt.append((wt_pfad, "HEAD unlesbar"))
+                continue
+            drin = _git_spec_aufraeumen(haupt, "merge-base", "--is-ancestor", wt_sha, ziel_ref)
+        except (OSError, subprocess.SubprocessError) as err:
+            wt_bleibt.append((wt_pfad, f"Merge-Prüfung gescheitert ({err})"))
+            continue
+        if drin.returncode != 0:
+            wt_bleibt.append((wt_pfad, "ungemergte Commits"))
+            continue
+        if not loeschen:
+            wt_weg.append(wt_pfad)
+            continue
+        try:
+            weg = _git_spec_aufraeumen(haupt, "worktree", "remove", str(wt_pfad))
+        except (OSError, subprocess.SubprocessError) as err:
+            fehler.append(f"worktree remove {wt_pfad.name}: {err}")
+            continue
+        if weg.returncode == 0:
+            wt_weg.append(wt_pfad)
+        else:
+            fehler.append(f"worktree remove {wt_pfad.name}: {weg.stderr.strip()[:160]}")
+
+    if loeschen:
+        try:
+            _git_spec_aufraeumen(haupt, "worktree", "prune")
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    # 2. Gemergte lokale ticket/*-Zweige löschen (nie ausgecheckte Zweige).
+    ausgecheckt: set[str] = set()
+    try:
+        ausgecheckt = {e.zweig for e in _worktree_eintraege(haupt) if e.zweig}
+    except (OSError, RuntimeError, subprocess.SubprocessError):
+        pass
+
+    try:
+        lokale = _git_spec_aufraeumen(haupt, "for-each-ref", "--format=%(refname:short)", "refs/heads/ticket/*")
+        lokale_liste = [z.strip() for z in lokale.stdout.splitlines() if z.strip()] if lokale.returncode == 0 else []
+    except (OSError, subprocess.SubprocessError) as err:
+        fehler.append(f"lokale Zweige nicht lesbar: {err}")
+        lokale_liste = []
+
+    for zweig in lokale_liste:
+        if zweig in ausgecheckt:
+            continue
+        try:
+            drin = _git_spec_aufraeumen(haupt, "merge-base", "--is-ancestor", f"refs/heads/{zweig}", ziel_ref)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if drin.returncode != 0:
+            continue
+        if not loeschen:
+            lokal_weg.append(zweig)
+            continue
+        try:
+            del_erg = _git_spec_aufraeumen(haupt, "branch", "-D", zweig)
+        except (OSError, subprocess.SubprocessError) as err:
+            fehler.append(f"branch -D {zweig}: {err}")
+            continue
+        if del_erg.returncode == 0:
+            lokal_weg.append(zweig)
+        else:
+            fehler.append(f"branch -D {zweig}: {del_erg.stderr.strip()[:160]}")
+
+    # 3. Gemergte Remote-Zweige origin/ticket/* löschen.
+    if hat_origin:
+        try:
+            ferne = _git_spec_aufraeumen(
+                haupt, "for-each-ref", "--format=%(refname:short)", "refs/remotes/origin/ticket/*"
+            )
+            ferne_liste = [z.strip() for z in ferne.stdout.splitlines() if z.strip()] if ferne.returncode == 0 else []
+        except (OSError, subprocess.SubprocessError) as err:
+            fehler.append(f"Remote-Zweige nicht lesbar: {err}")
+            ferne_liste = []
+        for ref_name in ferne_liste:
+            zweig = ref_name.removeprefix("origin/")
+            if not zweig.startswith("ticket/"):
+                continue
+            try:
+                drin = _git_spec_aufraeumen(haupt, "merge-base", "--is-ancestor", f"refs/remotes/{ref_name}", ziel_ref)
+            except (OSError, subprocess.SubprocessError):
+                continue
+            if drin.returncode != 0:
+                continue
+            if not loeschen:
+                remote_weg.append(zweig)
+                continue
+            try:
+                push_erg = _git_spec_aufraeumen(haupt, "push", "origin", "--delete", zweig)
+            except (OSError, subprocess.SubprocessError) as err:
+                fehler.append(f"push --delete {zweig}: {err}")
+                continue
+            if push_erg.returncode == 0:
+                remote_weg.append(zweig)
+            else:
+                fehler.append(f"push --delete {zweig}: {push_erg.stderr.strip()[:160]}")
+
+    # 4. Ungespeicherte .lock-Reste im Klon (z. B. docs/agents/FEHLERKATALOG_spawn.md.lock) entfernen.
+    try:
+        st = _git_spec_aufraeumen(haupt, "status", "--porcelain", "--untracked-files=all", "--", "docs")
+        if st.returncode == 0:
+            for zeile in st.stdout.splitlines():
+                if not zeile.startswith("?? "):
+                    continue
+                rel = zeile[3:].strip().strip('"')
+                if not rel.endswith(".lock"):
+                    continue
+                kandidat = haupt / rel
+                if not kandidat.is_file():
+                    continue
+                if not loeschen:
+                    locks_weg.append(kandidat)
+                    continue
+                try:
+                    kandidat.unlink()
+                    locks_weg.append(kandidat)
+                except OSError as err:
+                    fehler.append(f"Lock {rel} nicht löschbar: {err}")
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+    log.info(
+        "Spec #%s aufgeräumt (%s): %s Worktrees weg (%s behalten), "
+        "%s lokale + %s remote ticket/*-Zweige, %s Locks, %s Fehler",
+        spec,
+        haupt,
+        len(wt_weg),
+        len(wt_bleibt),
+        len(lokal_weg),
+        len(remote_weg),
+        len(locks_weg),
+        len(fehler),
+    )
+    return SpecAufraeumErgebnis(
+        worktrees_entfernt=tuple(wt_weg),
+        worktrees_behalten=tuple(wt_bleibt),
+        lokale_zweige_geloescht=tuple(lokal_weg),
+        remote_zweige_geloescht=tuple(remote_weg),
+        locks_entfernt=tuple(locks_weg),
+        fehler=tuple(fehler),
+    )

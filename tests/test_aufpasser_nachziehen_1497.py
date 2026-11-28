@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -265,3 +266,42 @@ def test_b5_zeitgrenze_beendet_ganze_prozessgruppe(tmp_path: Path) -> None:
     if lebt:
         subprocess.run(["kill", "-9", str(pid)], check=False)
     assert not lebt, "Remote-Helfer überlebt die Zeitgrenze"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX-Prozessgruppe (killpg)")
+def test_b5_zeitgrenze_wartet_bis_prozessgruppe_abgeraeumt_ist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Nach SIGKILL + communicate() kann ein Enkel kurz im Kernel nachlaufen (#951)."""
+
+    class _FakeLauf:
+        pid = 424242
+        returncode = -9
+
+        def __init__(self) -> None:
+            self._erster = True
+
+        def communicate(self, timeout: int | None = None) -> tuple[str, str]:
+            if self._erster and timeout is not None:
+                self._erster = False
+                raise subprocess.TimeoutExpired(["git", "fetch"], timeout)
+            return "", ""
+
+    aufrufe: list[tuple[int, int]] = []
+    rest_probes = [2]  # Prozessgruppe existiert nach communicate() noch für 2 Prüfungen
+
+    def fake_killpg(pgid: int, sig: int) -> None:
+        aufrufe.append((pgid, sig))
+        if sig == 0:
+            if rest_probes[0] > 0:
+                rest_probes[0] -= 1
+                return
+            raise ProcessLookupError
+
+    monkeypatch.setattr(aufpasser.subprocess, "Popen", lambda *_a, **_kw: _FakeLauf())
+    monkeypatch.setattr(aufpasser.os, "killpg", fake_killpg)
+
+    with pytest.raises(RuntimeError, match="Zeitgrenze"):
+        aufpasser._git(tmp_path, "fetch", zeitgrenze=1)
+
+    assert (424242, signal.SIGKILL) in aufrufe
+    assert rest_probes[0] == 0, "aufpasser._git kehrt zurück, obwohl Prozessgruppe noch lebt"
+    assert aufrufe.count((424242, 0)) == 3
