@@ -22,6 +22,7 @@ import os
 import re
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -96,9 +97,12 @@ def _schtasks_xml(
 class _SchtasksNaht:
     """Naht für ``subprocess.run`` bei ``schtasks``-Aufrufen (speichert XML je Aufgabenname)."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, create_fehler: str | None = None) -> None:
         self.aufgaben: dict[str, str] = {}
         self.aufrufe: list[tuple[list[str], dict[str, Any]]] = []
+        self.xml_roh: dict[str, bytes] = {}
+        self.xml_pfade: list[Path] = []
+        self.create_fehler = create_fehler
 
     def __call__(self, args: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
         self.aufrufe.append((list(args), dict(kw)))
@@ -113,6 +117,22 @@ class _SchtasksNaht:
                 )
             return subprocess.CompletedProcess(args, 0, self.aufgaben[name], "")
         if "/Create" in args:
+            if "/XML" in args:
+                xml_pfad = Path(args[args.index("/XML") + 1])
+                self.xml_pfade.append(xml_pfad)
+                roh = xml_pfad.read_bytes()
+                self.xml_roh[name] = roh
+                if self.create_fehler:
+                    return subprocess.CompletedProcess(args, 1, "", self.create_fehler)
+                self.aufgaben[name] = roh.decode("utf-16")
+                return subprocess.CompletedProcess(
+                    args,
+                    0,
+                    f'ERFOLGREICH: Die geplante Aufgabe "{name}" wurde erstellt.\r\n',
+                    "",
+                )
+            if self.create_fehler:
+                return subprocess.CompletedProcess(args, 1, "", self.create_fehler)
             tr = args[args.index("/TR") + 1]
             befehl, _, rest = tr[1:].partition('" ')
             sc = args[args.index("/SC") + 1].upper()
@@ -187,18 +207,24 @@ def test_windows_aufgaben_einrichten_legt_anmelde_und_takt_aufgabe_an(
     creates = naht.creates()
     assert len(creates) == 2, creates
 
-    # Eine Aufgabe beim Anmelden (ONLOGON) und eine im Takt (MINUTE /MO 5)
-    anmelde_cmd = next(c for c in creates if "ONLOGON" in c)
+    # Eine Aufgabe beim Anmelden (/XML mit LogonTrigger) und eine im Takt (MINUTE /MO 5)
+    anmelde_cmd = next(c for c in creates if "/XML" in c)
     takt_cmd = next(c for c in creates if "MINUTE" in c)
-    assert anmelde_cmd[anmelde_cmd.index("/TN") + 1] == taktgeber.windows_aufgabe_name(293, anmelden=True)
+    anmelde_name = taktgeber.windows_aufgabe_name(293, anmelden=True)
+    assert anmelde_cmd[anmelde_cmd.index("/TN") + 1] == anmelde_name
     assert takt_cmd[takt_cmd.index("/TN") + 1] == taktgeber.windows_aufgabe_name(293, anmelden=False)
     assert takt_cmd[takt_cmd.index("/MO") + 1] == "5"
 
-    for cmd in (anmelde_cmd, takt_cmd):
-        tr = cmd[cmd.index("/TR") + 1]
-        assert "pythonw.exe" in tr
-        assert "taktgeber 293" in tr
-        assert str(repo.resolve()) in tr
+    anmelde_xml = naht.aufgaben[anmelde_name]
+    assert "<LogonTrigger>" in anmelde_xml
+    assert "pythonw.exe" in anmelde_xml
+    assert "taktgeber 293" in anmelde_xml
+    assert str(repo.resolve()) in anmelde_xml
+
+    tr = takt_cmd[takt_cmd.index("/TR") + 1]
+    assert "pythonw.exe" in tr
+    assert "taktgeber 293" in tr
+    assert str(repo.resolve()) in tr
 
     # Jeder schtasks-Aufruf fensterlos mit CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP, nie DETACHED_PROCESS
     for _, kw in naht.aufrufe:
@@ -209,6 +235,60 @@ def test_windows_aufgaben_einrichten_legt_anmelde_und_takt_aufgabe_an(
         assert kw.get("timeout") == taktgeber.SCHTASKS_ZEITLIMIT_S
 
     assert "eingerichtet" in text
+
+
+def test_windows_anmelde_aufgabe_nutzt_xml_ohne_admin_mit_escape_cleanup_und_idempotenz(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#907: Anmelde-Aufgabe per ``/XML`` (UTF-16, ``LeastPrivilege``, XML-Escape, Cleanup, Idempotenz)."""
+    _simuliere_windows(monkeypatch)
+    monkeypatch.setenv("USERDOMAIN", "TEST-PC")
+    monkeypatch.setenv("USERNAME", "nutzer&<1>")
+    naht = _SchtasksNaht()
+    monkeypatch.setattr(taktgeber.subprocess, "run", naht)
+    py = _fake_python_mit_pythonw(tmp_path)
+    repo = tmp_path / "repo & <test>"
+    repo.mkdir()
+
+    text1 = taktgeber.windows_aufgaben_einrichten(293, repo, python=py)
+    assert "eingerichtet" in text1
+
+    creates = naht.creates()
+    anmelde_name = taktgeber.windows_aufgabe_name(293, anmelden=True)
+    anmelde_cmd = next(c for c in creates if c[c.index("/TN") + 1] == anmelde_name)
+    assert "/XML" in anmelde_cmd, f"Anmelde-Aufgabe muss /XML statt /SC ONLOGON nutzen: {anmelde_cmd}"
+    assert "ONLOGON" not in anmelde_cmd
+    assert len(naht.xml_pfade) == 1
+    assert not naht.xml_pfade[0].exists(), "Temp-XML-Datei muss in finally gelöscht werden"
+
+    roh = naht.xml_roh[anmelde_name]
+    assert roh.startswith((b"\xff\xfe", b"\xfe\xff")), "XML-Datei muss als UTF-16 mit BOM geschrieben werden"
+    xml_text = roh.decode("utf-16")
+    # XML muss wohlgeformt sein (Escape von & und < in UserId und Repo-Pfad)
+    wurzel = ET.fromstring(xml_text)
+    ns = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
+    assert wurzel.findtext(".//t:LogonTrigger/t:Enabled", namespaces=ns) == "true"
+    assert wurzel.findtext(".//t:LogonTrigger/t:UserId", namespaces=ns) == r"TEST-PC\nutzer&<1>"
+    assert wurzel.findtext(".//t:Principal[@id='Author']/t:UserId", namespaces=ns) == r"TEST-PC\nutzer&<1>"
+    assert wurzel.findtext(".//t:Principal[@id='Author']/t:LogonType", namespaces=ns) == "InteractiveToken"
+    assert wurzel.findtext(".//t:Principal[@id='Author']/t:RunLevel", namespaces=ns) == "LeastPrivilege"
+    assert wurzel.findtext(".//t:Exec/t:Command", namespaces=ns) == str(Path(py).with_name("pythonw.exe"))
+    assert wurzel.findtext(".//t:Exec/t:Arguments", namespaces=ns) == taktgeber.windows_aufgabe_argumente(
+        293, repo.resolve()
+    )
+
+    # Idempotenz: zweiter Lauf erkennt die per XML angelegte Anmelde-Aufgabe als unverändert
+    text2 = taktgeber.windows_aufgaben_einrichten(293, repo, python=py)
+    assert len(naht.creates()) == 2
+    assert "Anmelde-Aufgabe unverändert" in text2
+
+    # Fehlerfall: Temp-XML wird auch bei schtasks-Fehler sauber gelöscht
+    naht_fehler = _SchtasksNaht(create_fehler="FEHLER: Zugriff verweigert")
+    monkeypatch.setattr(taktgeber.subprocess, "run", naht_fehler)
+    with pytest.raises(RuntimeError, match="Zugriff verweigert"):
+        taktgeber.windows_aufgaben_einrichten(293, repo, python=py)
+    assert len(naht_fehler.xml_pfade) == 1
+    assert not naht_fehler.xml_pfade[0].exists(), "Temp-XML-Datei muss auch bei Fehler gelöscht werden"
 
 
 def test_windows_aufgaben_einrichten_ist_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
