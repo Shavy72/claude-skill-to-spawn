@@ -137,6 +137,12 @@ DEFAULTS: dict[str, Any] = {
         #: ``True`` = Repo arbeitet bewusst ohne Live-Schritt: kein Einrichtungs-Ticket dafür (#452).
         "ohne": False,
     },
+    #: Klasse-2-Beweis vom Handy (#312): vertrauenswürdige öffentliche Ed25519-Schlüssel
+    #: (``ed25519:<base64url>`` oder ``ssh-ed25519 <base64>``). Privater Schlüssel liegt nur
+    #: am Handy; leer = bisheriger lokaler Weg, gesetzt = kryptographische Beweispflicht (fail-closed).
+    "klasse_2": {
+        "oeffentliche_schluessel": [],
+    },
     #: Staging-Nest (#211) für den Probesitz (#214): ``url`` = Adresse, ``zugang_datei`` = Datei mit
     #: ``nutzer=…``/``passwort=…`` (oder ``user:pass``); leer = Punkt 3 bleibt rot mit „fehlt noch“.
     "staging": {
