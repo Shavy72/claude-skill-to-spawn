@@ -23,6 +23,12 @@ pytest-testmon 2.3.1, pytest-xdist 3.8.0, psutil, coverage. Für `node`: Node 22
 - `auswertung_3b0.py`: reproduzierbare Auswertung (Median/P90/Max, RAM-Spitze, Gegenprobe `ce8a95f`,
   R1/R2/R3-Prüfung gegen `--repo`, Abbruch-Kriterium 3b-0 (a)/(b)/(c) als Markdown oder `--json`).
   `python3 auswertung_3b0.py --rueckblick rueckblick.jsonl --r1-quote r1_quote.jsonl --repo <klon-app-repo>`
+- `fehler_reihe_duoplus.py` (3b-5, #105): bewertet den M12-Status im App-Repo nach 3b-0-Entscheidung
+  (bei Variante 3: „nicht anwendbar, weil keine Auswahl läuft“, Pflicht-Nachweis im Probe-Repo #104) und
+  misst die Bremse bei 2 gleichzeitigen Gates (je `-n 4`, `nice -n 15`, Start-Last `< 12`, Live-Abbruch
+  ab `14`) gegen ein Einzel-Gate am selben Stand — entweder auf zwei isolierten Sparse-Kopien eines
+  App-Klons (`--repo <klon> --python <venv>/bin/python`) oder eigenständig auf der Probe-Suite.
+  `python3 messung/fehler_reihe_duoplus.py --repo <klon-app-repo> --python <venv>/bin/python --arbeiter 4 --dist worksteal --runden 2 --datei-anzahl 60`
 
 ## Fehlerreihe auf Probe-Repos
 - `gen_py.py` und `gen_node.py`: erzeugen `<probe-ordner>/py/` und `<probe-ordner>/node/` (Dateien, noch kein git).
