@@ -266,9 +266,31 @@ Befunde Teil (a) [3B0]:
     öffentlichen Repo wegen `.gitignore` #169).
 
 Eingebaute Fehler in DuoPlus: **0** (entfällt bei Variante 3 für DuoPlus laut Leit-Entscheidung 21.11. 21:05;
-M12 gilt dort als „nicht anwendbar, weil keine Auswahl läuft“, Pflicht-Nachweis bleibt das Probe-Repo).
+M12 gilt dort als „nicht anwendbar, weil keine Auswahl läuft“, Pflicht-Nachweis bleibt das Probe-Repo —
+erfüllt in #104 und in `docs/ABNAHME_L1.md` dokumentiert).
 Teil (b) (`-n 4 --dist loadfile` gegen `-n 4 --dist worksteal` am Stand `b5b23086c` plus 5 Auswahl-Läufe)
 bleibt offen für einen eigenen Lauf auf dem App-Klon bei Last < 12.
+
+#### Bremse bei 2 gleichzeitigen Gates (`-n 4`, Etappe 3b-5, Issue #105)
+
+Gemessen am 2026-11-28 auf dem Linux-Bau-Server (8 Kerne, 16 GiB RAM, `nice -n 15`, Last durchgehend `< 12`)
+mit `messung/fehler_reihe_duoplus.py` an zwei getrennten, isolierten Sparse-Kopien des DuoPlus-Klons
+(Stand `b5b23086c`, 60 gleichmäßig ausgewählte reale Testdateien, je 2 abwechselnde Runden nach Aufwärmlauf)
+sowie als Gegenprobe an der isolierten Probe-Suite (`24` Module / `288` Tests):
+
+| Messreihe (`-n 4`, `nice -n 15`) | Einzel-Gate Median | 2 Gates parallel (Gate-Mittel / Max-Wand) | **Bremse-Faktor** (Spitze) | RSS 1 Gate (je Worker) | Summe-RSS 2 Gates | Last-Spitze | Urteil `<= 1,5×` |
+|---|---:|---:|---:|---:|---:|---:|---|
+| DuoPlus-Klon (60 Dateien, `--dist worksteal`) | 126,93 s | 169,68 s / 178,30 s | **1,34×** (1,41×) | 1535,2 MiB (~383,8 MiB) | 2963,3 MiB | 11,51 | **erfüllt** |
+| DuoPlus-Klon (60 Dateien, `--dist loadfile`) | 122,18 s | 157,72 s / 161,02 s | **1,29×** (1,32×) | 1523,2 MiB (~380,8 MiB) | 2987,2 MiB | 11,38 | **erfüllt** |
+| Probe-Suite (24 Module, `--dist worksteal`) | 2,90 s | 3,19 s / 3,36 s | **1,10×** (1,16×) | 397,0 MiB (~99,2 MiB) | 793,4 MiB | 9,33 | **erfüllt** |
+
+Befund 3b-5: Die bisherige Simulator-Annahme „Bremse `3,0×`“ ist für ruhige Last auf dem 8-Kern-Server deutlich
+zu pessimistisch; real liegt die Bremse bei 2 gleichzeitigen `-n 4`-Gates bei **`1,29×–1,34×`** (Swap-Delta
+`0–3 MiB`, `MemAvailable >= 6,5 GiB`, RAM je Worker `~381–384 MiB` — bestätigt `JE_WORKER_MIB = 512` als
+konservative Sicherheitsmarge). Da 2 parallele Gates die 1-Minuten-Last aber allein auf `10,7–11,5` heben,
+darf ein zweiter Gate-Platz in 3b-6 nur unter Last-/Speicherschutz (nicht gleichzeitig mit 3 aktiven
+Bau-Sessions, vgl. #290) zugeschaltet werden. Vorbehalt: Messung am 60-Dateien-Schnitt im Sparse-Checkout
+(beide Vergleichsmodi einheitlich Exit `1` wegen einzelner `docs/`-Tests), kein voller 30-Minuten-Parallel-Lauf.
 
 ### 4.4 Schlange
 
@@ -329,8 +351,12 @@ keine Abkürzung (voller Lauf startet). Zum Vergleich: volle Suite `-n 4` 459 s 
   `impacted` (bei 41,3 % mittlerem Testanteil) und 59,3 % Voll-Läufe durch R1/R3 [3B0]. Kriterium (a)
   (Median Auswahl + Lauf / Voll-Lauf am selben Stand) bleibt bis Teil (b) unbelegt. Knoten-Module
   (`web/app.py` → 267 Testdateien) machen die Auswahl groß [RA].
-- **Bremse bei parallelen Gates:** wichtigste offene Zahl. Faktor 3 nur aus einer Beobachtung
-  („13 min ohne Last → 40 min bei Last 14–19“) [SIM] Annahme 6, nicht gemessen.
+- **Bremse bei parallelen Gates (geschlossen in 3b-5 #105):** Faktor `3,0×` war nur eine Schätzung [SIM]
+  Annahme 6. Nachgemessen mit `messung/fehler_reihe_duoplus.py` (2 gleichzeitige Gates je `-n 4`, `nice -n 15`,
+  Last `< 12`, Abschnitt 4.3): **`1,34×`** (`worksteal`) bzw. **`1,29×`** (`loadfile`) im 60-Dateien-Schnitt
+  des DuoPlus-Klons (`1,10×` in der Probe-Suite), Summe-RSS `~3,0 GiB` (`~381–384 MiB`/Worker), Last-Spitze
+  `11,4–11,5`. Damit unter der 3b-6-Schwelle `<= 1,5×` bei ruhiger Maschine (Vorbehalt: nur mit Last-/RAM-Schutz
+  ohne 3 parallele Bau-Sessions; voller 1.920-Dateien-Parallel-Lauf nicht gefahren).
 - **Bündel-Laufzeit:** keine eigene Fahrtenbuch-Zeile für den Bündel-Lauf, nur Spanne A/B [SIM].
 - **Staging-/Live-/Nachtrag-Schritte:** nur Zeitpunkt, keine Dauer [SIM]; Push bis Staging darum nur Näherung [VZ].
 - **Push-Zeit:** Committer-Zeit, nicht echter Push [VZ].
@@ -500,6 +526,7 @@ nice -n 15 python3 messung/rueckblick_auswahl_duoplus.py --schlange <schlange> -
   --collect collect.txt --aus rueckblick.jsonl --merges 40 --rot 15 --ohne archive --max-s 1020
 python3 messung/r1_quote_duoplus.py --schlange <schlange> --repo <klon> --seit 2026-11-07 --aus r1_quote.jsonl
 python3 messung/auswertung_3b0.py --rueckblick rueckblick.jsonl --r1-quote r1_quote.jsonl --repo <klon>
+python3 messung/fehler_reihe_duoplus.py --repo <klon> --python <venv>/bin/python --arbeiter 4 --dist worksteal --runden 2 --datei-anzahl 60
 ```
 
 `schlange_sim.py` liefert bei gleichem `--bis` und Seed byte-gleiche Ausgabe [SIM]. Alle Läufe mit
