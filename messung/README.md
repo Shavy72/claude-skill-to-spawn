@@ -21,6 +21,11 @@ pytest-testmon 2.3.1, pytest-xdist 3.8.0, psutil, coverage. Für `node`: Node 22
 - `gen_py.py` und `gen_node.py`: erzeugen `<probe-ordner>/py/` und `<probe-ordner>/node/` (Dateien, noch kein git).
 - `fehler_reihe.py`: baut je Fehler einen Commit ein und misst Wandzeit, RAM und Ergebnis.
   Ergebnis: `<probe-ordner>/ergebnis_<modus>.json`.
+- `fehler_reihe_2.py` (3b-2b, #104): zweite, vorher unbekannte Fehlerreihe (26 Fehler: 16 Python, 10 Node) gegen die
+  eingefrorenen Rückfall-Regeln in `to_spawn/pruef/regeln.py` (`regeln@fd7e49f`). Läuft plattformübergreifend
+  (Linux + Windows) gegen einen isolierten Temp-Klon des Probe-Ordners und prüft `voll rot ⇒ pruefen rot`
+  (0 übersehen) plus Gegenprobe gegen rohe statische Auswahl:
+  `python messung/fehler_reihe_2.py --ort <probe-ordner> [--nur py|node] [--aus ergebnis.json]`
 
 Reihenfolge:
 1. `python3 gen_py.py --ziel <probe-ordner>` und `python3 gen_node.py --ziel <probe-ordner>`
