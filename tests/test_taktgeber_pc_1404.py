@@ -247,7 +247,8 @@ def test_windows_anmelde_aufgabe_nutzt_xml_ohne_admin_mit_escape_cleanup_und_ide
     naht = _SchtasksNaht()
     monkeypatch.setattr(taktgeber.subprocess, "run", naht)
     py = _fake_python_mit_pythonw(tmp_path)
-    repo = tmp_path / "repo & <test>"
+    # Windows verbietet < und > in Ordnernamen ([WinError 123]); & ist plattformübergreifend zulässig.
+    repo = tmp_path / "repo & test"
     repo.mkdir()
 
     text1 = taktgeber.windows_aufgaben_einrichten(293, repo, python=py)
@@ -275,6 +276,19 @@ def test_windows_anmelde_aufgabe_nutzt_xml_ohne_admin_mit_escape_cleanup_und_ide
     assert wurzel.findtext(".//t:Exec/t:Command", namespaces=ns) == str(Path(py).with_name("pythonw.exe"))
     assert wurzel.findtext(".//t:Exec/t:Arguments", namespaces=ns) == taktgeber.windows_aufgabe_argumente(
         293, repo.resolve()
+    )
+
+    # XML-Escape für <, > und & auch in Command und Arguments (unter Windows nicht als Ordnername anlegbar)
+    xml_sonder = taktgeber.windows_anmelde_xml(
+        r"C:\py & <bin>\pythonw.exe",
+        '"to_spawn.py" taktgeber 293 --repo-dir "C:\\repo & <test>"',
+        benutzer=r"TEST-PC\nutzer&<1>",
+    )
+    wurzel_sonder = ET.fromstring(xml_sonder)
+    assert wurzel_sonder.findtext(".//t:Exec/t:Command", namespaces=ns) == r"C:\py & <bin>\pythonw.exe"
+    assert (
+        wurzel_sonder.findtext(".//t:Exec/t:Arguments", namespaces=ns)
+        == '"to_spawn.py" taktgeber 293 --repo-dir "C:\\repo & <test>"'
     )
 
     # Idempotenz: zweiter Lauf erkennt die per XML angelegte Anmelde-Aufgabe als unverändert
