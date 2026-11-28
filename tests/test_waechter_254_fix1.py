@@ -13,9 +13,12 @@ F8 Kaputte Umgebungswerte werfen den Wächter nicht aus der Bahn.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import subprocess
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -218,6 +221,92 @@ def test_wache_ohne_uhrzeit_schreibt_blockiert_ins_bau_log(
     typen = [z["typ"] for z in bau_log.lese(welt["repo"], "900")]
     assert "blockiert" in typen, typen
     assert [m["art"] for m in _mails(welt)] == ["session_tot"]
+
+
+def test_melde_stillstand_schreibt_bau_log_vor_mail(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bau-Log-Zeile ``blockiert`` steht vor der ``session_tot``-Mail, damit ein sofortiges Session-Ende sie nie abschneidet."""
+    reihenfolge: list[str] = []
+
+    def _fake_log(repo: Path, spec: int, typ: str, **felder: Any) -> None:
+        reihenfolge.append(f"bau_log:{typ}")
+
+    def _fake_mail(*args: Any, **kwargs: Any) -> bool:
+        reihenfolge.append(f"mail:{args[1]}")
+        return True
+
+    monkeypatch.setattr(waechter_lauf, "_log_zeile", _fake_log)
+    monkeypatch.setattr(waechter_lauf.melder, "melden", _fake_mail)
+
+    waechter_lauf._melde_stillstand(tmp_path, 900, "sid-1", AUSWEICH, "limit", "grund")
+
+    assert reihenfolge == ["bau_log:blockiert", "mail:session_tot"]
+
+
+def test_fahre_wartet_auf_langsame_stillstand_meldung_beim_ende(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Endet ``claude``, während ``aufsicht`` noch langsam ins Bau-Log schreibt (> ``takt + 1``), wartet ``fahre`` bis fertig."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    gestartet = threading.Event()
+    geschrieben: list[str] = []
+    limit_zeile: dict[str, Any] = json.loads(ECHT.read_bytes())
+    limit_zeile.pop("quotaLimits", None)
+    limit_zeile["message"]["content"] = [{"type": "text", "text": "You've hit your session limit"}]
+
+    class _FakeProc:
+        pid = 0
+
+        def poll(self) -> int | None:
+            return 0 if gestartet.is_set() else None
+
+        def wait(self, timeout: float | None = None) -> int:
+            if gestartet.wait(timeout=timeout):
+                return 0
+            raise subprocess.TimeoutExpired(cmd=["claude"], timeout=timeout or 0.0)
+
+        def terminate(self) -> None:
+            gestartet.set()
+
+        def kill(self) -> None:
+            gestartet.set()
+
+    def _fake_starte(cmd: list[str], cwd: Path) -> Any:
+        sid = cmd[cmd.index("--session-id") + 1]
+        datei = waechter_lauf.transkript_ordner(cwd) / f"{sid}.jsonl"
+        datei.parent.mkdir(parents=True, exist_ok=True)
+        datei.write_text(json.dumps(limit_zeile, ensure_ascii=False) + "\n", encoding="utf-8")
+        return _FakeProc()
+
+    def _langsames_log(repo_arg: Path, spec: int, typ: str, **felder: Any) -> None:
+        gestartet.set()
+        time.sleep(1.3)  # länger als das bisherige ``takt + 1`` (= 1,05 s)
+        geschrieben.append(typ)
+
+    monkeypatch.setattr(waechter_lauf, "_starte", _fake_starte)
+    monkeypatch.setattr(waechter_lauf, "_log_zeile", _langsames_log)
+    monkeypatch.setattr(waechter_lauf.melder, "melden", lambda *a, **kw: True)
+    monkeypatch.setattr(waechter_lauf.sitzungsjob, "gebunden", lambda _p: contextlib.nullcontext())
+
+    rc = waechter_lauf.fahre(
+        claude="claude",
+        spec=900,
+        prompt="los",
+        modell=AUSWEICH,
+        ausweich=AUSWEICH,
+        remote_control=False,
+        repo=repo,
+        cwd=repo,
+        takt=0.05,
+        puffer=0.0,
+    )
+
+    assert rc == 0
+    assert geschrieben == ["blockiert"]
 
 
 def test_os_ist_da() -> None:

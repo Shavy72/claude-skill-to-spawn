@@ -33,7 +33,7 @@ def test_ohne_bau_wt_dir_windows_vorgabe_c_dev(tmp_path: Path, monkeypatch: pyte
     monkeypatch.delenv("TO_SPAWN_REPO", raising=False)
     monkeypatch.delenv("BAU_WT_DIR", raising=False)
     monkeypatch.setattr(sys, "platform", "win32")
-    assert config.worktree_pfad(7, tmp_path) == "C:/dev/wt-7"
+    assert config.worktree_pfad(7, tmp_path) == f"C:/dev/{tmp_path.name}/wt-7"
 
 
 def test_waechter_lauf_import_trotz_ersetzter_tmux_naht(

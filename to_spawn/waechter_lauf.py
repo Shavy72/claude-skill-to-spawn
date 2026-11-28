@@ -75,6 +75,10 @@ _RESET_TEXT = re.compile(
     re.IGNORECASE,
 )
 TAKT_S = 5.0
+#: Mindest-Wartezeit (s) auf den Aufsicht-Faden beim Session-Ende: ``bei_limit`` schreibt
+#: über Git-Plumbing ins Ereignis-Protokoll (``bau_log.schreibe``) und mailt — unter Windows
+#: dauert das länger als ein kurzer Test-Takt (``takt + 1``); im Leerlauf kehrt ``join`` sofort zurück.
+AUFSICHT_JOIN_MIN_S = 30.0
 #: Sekunden, nach denen ein fehlendes Transkript eine Warnung wert ist.
 WARTE_TRANSKRIPT_S = 60.0
 #: Puffer nach dem Reset, bevor der Aufseher weiterfährt (#254).
@@ -621,7 +625,12 @@ def _melde_pause(
 
 
 def _melde_stillstand(repo: Path, spec: int, sid: str, modell: str, text: str, grund: str) -> None:
-    """Aufseher bleibt stehen: Mail wie vor #254 — und eine Spur im Bau-Log (F5)."""
+    """Aufseher bleibt stehen: Spur im Bau-Log (F5) vor der Mail wie vor #254.
+
+    Das Bau-Log wird vor der ``session_tot``-Mail geschrieben, damit die ``blockiert``-Zeile
+    auch dann sicher im Ereignis-Protokoll steht, wenn die Session direkt auf die Mail hin endet.
+    """
+    _log_zeile(repo, spec, "blockiert", modell=modell, grund=grund)
     try:
         raus = melder.melden(
             repo,
@@ -639,7 +648,6 @@ def _melde_stillstand(repo: Path, spec: int, sid: str, modell: str, text: str, g
             spec,
             grund,
         )
-    _log_zeile(repo, spec, "blockiert", modell=modell, grund=grund)
 
 
 def _abloesen(
@@ -1131,7 +1139,10 @@ def fahre(
                         rc = 0
                         break
             aufsicht.halt.set()
-            aufsicht.join(timeout=takt + 1)
+            aufsicht_warte = max(takt + 1, AUFSICHT_JOIN_MIN_S)
+            aufsicht.join(timeout=aufsicht_warte)
+            if aufsicht.is_alive():
+                log.warning("Aufseher #%s: Aufsicht-Faden nach %.1f s nicht beendet.", spec, aufsicht_warte)
             abloesung.stoppen(timeout=takt + 1)  # Session vorbei: Ablöse-Faden tippt nichts mehr
         if zurueck:
             _log_zeile(repo, spec, "waechter_modell", von=modell, nach=haupt, grund="Limit vorbei")
