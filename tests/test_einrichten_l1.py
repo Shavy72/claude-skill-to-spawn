@@ -317,3 +317,100 @@ def test_haengendes_git_gilt_als_getrackt(repo: Path, monkeypatch: pytest.Monkey
     assert code == 0, text
     assert (repo / "scripts" / "wache.py").read_text(encoding="utf-8") == "# alt, ungetrackt\n"
     assert zeitlimits and all(isinstance(z, (int, float)) and z > 0 for z in zeitlimits)
+
+
+# --- Fix-Runde 3 (#950): gh-Zeitlimit beendet Prozessbaum und klemmt nicht an offener Pipe ----
+
+
+def test_haengendes_gh_mit_kindprozess_beendet_prozessbaum(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ein hängendes ``gh`` samt schlafendem Kind (offene Pipe) endet binnen Frist ohne Überlebende."""
+    import time
+
+    from to_spawn import gh, prozessbaum
+
+    pid_datei = repo.parent / "gh_kind.pid"
+    _gh_stub(
+        repo,
+        "import pathlib, subprocess, sys, time\n"
+        "kind = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+        f"pathlib.Path({str(pid_datei)!r}).write_text(str(kind.pid), encoding='utf-8')\n"
+        "time.sleep(60)\n",
+        monkeypatch,
+    )
+    start = time.monotonic()
+    code, ausgabe = gh.lauf(["api", "repos/o/r/labels/x"], cwd=repo, timeout=2.0)
+    dauer = time.monotonic() - start
+    assert (code, ausgabe) == (124, "")
+    assert dauer < 15, f"{dauer:.1f} s — Kind-Pipe hat gh.lauf aufgehalten"
+    assert pid_datei.is_file(), "Kind-Prozess wurde nicht gestartet"
+    kind_pid = int(pid_datei.read_text(encoding="utf-8").strip())
+    ende = time.monotonic() + 3.0
+    while prozessbaum.aktiv(kind_pid) and time.monotonic() < ende:
+        time.sleep(0.05)
+    lebendig = prozessbaum.aktiv(kind_pid)
+    if lebendig:
+        # Aufräumen für den Rot-Beweis-Lauf, damit kein Schlaf-Prozess hängen bleibt.
+        prozessbaum.senden([kind_pid], prozessbaum.signal.SIGTERM)
+    assert not lebendig, f"Kind-PID {kind_pid} überlebte gh-Zeitlimit"
+
+
+def test_haengendes_gh_offene_pipe_nach_beenden_haengt_nicht(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows-Pipe nach ``gruppe_beenden`` noch offen: kein unbegrenztes ``communicate()`` und kein Close-Hänger."""
+    import contextlib
+    from typing import Self
+
+    from to_spawn import gh, prozessbaum
+
+    aufrufe_timeout: list[float | None] = []
+    gruppe_beendet: list[int] = []
+    geschlossen: list[str] = []
+
+    class _Rohr:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def close(self) -> None:
+            geschlossen.append(self.name)
+
+    class _FakePopen:
+        pid = 424242
+        returncode: int | None = None
+
+        def __init__(self, *_a: object, **_k: object) -> None:
+            self.stdout = _Rohr("stdout")
+            self.stderr = _Rohr("stderr")
+
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *_a: object) -> None:
+            pass
+
+        def communicate(self, *_a: object, timeout: float | None = None) -> tuple[str, str]:
+            aufrufe_timeout.append(timeout)
+            raise subprocess.TimeoutExpired(["gh"], timeout or 0)
+
+        def kill(self) -> None:
+            pass
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+        def wait(self, timeout: float | None = None) -> int:
+            self.returncode = 1
+            return 1
+
+    monkeypatch.setattr(gh.subprocess, "Popen", _FakePopen)
+    monkeypatch.setattr(prozessbaum, "gruppe_gebunden", lambda _p: contextlib.nullcontext(None))
+    monkeypatch.setattr(
+        prozessbaum,
+        "gruppe_beenden",
+        lambda proc, **_k: gruppe_beendet.append(proc.pid),
+    )
+
+    code, ausgabe = gh.lauf(["api", "repos/o/r/labels/x"], cwd=repo, timeout=0.3)
+    assert (code, ausgabe) == (124, "")
+    assert gruppe_beendet == [424242]
+    assert len(aufrufe_timeout) >= 2
+    assert all(t is not None and t > 0 for t in aufrufe_timeout), f"unbegrenztes communicate: {aufrufe_timeout}"
+    assert geschlossen == [], f"blockierende Rohre dürfen bei offenem Nachlauf nicht geschlossen werden: {geschlossen}"

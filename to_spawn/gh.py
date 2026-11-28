@@ -48,6 +48,22 @@ def gh_befehl() -> list[str] | None:
     return [pfad] if pfad else None
 
 
+#: Nachlauf-Frist (s) nach hartem Beenden eines hängenden ``gh``-Prozessbaums (#950):
+#: begrenzt das Auslesen der Pipes (Windows-``subprocess.run`` wartete sonst unbegrenzt).
+_GH_NACHLAUF_S = 2.0
+
+
+def _start_optionen() -> dict[str, Any]:
+    """Prozessgruppen-Optionen für :func:`lauf` (Windows: neue Gruppe + fensterlos; POSIX: neue Session)."""
+    if sys.platform == "win32":
+        basis = prozessbaum.fensterlos()
+        return {
+            **basis,
+            "creationflags": basis.get("creationflags", 0) | subprocess.CREATE_NEW_PROCESS_GROUP,
+        }
+    return {"start_new_session": True}
+
+
 def lauf(
     args: list[str],
     cwd: Path | None = None,
@@ -58,8 +74,9 @@ def lauf(
     """``gh <args>`` ausführen; gibt (Exit-Code, stdout) zurück — die eine Stelle, die ``gh`` startet.
 
     ``timeout`` in Sekunden; ohne Angabe gilt :func:`standard_zeit` (#601: hängt GitHub, hängt
-    kein Aufrufer mit). Überschritten → Kind wird beendet, Exit 124, leeres stdout — derselbe
-    Fehlerweg wie ein ``gh``-Fehler, Aufrufer brauchen keinen eigenen Code.
+    kein Aufrufer mit). Überschritten → der ganze Prozessbaum (Windows: Job + Baum, Linux:
+    Prozessgruppe) wird beendet, die Pipe-Nachlesung ist durch :data:`_GH_NACHLAUF_S` begrenzt
+    (#950: kein unbegrenzter ``communicate()``-Hänger unter Windows), Exit 124, leeres stdout.
     ``fehlertext=True``: bei Exit ≠ 0 kommt stderr statt stdout zurück (Fehlermeldung für den Nutzer).
     """
     vorspann = gh_befehl()
@@ -67,27 +84,83 @@ def lauf(
         return 127, ""
     if timeout is None:
         timeout = standard_zeit()
+    befehl = [*vorspann, *args]
+    ort = str(cwd) if cwd else None
+    # Tests, die ``subprocess.run`` gezielt ersetzen, behalten ihren direkten Weg.
+    if subprocess.__dict__["run"].__module__ != "subprocess":
+        try:
+            fertig = subprocess.run(
+                befehl,
+                cwd=ort,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+                timeout=timeout,
+                **prozessbaum.fensterlos(),
+            )
+        except subprocess.TimeoutExpired:
+            log.warning("gh %s: Zeitlimit %s s überschritten", " ".join(args[:3]), timeout)
+            return 124, ""
+        except OSError as fehler:
+            log.warning("gh-Aufruf fehlgeschlagen: %s", fehler)
+            return 127, ""
+        if fehlertext and fertig.returncode != 0:
+            return fertig.returncode, (fertig.stderr or "").strip()
+        return fertig.returncode, (fertig.stdout or "").strip()
+
     try:
-        fertig = subprocess.run(
-            [*vorspann, *args],
-            cwd=str(cwd) if cwd else None,
-            capture_output=True,
+        prozess = subprocess.Popen(
+            befehl,
+            cwd=ort,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
             errors="replace",
-            check=False,
-            timeout=timeout,
-            **prozessbaum.fensterlos(),
+            **{**prozessbaum.fensterlos(), **_start_optionen()},
         )
-    except subprocess.TimeoutExpired:
-        log.warning("gh %s: Zeitlimit %s s überschritten", " ".join(args[:3]), timeout)
-        return 124, ""
     except OSError as fehler:
         log.warning("gh-Aufruf fehlgeschlagen: %s", fehler)
         return 127, ""
-    if fehlertext and fertig.returncode != 0:
-        return fertig.returncode, (fertig.stderr or "").strip()
-    return fertig.returncode, (fertig.stdout or "").strip()
+    rohre_offen = False
+    try:
+        with prozessbaum.gruppe_gebunden(prozess) as job:
+            try:
+                stdout, stderr = prozess.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                prozessbaum.gruppe_beenden(prozess, job=job)
+                try:
+                    prozess.communicate(timeout=_GH_NACHLAUF_S)
+                except subprocess.TimeoutExpired:
+                    rohre_offen = True
+                    log.warning(
+                        "gh %s: Pipe nach Zeitlimit %s s noch offen — lasse Nachlauf los",
+                        " ".join(args[:3]),
+                        timeout,
+                    )
+                try:
+                    prozess.wait(timeout=_GH_NACHLAUF_S)
+                except subprocess.TimeoutExpired:
+                    pass
+                log.warning("gh %s: Zeitlimit %s s überschritten", " ".join(args[:3]), timeout)
+                return 124, ""
+            except BaseException:
+                prozessbaum.gruppe_beenden(prozess, job=job)
+                raise
+    finally:
+        if not rohre_offen:
+            for rohr in (prozess.stdout, prozess.stderr):
+                if rohr is not None:
+                    try:
+                        rohr.close()
+                    except OSError:
+                        pass
+    code = prozess.returncode if prozess.returncode is not None else 1
+    if fehlertext and code != 0:
+        return code, (stderr or "").strip()
+    return code, (stdout or "").strip()
 
 
 #: Standard-Zeitgrenze (s) je ``gh``-Aufruf ohne eigene Grenze (#601). 120 s = größte schon
