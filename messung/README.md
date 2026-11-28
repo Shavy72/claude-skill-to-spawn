@@ -14,8 +14,15 @@ pytest-testmon 2.3.1, pytest-xdist 3.8.0, psutil, coverage. Für `node`: Node 22
   `nice -n 10 python3 schlange_sim.py --schlange <schlangen-ordner> [--bis <ISO-Zeit>] [--tage 14]`
 - `rueckblick_auswahl_duoplus.py`: heutige gate_auswahl gegen pytest-impacted an echten Läufen.
   Braucht Klon des App-Repos, venv und Sammeldatei (`pytest --collect-only -q > collect.txt`).
-  Fortsetzbar (fertige Läufe übersprungen), ca. 100 s je Lauf, Zeitdeckel `--max-s` je Aufruf.
-  `nice -n 15 python3 rueckblick_auswahl_duoplus.py --schlange <schlangen-ordner> --repo <klon-app-repo> --venv <venv-ordner> --collect collect.txt --aus rueckblick.jsonl`
+  Fortsetzbar (fertige Läufe übersprungen), misst Wandzeit, RAM-Spitze (psutil) und 1-min-Last,
+  unterstützt `--ohne <ordner>` (Sparse-Checkout in `try/finally`, z. B. `--ohne archive`),
+  Zeitdeckel `--max-s` je Aufruf (Standard: `--merges 40 --rot 15 --max-s 1020`).
+  `nice -n 15 python3 rueckblick_auswahl_duoplus.py --schlange <schlangen-ordner> --repo <klon-app-repo> --venv <venv-ordner> --collect collect.txt --aus rueckblick.jsonl --ohne archive`
+- `r1_quote_duoplus.py`: R1/R3/R2-Quote je Ticket aus `fahrtenbuch.jsonl` und `git log` (3b-0, #98).
+  `python3 r1_quote_duoplus.py --schlange <schlangen-ordner> --repo <klon-app-repo> --seit 2026-11-07 --aus r1_quote.jsonl`
+- `auswertung_3b0.py`: reproduzierbare Auswertung (Median/P90/Max, RAM-Spitze, Gegenprobe `ce8a95f`,
+  R1/R2/R3-Prüfung gegen `--repo`, Abbruch-Kriterium 3b-0 (a)/(b)/(c) als Markdown oder `--json`).
+  `python3 auswertung_3b0.py --rueckblick rueckblick.jsonl --r1-quote r1_quote.jsonl --repo <klon-app-repo>`
 
 ## Fehlerreihe auf Probe-Repos
 - `gen_py.py` und `gen_node.py`: erzeugen `<probe-ordner>/py/` und `<probe-ordner>/node/` (Dateien, noch kein git).
