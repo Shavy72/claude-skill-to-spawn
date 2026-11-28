@@ -115,6 +115,10 @@ def _pruefen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int | Non
     from to_spawn import pruef
 
     repo = config.repo_wurzel(args.repo.expanduser() if args.repo else _repo_aus_umgebung())
+    if getattr(args, "vorpruefung", False):
+        urteil_vor = pruef.vorpruefen(repo, args.basis, args.ziel)
+        print(pruef.protokoll.text(urteil_vor.zeile))
+        return urteil_vor.exit
     urteil = pruef.pruefen(repo, args.basis, args.ziel)
     print(pruef.protokoll.text(urteil.zeile))
     return urteil.exit

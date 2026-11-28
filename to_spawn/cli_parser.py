@@ -160,6 +160,11 @@ def baue_parser() -> _Parser:
     p_pruefen.add_argument("basis", help="Ausgangsstand (git-Ref)")
     p_pruefen.add_argument("ziel", nargs="?", help="zu prüfender Stand (git-Ref, ausgecheckt)")
     p_pruefen.add_argument("--repo", type=Path, help="Repo-Ordner (Vorgabe: aktueller Ordner)")
+    p_pruefen.add_argument(
+        "--vorpruefung",
+        action="store_true",
+        help="Nur schnelle Vorprüfung (Stufe 0–3, nie Stufe 4 voll) vor Eintritt in die Schlange (#106)",
+    )
     _regularien_optionen(p_pruefen)  # nur für die Weiterleitung ``pruefen <S>``
 
     # Spec-Rand (E2-2): ein Issue nachträglich an eine Spec hängen (= „Ticket nachtragen“).
