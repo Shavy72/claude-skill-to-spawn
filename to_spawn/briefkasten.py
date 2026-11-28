@@ -10,7 +10,13 @@ Einziges Modul, das Ort, Dateimuster, Format und Ablage der Fragen kennt (Hauptb
   :data:`WARTET`, :data:`NUTZER` oder :data:`UNBEKANNT` (``id`` nicht im Briefkasten → neu fragen).
 - :func:`antworten` — der Aufseher antwortet auf eine offene Frage über ihre ``id``; verweigert
   (:class:`Verweigert`) in einer Bau-Session und solange das Ticket auf den Nutzer wartet.
-- :func:`nutzer_antworten` — Antwort des Nutzers (auch Klasse 2); verweigert in einer Bau-Session.
+- :func:`nutzer_antworten` — Antwort des Nutzers (auch Klasse 2); verweigert in einer Bau-Session
+  und verlangt bei eingerichteten Handy-Schlüsseln (``klasse_2.oeffentliche_schluessel`` / System-Datei)
+  einen kryptographischen Ed25519-Beweis (#312).
+- :func:`beweis_anfrage` — liefert die Prüf-Anforderung (``ticket``, ``id``, ``challenge``,
+  ``frage_sha256``) einer offenen Frage zum Signieren auf dem Handy (#312).
+- :func:`beweis_einreichen` — prüft ein vom Handy signiertes ``TO-SPAWN-K2-V1``-Token gegen die
+  vertrauenswürdigen öffentlichen Schlüssel und schreibt die Antwort über :func:`nutzer_antworten` (#312).
 - :func:`offene` — alle offenen Fragen (je Ticket, ``id``, Klasse) samt Sperre durch kaputte Datei.
 - :func:`alle_tickets` — alle Tickets mit Briefkasten-Datei (auch nur ``.kaputt-*``).
 - :func:`liste` — die eine Liste für die Gesamtabnahme: Klasse-1-Einträge aus dem Bau-Log plus alle
@@ -27,14 +33,14 @@ geklärt ist es, wenn der Nutzer sie geprüft und gelöscht hat. Ein Lesefehler 
 verschiebt nichts — die Datei kann gültig sein. Jedes Lesen-Ändern-Schreiben läuft unter :func:`sperre.halte` auf
 ``entscheidung-<N>.lock``.
 
-Schutz des Nutzer-Wegs, ehrlich: Bau-Session (``TO_SPAWN_TICKET`` gesetzt, auch leer) und
-Aufseher (``--von`` kennt nur :data:`AUFSEHER_VON`) haben über diese Schnittstelle keinen Weg,
-``von`` :data:`NUTZER_VON` zu schreiben; die CLI ``nutzer-antwort`` verlangt zusätzlich ein
-echtes Terminal. Das verhindert versehentliche und über die angebotene Schnittstelle mögliche
-Selbst-Freigabe — nicht eine Session, die mit Absicht die Datei selbst schreibt oder die
-Umgebung umbaut (``env -u``); auf derselben Maschine kann sie das technisch immer. Einen Weg
-über Ticket-Kommentare gibt es bewusst nicht: Sessions kommentieren mit dem Konto des Besitzers,
-ein Kommentar ist also nie ein Beleg für die Antwort des Nutzers.
+Schutz des Nutzer-Wegs, ehrlich: Ohne eingerichtete Handy-Schlüssel (``klasse_2.oeffentliche_schluessel``
+oder System-Schlüsseldatei) verhindert der lokale Weg (``TO_SPAWN_TICKET``, ``--von``, Terminal /
+``hook-ja-sperre``) versehentliche Selbst-Freigabe, nicht aber direktes Überschreiben der Datei.
+Mit eingerichteten öffentlichen Ed25519-Schlüsseln (#312, Variante a) liegt der private Schlüssel
+ausschließlich auf dem Handy: jede Klasse-2-Antwort wird beim Schreiben UND bei jedem Lesen
+(:func:`_gilt`, :func:`lesen`, :func:`offene`, :func:`liste`) kryptographisch geprüft — selbst eine
+Session mit allen Rechten des Besitzer-Kontos, umgebauter Umgebung und direktem Dateizugriff kann
+keine gültige Signatur fälschen. Einen unsignierten Kommentar-Weg gibt es weiterhin bewusst nicht.
 """
 
 from __future__ import annotations
@@ -46,14 +52,14 @@ import re
 import secrets
 import shlex
 import sys
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from to_spawn import bau_log, befugnis, config, manifest, sperre
+from to_spawn import bau_log, befugnis, config, klasse2_beweis, manifest, sperre
 
 log = logging.getLogger("to_spawn.briefkasten")
 
@@ -186,7 +192,7 @@ def _lade(datei: Path) -> dict[str, Any] | None:
 
 
 def _jetzt() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _ist_klasse_2(f: Mapping[str, Any]) -> bool:
@@ -202,17 +208,17 @@ _LIVE_ART_WOERTER = frozenset(
     {"deploy", "deployen", "ausrollen", "live", "schalten", "freigabe", "freigeben", "starten"}
 )
 _LOESCH_WOERTER = frozenset({"lösch", "loesch", "delete", "entfern", "drop", "truncate", "destroy"})
-_NICHT_LIVE_WOERTER = (befugnis._KLASSE_2_WOERTER - {"live", "prod", "vps"}) | _LOESCH_WOERTER  # noqa: SLF001
+_NICHT_LIVE_WOERTER = (befugnis._KLASSE_2_WOERTER - {"live", "prod", "vps"}) | _LOESCH_WOERTER
 
 
 def _enthaelt_nicht_live_klasse_2(f: Mapping[str, Any]) -> bool:
     """True, sobald Frage, Vorschlag, Ziel oder Art ein Nicht-Live-Klasse-2-Wort trägt (Kosten, Konto, Löschen…)."""
     for feld in (f.get("frage"), f.get("vorschlag"), f.get("ziel"), f.get("art")):
-        norm = befugnis._norm(feld)  # noqa: SLF001 — einzige Normalisierung aus befugnis
+        norm = befugnis._norm(feld)  # einzige Normalisierung aus befugnis
         if not norm:
             continue
         teile = re.split(r"\W+", norm)
-        if any(w in norm for w in _NICHT_LIVE_WOERTER) or any(w in teile for w in befugnis._KLASSE_2_GANZWORT):  # noqa: SLF001
+        if any(w in norm for w in _NICHT_LIVE_WOERTER) or any(w in teile for w in befugnis._KLASSE_2_GANZWORT):
             return True
     return False
 
@@ -223,9 +229,9 @@ def ist_live_frage(f: Mapping[str, Any]) -> bool:
         return False
     if _enthaelt_nicht_live_klasse_2(f):
         return False
-    ziel = befugnis._norm(f.get("ziel"))  # noqa: SLF001
-    art = befugnis._norm(f.get("art"))  # noqa: SLF001
-    frage = befugnis._norm(f.get("frage"))  # noqa: SLF001
+    ziel = befugnis._norm(f.get("ziel"))
+    art = befugnis._norm(f.get("art"))
+    frage = befugnis._norm(f.get("frage"))
     ziel_live = any(w in ziel for w in _LIVE_ZIEL_WOERTER)
     art_teile = set(re.split(r"\W+", art)) if art else set()
     art_live = bool(art_teile & _LIVE_ART_WOERTER)
@@ -236,15 +242,23 @@ def ist_live_frage(f: Mapping[str, Any]) -> bool:
 
 def hat_offene_live_fragen(tickets: Iterable[str | int], *, hauptbaum: Path | None = None) -> bool:
     """Rein lokal: liegt für mindestens ein Ticket in ``tickets`` eine offene Live-Frage im Briefkasten? (#924)"""
+    basis = _hauptbaum(hauptbaum)
+    schluessel, konfig_fehler = _schluessel_stand(basis)
+    if konfig_fehler:
+        return False
     for t in tickets:
         try:
-            datei = _datei(t, hauptbaum)
+            nummer = _nummer(t)
+            datei = _datei(nummer, basis)
         except ValueError:
             continue
         inhalt = _lies(datei)
         if _sperrgruende(datei, inhalt):
             continue
-        if any(not _gilt(f) and ist_live_frage(f) for f in (inhalt.daten or {}).get("fragen", [])):
+        if any(
+            not _gilt(f, ticket=str(nummer), schluessel=schluessel) and ist_live_frage(f)
+            for f in (inhalt.daten or {}).get("fragen", [])
+        ):
             return True
     return False
 
@@ -261,6 +275,10 @@ def live_fragen_freigeben(
     Nicht-Live-Klasse-2-Fragen (Kosten, Konto, Zugang, Löschen) und kaputte Dateien bleiben unberührt.
     In einer Bau-Session (``TO_SPAWN_TICKET``) verweigert :func:`nutzer_antworten`.
     """
+    basis = _hauptbaum(hauptbaum)
+    schluessel, konfig_fehler = _schluessel_stand(basis)
+    if konfig_fehler:
+        return []
     gesehen: set[int] = set()
     beantwortet: list[tuple[str, str]] = []
     beleg = (
@@ -277,18 +295,31 @@ def live_fragen_freigeben(
         if nummer in gesehen:
             continue
         gesehen.add(nummer)
-        datei = _datei(nummer, hauptbaum)
+        datei = _datei(nummer, basis)
         inhalt = _lies(datei)
         if _sperrgruende(datei, inhalt):
             continue
-        offen_ids = [str(f["id"]) for f in (inhalt.daten or {}).get("fragen", []) if not _gilt(f) and ist_live_frage(f)]
+        offen_ids = [
+            str(f["id"])
+            for f in (inhalt.daten or {}).get("fragen", [])
+            if not _gilt(f, ticket=str(nummer), schluessel=schluessel) and ist_live_frage(f)
+        ]
         for fid in offen_ids:
             try:
-                nutzer_antworten(nummer, fid, "ja", [beleg], grund, hauptbaum=hauptbaum)
+                nutzer_antworten(nummer, fid, "ja", [beleg], grund, hauptbaum=basis)
             except ValueError:
                 continue  # zeitgleich bereits beantwortet
             beantwortet.append((str(nummer), fid))
     return beantwortet
+
+
+def _schluessel_stand(basis: Path) -> tuple[tuple[klasse2_beweis.OeffentlicherSchluessel, ...], str]:
+    """Lädt vertrauenswürdige Handy-Schlüssel für ``basis``; Fehler liefern einen Sperrgrund (fail-closed)."""
+    try:
+        return klasse2_beweis.vertraute_schluessel(basis), ""
+    except klasse2_beweis.BeweisKonfigFehler as fehler:
+        log.warning("Klasse-2-Schlüssel-Konfiguration ungültig (%s) — fail-closed gesperrt.", fehler)
+        return (), f"Klasse-2-Schlüssel-Konfiguration ungültig ({fehler}) — nur der Nutzer klärt das"
 
 
 def _hat_antwort(f: dict[str, Any]) -> bool:
@@ -296,14 +327,50 @@ def _hat_antwort(f: dict[str, Any]) -> bool:
     return isinstance(antwort, dict) and bool(str(antwort.get("wahl") or "").strip())
 
 
-def _gilt(f: dict[str, Any]) -> bool:
-    """Hat ``f`` eine gültige Antwort? Klasse 2 nur ``von`` :data:`NUTZER_VON`."""
-    return _hat_antwort(f) and (f["antwort"].get("von") == NUTZER_VON or not _ist_klasse_2(f))
+def _gilt(
+    f: dict[str, Any],
+    *,
+    ticket: str = "",
+    schluessel: Sequence[klasse2_beweis.OeffentlicherSchluessel] = (),
+) -> bool:
+    """Hat ``f`` eine gültige Antwort? Klasse 2 nur ``von`` :data:`NUTZER_VON` — und bei
+    eingerichteten Handy-Schlüsseln gilt jede Antwort mit ``von == NUTZER_VON`` (unabhängig
+    von der Frage-Klasse) nur mit kryptographisch gültigem Ed25519-Beweis (#312)."""
+    if not _hat_antwort(f):
+        return False
+    antwort = f["antwort"]
+    von_nutzer = antwort.get("von") == NUTZER_VON
+    if _ist_klasse_2(f) and not von_nutzer:
+        return False
+    if not (schluessel and von_nutzer):
+        return True
+    token = antwort.get("beweis")
+    if not isinstance(token, str) or not token.strip():
+        return False
+    try:
+        klasse2_beweis.beweis_pruefen(
+            token,
+            schluessel,
+            ticket=ticket,
+            frage_id=str(f.get("id") or ""),
+            frage=str(f.get("frage") or ""),
+            challenge=str(f.get("challenge") or ""),
+            wahl=str(antwort.get("wahl") or ""),
+            grund=str(antwort.get("grund") or ""),
+        )
+    except klasse2_beweis.BeweisFehler:
+        return False
+    return True
 
 
-def _klasse_2_offen(fragen: list[dict[str, Any]]) -> bool:
-    """Irgendeine Klasse-2-Frage ohne Antwort des Nutzers? Dann ist das Ticket gesperrt."""
-    return any(_ist_klasse_2(f) and not _gilt(f) for f in fragen)
+def _klasse_2_offen(
+    fragen: list[dict[str, Any]],
+    *,
+    ticket: str = "",
+    schluessel: Sequence[klasse2_beweis.OeffentlicherSchluessel] = (),
+) -> bool:
+    """Irgendeine Klasse-2-Frage ohne gültige Antwort des Nutzers? Dann ist das Ticket gesperrt."""
+    return any(_ist_klasse_2(f) and not _gilt(f, ticket=ticket, schluessel=schluessel) for f in fragen)
 
 
 def _kaputte(datei: Path) -> list[Path]:
@@ -358,7 +425,7 @@ def einwerfen(
             raise OSError(f"Ticket {nummer}: {inhalt.stoerung}")
         if inhalt.beiseitelegen:
             # Nie überschreiben, was nicht lesbar ist (Datenverlust): beiseitelegen.
-            stempel = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+            stempel = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
             datei.replace(datei.with_name(f"{datei.name}.kaputt-{stempel}"))
             log.warning("Kaputter Briefkasten %s nach .kaputt-%s verschoben.", datei, stempel)
         daten = daten or {"ticket": str(nummer), "fragen": []}
@@ -366,6 +433,7 @@ def einwerfen(
             {
                 "id": frage_id,
                 "ts": _jetzt(),
+                "challenge": secrets.token_hex(16),
                 "frage": frage,
                 "vorschlag": vorschlag,
                 "ziel": ziel,
@@ -382,25 +450,31 @@ def einwerfen(
 def lesen(n: str | int, frage_id: str | None = None, *, hauptbaum: Path | None = None) -> Antwort | str:
     """Stand der Frage ``frage_id``: :class:`Antwort`, :data:`WARTET`, :data:`NUTZER` oder :data:`UNBEKANNT`.
 
-    :data:`NUTZER`, solange das Ticket durch eine kaputte Datei gesperrt ist (``.kaputt-*`` oder
-    vorhandene, aber unlesbare Datei, :func:`_sperrgruende`) oder irgendeine Klasse-2-Frage des
-    Tickets ohne Antwort des Nutzers ist (eine Antwort anderer gibt Klasse 2 nie frei). Die
-    Antwort des Nutzers kommt als :class:`Antwort` (``von`` :data:`NUTZER_VON`). Ohne passende
-    ``id`` nie eine :class:`Antwort`: :data:`UNBEKANNT`, wenn eine ``frage_id`` genannt ist, die nicht
-    (mehr) im Briefkasten steht (sonst wartete die Session für immer); ohne ``frage_id`` :data:`WARTET`.
+    :data:`NUTZER`, solange das Ticket durch eine kaputte Datei oder ungültige Schlüssel-Konfig gesperrt ist
+    (``.kaputt-*``, unlesbare Datei, :func:`_sperrgruende`) oder irgendeine Klasse-2-Frage des
+    Tickets ohne gültige Antwort des Nutzers ist (bei eingerichteten Handy-Schlüsseln inkl.
+    Ed25519-Beweisprüfung, #312). Die Antwort des Nutzers kommt als :class:`Antwort` (``von``
+    :data:`NUTZER_VON`). Ohne passende ``id`` nie eine :class:`Antwort`: :data:`UNBEKANNT`, wenn eine
+    ``frage_id`` genannt ist, die nicht (mehr) im Briefkasten steht (sonst wartete die Session für
+    immer); ohne ``frage_id`` :data:`WARTET`.
     """
-    datei = _datei(n, hauptbaum)
+    basis = _hauptbaum(hauptbaum)
+    nummer = _nummer(n)
+    schluessel, konfig_fehler = _schluessel_stand(basis)
+    if konfig_fehler:
+        return NUTZER
+    datei = _datei(nummer, basis)
     inhalt = _lies(datei)
     if _sperrgruende(datei, inhalt):
         return NUTZER
     fragen = (inhalt.daten or {}).get("fragen") or []
-    if fragen and _klasse_2_offen(fragen):
+    if fragen and _klasse_2_offen(fragen, ticket=str(nummer), schluessel=schluessel):
         return NUTZER
     treffer = [f for f in fragen if frage_id and f.get("id") == frage_id]
     if not treffer:
         return UNBEKANNT if frage_id else WARTET
     f = treffer[-1]
-    if not _gilt(f):
+    if not _gilt(f, ticket=str(nummer), schluessel=schluessel):
         return WARTET
     antwort = f["antwort"]
     belege = antwort.get("belege")
@@ -443,16 +517,95 @@ def nutzer_antworten(
     belege: Iterable[str],
     grund: str,
     *,
+    beweis: str = "",
     hauptbaum: Path | None = None,
 ) -> Path:
     """Antwort des Nutzers (Mensch) auf die offene Frage ``frage_id``, auch Klasse 2.
 
-    Einziger Weg zu ``von`` :data:`NUTZER_VON`. ``Verweigert`` in einer Bau-Session; eine
-    ``.kaputt-*``-Datei sperrt weiter, bis der Nutzer sie gelöscht hat, eine unlesbare/kaputte
-    Hauptdatei, bis sie geklärt ist. Grenzen des Schutzes:
-    Modul-Docstring.
+    Einziger Weg zu ``von`` :data:`NUTZER_VON`. ``Verweigert`` in einer Bau-Session sowie bei
+    eingerichteten Handy-Schlüsseln ohne gültigen Ed25519-Beweis (#312); eine ``.kaputt-*``-Datei
+    sperrt weiter, bis der Nutzer sie gelöscht hat, eine unlesbare/kaputte Hauptdatei, bis sie
+    geklärt ist. Grenzen des Schutzes: Modul-Docstring.
     """
-    return _schreibe_antwort(n, frage_id, wahl, belege, grund, NUTZER_VON, hauptbaum)
+    return _schreibe_antwort(n, frage_id, wahl, belege, grund, NUTZER_VON, hauptbaum, beweis=beweis)
+
+
+def beweis_anfrage(n: str | int, frage_id: str, *, hauptbaum: Path | None = None) -> dict[str, str]:
+    """Prüf-Anforderung einer offenen Frage zum Signieren auf dem Handy (#312).
+
+    Liefert ``ticket``, ``id``, ``klasse``, ``frage``, ``vorschlag``, ``challenge`` und
+    ``frage_sha256``. ``Verweigert`` bei kaputter Datei oder fehlender Challenge; ``ValueError``
+    wenn keine passende offene Frage vorliegt.
+    """
+    basis = _hauptbaum(hauptbaum)
+    nummer = _nummer(n)
+    schluessel, konfig_fehler = _schluessel_stand(basis)
+    if konfig_fehler:
+        raise Verweigert(f"Ticket {nummer}: {konfig_fehler}")
+    datei = _datei(nummer, basis)
+    inhalt = _lies(datei)
+    gruende = _sperrgruende(datei, inhalt)
+    if gruende:
+        raise Verweigert(f"Ticket {nummer}: wartet auf den Nutzer ({gruende[0]}).")
+    fragen = (inhalt.daten or {}).get("fragen") or []
+    treffer = [f for f in fragen if f.get("id") == frage_id]
+    if not treffer or _gilt(treffer[-1], ticket=str(nummer), schluessel=schluessel):
+        raise ValueError(f"Ticket {nummer}: keine offene Frage {frage_id!r} im Briefkasten.")
+    f = treffer[-1]
+    challenge = str(f.get("challenge") or "").strip()
+    if len(challenge) < klasse2_beweis.MIN_CHALLENGE_LAENGE:
+        raise Verweigert(f"Ticket {nummer} Frage {frage_id}: keine gültige Challenge — bitte Frage neu stellen.")
+    frage_text = str(f.get("frage") or "")
+    return {
+        "ticket": str(nummer),
+        "id": str(f.get("id") or ""),
+        "klasse": "2" if _ist_klasse_2(f) else "3",
+        "frage": frage_text,
+        "vorschlag": str(f.get("vorschlag") or ""),
+        "challenge": challenge,
+        "frage_sha256": klasse2_beweis.frage_digest(frage_text),
+    }
+
+
+def beweis_einreichen(
+    n: str | int,
+    token: str,
+    *,
+    belege: Iterable[str] = (),
+    hauptbaum: Path | None = None,
+) -> Path:
+    """Reicht ein vom Handy signiertes ``TO-SPAWN-K2-V1``-Beweis-Token ein (#312).
+
+    Fail-closed: ohne mindestens einen eingerichteten vertrauenswürdigen öffentlichen Schlüssel
+    wird jede Einreichung verweigert. Die eigentliche Ablage läuft vollständig über
+    :func:`nutzer_antworten` (erneute atomare Prüfung unter Dateisperre inkl. Challenge und
+    Fragetext-Hash).
+    """
+    basis = _hauptbaum(hauptbaum)
+    nummer = _nummer(n)
+    schluessel, konfig_fehler = _schluessel_stand(basis)
+    if konfig_fehler:
+        raise Verweigert(f"Ticket {nummer}: {konfig_fehler}")
+    if not schluessel:
+        raise Verweigert(
+            "Kein vertrauenswürdiger öffentlicher Handy-Schlüssel eingerichtet (klasse_2.oeffentliche_schluessel)."
+        )
+    try:
+        geprueft = klasse2_beweis.beweis_pruefen(token, schluessel, ticket=str(nummer))
+    except klasse2_beweis.BeweisFehler as fehler:
+        raise Verweigert(f"Ticket {nummer}: Handy-Beweis abgelehnt ({fehler}).") from fehler
+    belege_liste = [str(b).strip() for b in belege if str(b).strip()]
+    if not belege_liste:
+        belege_liste = [f"Handy-Beweis:{geprueft.schluessel_kennung}"]
+    return nutzer_antworten(
+        nummer,
+        geprueft.frage_id,
+        geprueft.wahl,
+        belege_liste,
+        geprueft.grund,
+        beweis=geprueft.token,
+        hauptbaum=basis,
+    )
 
 
 #: Name des PreToolUse-Hooks (``to_spawn.py hook-ja-sperre``), der Ja-Befehle aus Werkzeug-Aufrufen ablehnt (#531).
@@ -628,6 +781,8 @@ def _schreibe_antwort(
     grund: str,
     von: str,
     hauptbaum: Path | None,
+    *,
+    beweis: str = "",
 ) -> Path:
     """Antwort schreiben (gemeinsamer Weg von :func:`antworten` und :func:`nutzer_antworten`).
 
@@ -635,40 +790,69 @@ def _schreibe_antwort(
     ungültige Antwort (z. B. von Hand eingetragene Aufseher-Antwort an einer Klasse-2-Frage), blockt
     sie die gültige nicht: die neue Antwort ersetzt sie, die alte bleibt in der Liste
     ``verworfen`` der Frage nachvollziehbar erhalten. ``Verweigert`` bei unlesbarer Hauptdatei
-    (auch für den Nutzer: erst die Datei klären) und für den Aufseher bei jeder Sperre.
+    (auch für den Nutzer: erst die Datei klären), bei ungültiger Schlüssel-Konfig, bei fehlendem
+    oder ungültigem Handy-Beweis (sobald Schlüssel eingerichtet sind, #312) und für den Aufseher
+    bei jeder Sperre.
     """
     if _eigenes_ticket() is not None:
         raise Verweigert("Eine Bau-Session beantwortet keine Briefkasten-Fragen (TO_SPAWN_TICKET gesetzt).")
     if not wahl.strip():
         raise ValueError("Leere Wahl: die Antwort braucht eine Entscheidung.")
-    datei = _datei(n, hauptbaum)
+    basis = _hauptbaum(hauptbaum)
+    nummer = _nummer(n)
+    datei = _datei(nummer, basis)
     with _gesperrt(datei):
+        schluessel, konfig_fehler = _schluessel_stand(basis)
+        if konfig_fehler:
+            raise Verweigert(f"Ticket {nummer}: {konfig_fehler}")
         inhalt = _lies(datei)
         gruende = _sperrgruende(datei, inhalt)
         if inhalt.stoerung:
-            raise Verweigert(f"Ticket {n}: wartet auf den Nutzer ({inhalt.stoerung}).")
+            raise Verweigert(f"Ticket {nummer}: wartet auf den Nutzer ({inhalt.stoerung}).")
         daten = inhalt.daten
         treffer = [f for f in (daten or {}).get("fragen", []) if f.get("id") == frage_id]
-        if not daten or not treffer or _gilt(treffer[-1]):
-            raise ValueError(f"Ticket {n}: keine offene Frage {frage_id!r} im Briefkasten.")
-        if von != NUTZER_VON and (gruende or _klasse_2_offen(daten["fragen"])):
-            raise Verweigert(f"Ticket {n}: wartet auf den Nutzer (Klasse 2 oder kaputte Datei).")
+        if not daten or not treffer or _gilt(treffer[-1], ticket=str(nummer), schluessel=schluessel):
+            raise ValueError(f"Ticket {nummer}: keine offene Frage {frage_id!r} im Briefkasten.")
+        if von != NUTZER_VON and (
+            gruende or _klasse_2_offen(daten["fragen"], ticket=str(nummer), schluessel=schluessel)
+        ):
+            raise Verweigert(f"Ticket {nummer}: wartet auf den Nutzer (Klasse 2 oder kaputte Datei).")
         belege_liste = [str(b).strip() for b in belege if str(b).strip()]
         if von != NUTZER_VON and not belege_liste:
             raise ValueError(
                 "Beleg fehlt (--beleg): eine Antwort des Aufsehers braucht mindestens eine nicht leere Fundstelle."
             )
         frage = treffer[-1]
+        beweis_sauber = str(beweis or "").strip()
+        gepruefter_beweis: klasse2_beweis.GepruefterBeweis | None = None
+        if von == NUTZER_VON and (schluessel or beweis_sauber):
+            try:
+                gepruefter_beweis = klasse2_beweis.beweis_pruefen(
+                    beweis_sauber,
+                    schluessel,
+                    ticket=str(nummer),
+                    frage_id=str(frage.get("id") or ""),
+                    frage=str(frage.get("frage") or ""),
+                    challenge=str(frage.get("challenge") or ""),
+                    wahl=wahl,
+                    grund=grund,
+                )
+            except klasse2_beweis.BeweisFehler as fehler:
+                raise Verweigert(f"Ticket {nummer}: gültiger Handy-Beweis erforderlich ({fehler}).") from fehler
         if frage.get("antwort") is not None:
             alt = frage.get("verworfen")
             frage["verworfen"] = [*(alt if isinstance(alt, list) else []), frage["antwort"]]
-        frage["antwort"] = {
+        neue_antwort: dict[str, Any] = {
             "ts": _jetzt(),
             "wahl": wahl,
             "grund": grund,
             "belege": belege_liste,
             "von": von,
         }
+        if gepruefter_beweis is not None:
+            neue_antwort["beweis"] = gepruefter_beweis.token
+            neue_antwort["beweis_schluessel"] = gepruefter_beweis.schluessel_kennung
+        frage["antwort"] = neue_antwort
         manifest.schreibe_atomar(datei, daten)
     return datei
 
@@ -688,20 +872,26 @@ def offene(tickets: Iterable[str | int] | None = None, *, hauptbaum: Path | None
     Datei, :func:`_sperrgruende`) erscheint als Klasse-2-Eintrag mit leerer ``id``. Offen ist eine
     Frage, solange ihre Antwort nicht gilt (:func:`_gilt`).
     """
+    basis = _hauptbaum(hauptbaum)
+    schluessel, konfig_fehler = _schluessel_stand(basis)
     if tickets is None:
-        tickets = alle_tickets(hauptbaum=hauptbaum)
+        tickets = alle_tickets(hauptbaum=basis)
     ergebnis: list[dict[str, str]] = []
     for t in tickets:
         try:
-            datei = _datei(t, hauptbaum)
+            datei = _datei(t, basis)
         except ValueError:
             continue
         nummer = str(_nummer(t))
         inhalt = _lies(datei)
+        if konfig_fehler:
+            ergebnis.append(
+                {"ticket": nummer, "id": "", "klasse": "2", "frage": konfig_fehler, "vorschlag": "", "ts": ""}
+            )
         for grund in _sperrgruende(datei, inhalt):
             ergebnis.append({"ticket": nummer, "id": "", "klasse": "2", "frage": grund, "vorschlag": "", "ts": ""})
         for f in (inhalt.daten or {}).get("fragen", []):
-            if _gilt(f):
+            if not konfig_fehler and _gilt(f, ticket=nummer, schluessel=schluessel):
                 continue
             ergebnis.append(
                 {
@@ -791,6 +981,7 @@ def liste(
     basis = _hauptbaum(hauptbaum)
     repo = log_repo or basis
     ref = bau_log.haupt_ref(repo)
+    schluessel, konfig_fehler = _schluessel_stand(basis)
     zeilen: list[dict[str, str]] = []
     for t in tickets:
         nummer = str(t).strip()
@@ -800,8 +991,13 @@ def liste(
         except ValueError:
             continue
         for f in (daten or {}).get("fragen", []):
-            if not _gilt(f):
-                continue  # Klasse 2 gilt nur mit Antwort des Nutzers
+            antwort_roh = f.get("antwort")
+            if konfig_fehler and (
+                _ist_klasse_2(f) or (isinstance(antwort_roh, dict) and antwort_roh.get("von") == NUTZER_VON)
+            ):
+                continue  # Schlüssel-Konfig kaputt: Klasse-2- und Nutzer-Antworten nie still durchlassen
+            if not _gilt(f, ticket=nummer, schluessel=schluessel):
+                continue  # Klasse 2 gilt nur mit gültiger Antwort des Nutzers
             antwort = f["antwort"]
             zeilen.append(
                 {

@@ -16,6 +16,7 @@ ohne echtes Terminal (Sessions laufen ohne). Grenzen des Schutzes: ``briefkasten
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 from typing import Any, NoReturn
 
@@ -23,7 +24,17 @@ from to_spawn import befugnis, briefkasten, konsole
 
 log = logging.getLogger("to_spawn")
 
-BEFEHLE = ("befugnis", "frage", "antwort", "antworten", "nutzer-antwort", "ja", "offene")
+BEFEHLE = (
+    "befugnis",
+    "frage",
+    "antwort",
+    "antworten",
+    "nutzer-antwort",
+    "beweis-anfrage",
+    "beweis-antwort",
+    "ja",
+    "offene",
+)
 #: Exit-Code von ``antwort`` bei falschem Aufruf — eigener Code, weil 2 „braucht den Nutzer“ heißt (#315).
 AUFRUF_FEHLER = 5
 
@@ -85,6 +96,15 @@ def richte_parser_ein(unter: Any) -> None:
     p_nutzer.add_argument("--wahl", required=True)
     p_nutzer.add_argument("--grund", required=True)
     p_nutzer.add_argument("--beleg", action="append", default=[])
+    p_nutzer.add_argument("--beweis", default="", help="Optionales Ed25519-Beweis-Token vom Handy (#312)")
+    p_anfrage = unter.add_parser("beweis-anfrage", help="Prüf-Anforderung (Challenge) einer Frage fürs Handy (#312)")
+    p_anfrage.add_argument("ticket")
+    p_anfrage.add_argument("--id", required=True, dest="frage_id")
+    p_anfrage.add_argument("--json", action="store_true", help="Maschinenlesbare JSON-Ausgabe")
+    p_beweis = unter.add_parser("beweis-antwort", help="Signiertes Handy-Beweis-Token für Klasse 2 einreichen (#312)")
+    p_beweis.add_argument("ticket")
+    p_beweis.add_argument("--beweis", required=True, help="Signiertes TO-SPAWN-K2-V1-Token vom Handy")
+    p_beweis.add_argument("--beleg", action="append", default=[])
     p_ja = unter.add_parser("ja", help="Nur der Mensch: Live-Ja zur einzigen offenen Frage des Tickets (#531)")
     p_ja.add_argument("ticket")
     p_offen = unter.add_parser("offene", help="Offene Briefkasten-Fragen (alle oder die genannten Tickets)")
@@ -120,11 +140,33 @@ def lauf(args: argparse.Namespace) -> int:
             print(f"#{args.ticket}: Ja geschrieben")
             return 0
         if args.befehl == "nutzer-antwort":
-            briefkasten.menschen_nachweis(konsole.stdin_ist_terminal())
-            datei = briefkasten.nutzer_antworten(args.ticket, args.frage_id, args.wahl, args.beleg, args.grund)
+            beweis = str(getattr(args, "beweis", "") or "").strip()
+            if not beweis:
+                briefkasten.menschen_nachweis(konsole.stdin_ist_terminal())
+            datei = briefkasten.nutzer_antworten(
+                args.ticket, args.frage_id, args.wahl, args.beleg, args.grund, beweis=beweis
+            )
             print(f"#{args.ticket}: Antwort des Nutzers geschrieben")
             for o in briefkasten.offene([args.ticket]):
                 if not o["id"]:  # Sperre durch kaputte Datei: nur der Nutzer löst sie
+                    print(f"Hinweis: {o['frage']} (Ordner {datei.parent}) — bis dahin bleibt #{args.ticket} gesperrt.")
+            return 0
+        if args.befehl == "beweis-anfrage":
+            anfrage = briefkasten.beweis_anfrage(args.ticket, args.frage_id)
+            if args.json:
+                print(json.dumps(anfrage, ensure_ascii=False))
+            else:
+                print(
+                    f"#{anfrage['ticket']} · id {anfrage['id']} · Klasse {anfrage['klasse']} · "
+                    f"challenge {anfrage['challenge']} · frage_sha256 {anfrage['frage_sha256']} · "
+                    f"{anfrage['frage']}"
+                )
+            return 0
+        if args.befehl == "beweis-antwort":
+            datei = briefkasten.beweis_einreichen(args.ticket, args.beweis, belege=args.beleg)
+            print(f"#{args.ticket}: Handy-Beweis geprüft und Antwort des Nutzers geschrieben")
+            for o in briefkasten.offene([args.ticket]):
+                if not o["id"]:
                     print(f"Hinweis: {o['frage']} (Ordner {datei.parent}) — bis dahin bleibt #{args.ticket} gesperrt.")
             return 0
         if not args.frage_id:
