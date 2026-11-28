@@ -33,6 +33,7 @@ nicht im Repo. Die Skripte, die sie erzeugen, liegen unter `messung/` (Abschnitt
 | [SIM] | `prueftor_messung_schlange_2026-11-21.md` | Simulator Schlangen-Strategien (`messung/schlange_sim.py`) |
 | [PROBE] | `prueftor_messung_probe_2026-11-21.md` | Probe-Repos, 34 eingebaute Fehler (`messung/fehler_reihe.py`) |
 | [DP] | `prueftor_messung_duoplus_2026-11-21.md` | DuoPlus-Klon, Zwischenstand (`messung/rueckblick_auswahl_duoplus.py`) |
+| [3B0] | `prueftor_3b0_auswahl.md` + Rohdaten `rueckblick_duoplus.jsonl` / `r1_quote_duoplus.jsonl` | Mess-Vorstufe 3b-0 Teil (a) (#98): 50 Rückblick-Läufe ohne `archive/`, RAM-Spitze, R1/R3-Quote je Ticket, Gegenprobe `ce8a95f`, reproduzierbar ausgewertet mit `messung/auswertung_3b0.py` |
 | [RA] | `prueftor_recherche_A_2026-11-21.md` | Recherche Test-Auswahl, Ausführung, Sicherheitsnetz |
 | [RB] | `prueftor_recherche_B_2026-11-21.md` | Recherche Merge-Queue-Strategien, agentisches Prüfen, Wackel-Tests |
 
@@ -205,23 +206,69 @@ Probe-Repo; eine Kombination aus dynamischem Import und statischem Nachbar-Impor
 nicht Bestandteil des Probe-Repos. Reproduzierbar per `messung/fehler_reihe_2.py` und
 `tests/test_fehler_reihe_2_104.py`.
 
-### 4.3 DuoPlus-Klon (Zwischenstand, master `b5b23086c`) [DP]
+### 4.3 DuoPlus-Klon (Stand master `b5b23086c`) [DP][3B0]
+
+#### Ausgangsmessung (Etappe 3a, 2 Rückblick-Läufe) [DP]
 
 | Messung | Wert |
 |---|---|
 | Sammeln ganze Suite | 32.325 Items, 1.920 Dateien, 91,7 s (Wand 118,6 s) |
 | Auswahl Eigenbau `gate_auswahl.py` | 0,2–0,6 s je Lauf |
 | Auswahl `impacted-tests --module .` | 74–113 s je Lauf (Graph über 3.907 `.py` inkl. `archive/` jedes Mal neu) |
-| b5b2308 (conftest geändert) | Eigenbau VOLL 32.325 · impacted alle 32.325 |
-| ce8a95f (ticket-rot, 7 Dateien, 2 rote Testdateien) | Eigenbau 944 Tests, beide roten drin · impacted 129 Tests, **`test_gate_bash_240.py` verpasst** |
+| `b5b2308` (`conftest` geändert) | Eigenbau VOLL 32.325 · impacted alle 32.325 |
+| `ce8a95f` (`ticket-rot`, 7 Dateien, 2 rote Testdateien) | Eigenbau 944 Tests, beide roten drin · impacted 129 Tests, **`test_gate_bash_240.py` verpasst** |
 
-Eingebaute Fehler in DuoPlus: **0** (vorbereitet, nicht gestartet). Rückblick: 2 von geplant 55 Läufen.
-Der verpasste Fall ist eine Testdatei, die ein Shell-Skript als Text prüft (kein Python-Import) [DP].
-**R1 hätte ihn gefangen (belegt):** `git show --stat ce8a95f` im Schlangen-Klon zeigt
-`scripts/safe_deploy_vps.sh` (99 Zeilen geändert) neben `scripts/gate_nacht_voll.py` und zwei Testdateien.
-Das Shell-Skript ist eine Nicht-Code-Datei im Sinn von R1 → voll. Gefangen ist der Fehlgriff damit aber
-nur per Voll-Lauf, nicht durch eine Auswahl; der Fall zeigt auch, dass R1 in DuoPlus oft auf „voll“
-fällt (Quote siehe Abschnitt 5).
+#### Mess-Vorstufe 3b-0 Teil (a): 50 Rückblick-Läufe ohne `archive/` und R1/R3-Quote (#98) [3B0]
+
+Pfad-Ausschluss: `pytest-impacted` 0.38.1 kennt keinen eigenen Ausschluss-Schalter (Quelltext geprüft);
+`.venv` lag außerhalb des Klons, `archive/` wurde für die Messung per `git sparse-checkout` ausgeblendet
+(`messung/rueckblick_auswahl_duoplus.py --ohne archive`). Pool: 54 Zeilen (40 Merges + 14 rote mit
+Kennungen; Pool der roten Läufe ausgeschöpft), davon 4 ohne Basis → **50 gerechnete Läufe** (21 rote mit
+Kennungen). Alle Läufe mit `nice -n 15`, Last-Spanne (1 min) **3,7–25,6** (8 Kerne): Zeiten sind obere
+Grenzen. Nachgerechnet mit `messung/auswertung_3b0.py --repo`.
+
+| Kennzahl | Eigenbau `gate_auswahl.py` | `impacted-tests --module .` (ohne `archive/`) |
+|---|---|---|
+| Auswahl-Dauer Median | **0,27 s** | **83,63 s** |
+| Auswahl-Dauer P90 / Max | 1,13 s / 2,40 s | 125,54 s / 374,57 s |
+| RAM-Spitze (Prozessbaum, n = 48) Median / Max | 64,0 / 67,0 MB | **436,5 / 446,0 MB** |
+| Urteile (n = 50) | 10 VOLL, 36 AUSWAHL, 4 SKIP | 45 AUSWAHL, 5 FEHLER (0 Tests) |
+| Anteil Tests Mittel / Median | 24,6 % / 2,9 % | 41,3 % / 1,5 % |
+| Fehlgriffe bei 21 roten Läufen | **2/21** (`3e8fa95`, `1ed5b52`) | **8/21** (`ce8a95f`, `3e8fa95`, `1ed5b52`, `61e877f`, `32c6eac`, `a59dcee`, `0cba2e3`, `1fa532f`) |
+
+Befunde Teil (a) [3B0]:
+- **Pfad-Ausschluss spart kaum:** Ohne `archive/` bleibt `pytest-impacted` bei Median 83,63 s (P90 125,54 s)
+  im selben Bereich wie zuvor (74–113 s); der Import-Graph über den Rest bleibt langsam (~300× langsamer
+  als der Eigenbau).
+- **Gegenprobe `ce8a95f` bestätigt:** `tests/test_gate_bash_240.py` wird von `impacted` roh erneut
+  verpasst (Test prüft `scripts/safe_deploy_vps.sh` als Text, kein Python-Import); R1 fängt den Fall
+  über das geänderte Shell-Skript per Voll-Lauf.
+- **Fehlgriffe nach R1–R3 (je `git diff basis..sha` verifiziert):** Von den 8 Fehlgriffen von `impacted`
+  roh fangen R1/R2 fünf Fälle — `ce8a95f` (R1 `scripts/safe_deploy_vps.sh`), `3e8fa95` (R1
+  `.review/beleg-*.json`), `32c6eac` (R1 `scripts/staging/staging_deploy.sh`), `1fa532f` (R1
+  `scripts/safe_deploy_vps.sh`) und `a59dcee` (R2: 0 Tests/FEHLER). **3 Fehlgriffe fängt R1–R3 nicht:**
+  - `1ed5b52` (nur `.py` geändert, verpasst `tests/test_browser_mappen_reel_popup_1133.py`; auch vom Eigenbau verpasst),
+  - `61e877f` (nur `.py` geändert, verpasst `tests/test_gate_bash_240.py`),
+  - `0cba2e3` (nur `.py` + `docs/**` geändert, verpasst `tests/test_schlange_spur_pfade.py`).
+  Vorbehalt: Basis ist `merge-base`-Näherung; einzelne rote Kennungen können Wackler/Umgebung sein (3b-4).
+- **R1/R3-Quote nachgemessen (`messung/r1_quote_duoplus.py`):**
+  - Je Ticket (302 Tickets seit 2026-11-07 auf `origin/master`): **R1 173 (57,3 %)**, **R3 27 (8,9 %)**,
+    **R1 oder R3 (voll) 179 von 302 = 59,3 %** (R1 vor allem `.json`, `.css`, `.sh`, `.js`/`.mjs`, `.html`).
+  - Je Rückblick-Lauf (50 Läufe): R1 20, R3 12, R2 5 → **30 von 50 = 60,0 %** voll.
+- **Abbruch-Kriterium 3b-0 (Abschnitt 6.4):**
+  - **(a)** Median (Auswahl + Lauf) ≥ 50 % Voll-Lauf am selben Stand: **offen** (Teil (b) Voll-Lauf
+    `loadfile` vs. `worksteal` und 5 Auswahl-Läufe im App-Repo-Klon noch nicht gefahren).
+  - **(b)** R1–R3 schicken ≥ 50 % der Tickets voll: **JA — 179/302 = 59,3 %** (Rückblick: 30/50 = 60,0 %).
+  - **(c)** Fehlgriff im Rückblick, den R1–R3 nicht fangen: **JA — 3 Läufe** (`1ed5b52`, `61e877f`, `0cba2e3`).
+  - **Entscheidung:** Schon (b) und (c) lösen jeweils einzeln das Abbruch-Kriterium aus → **DuoPlus läuft
+    mit Variante 3 allein (schnellerer Voll-Lauf, keine Auswahl)**; protokolliert im Plan-Stand
+    (`docs/PLAN_L1_usb_stick.md`) und im lokalen Entscheidungs-Log der Leit-Session (nicht im
+    öffentlichen Repo wegen `.gitignore` #169).
+
+Eingebaute Fehler in DuoPlus: **0** (entfällt bei Variante 3 für DuoPlus laut Leit-Entscheidung 21.11. 21:05;
+M12 gilt dort als „nicht anwendbar, weil keine Auswahl läuft“, Pflicht-Nachweis bleibt das Probe-Repo).
+Teil (b) (`-n 4 --dist loadfile` gegen `-n 4 --dist worksteal` am Stand `b5b23086c` plus 5 Auswahl-Läufe)
+bleibt offen für einen eigenen Lauf auf dem App-Klon bei Last < 12.
 
 ### 4.4 Schlange
 
@@ -263,20 +310,25 @@ keine Abkürzung (voller Lauf startet). Zum Vergleich: volle Suite `-n 4` 459 s 
 - **Windows:** keine Messung, nur PyPI-/npm-Metadaten [PROBE]. Offen: Pfadtrenner in R1-Globs, git.exe
   für impacted, Defender-Bremse für venv/SQLite [RA]. Zugeordnet: Paket 3b-2 (Abnahme M10/M11 am PC,
   Befehl in 6.4); M10 gilt erst danach voll.
-- **R1-Quote in DuoPlus:** wie oft R1 auf „voll“ springt, ist nicht nachgemessen. Schnellzählung des
-  Gegenlesers (nicht nachgemessen): 337 von 2088 Commits seit 07.11. = 16 % ändern eine Nicht-Code-,
-  Nicht-Doku-Datei; je Ticket (mehrere Commits) liegt der Anteil höher. Folge: mindestens dieser Anteil
-  läuft voll, der Tempo-Gewinn der Auswahl (M13, A16) gilt nur für den Rest. Messung in 3b-0.
+- **R1-Quote in DuoPlus (geschlossen in 3b-0 Teil a [3B0]):** Nachgemessen über 302 Tickets seit 07.11.
+  (`messung/r1_quote_duoplus.py`): R1 173 (57,3 %), R3 27 (8,9 %), **R1 oder R3 = 179/302 (59,3 %)**
+  (im 50er-Rückblick mit R2: 30/50 = 60,0 %). Damit ist Kriterium (b) (≥ 50 %) gerissen.
 - **Überanpassung der Regeln:** Erste Reihe (34 Fälle) nur an den Übungsfällen geprüft (4.2). Zweite,
   unbekannte Fehlerreihe für die Probe-Repos in 3b-2b (#104) nachgeholt: 26 neue Fehler bei eingefrorenen
   Regeln (`regeln@fd7e49f`), **0 übersehen** (Abschnitt 4.2). Offen bleibt nur die Kombination aus
   dynamischem Import und statischem Nachbar-Import außerhalb des Probe-Layouts.
-- **RAM-Spitze von impacted in DuoPlus:** nicht gemessen (nur Dauer 74–113 s [DP]).
-- **DuoPlus M12:** keine eingebauten Fehler, nur 2 Rückblick-Läufe; testmon, worksteal, Voll-Läufe nicht
-  gestartet (Last 11–19) [DP]. Ein echter Fehlgriff von impacted belegt [DP].
-- **Tempo-Gewinn der Auswahl in DuoPlus:** unbelegt. Mini-Repo zeigt keinen Gewinn (Tests zu billig)
-  [PROBE]; impacted kostet in DuoPlus 74–113 s allein für die Auswahl [DP]. Knoten-Module (`web/app.py`
-  → 267 Testdateien) machen die Auswahl groß [RA].
+- **RAM-Spitze von impacted in DuoPlus (geschlossen in 3b-0 Teil a [3B0]):** Gemessen über 48 Läufe
+  (Prozessbaum RSS): Median **436,5 MB**, Max **446,0 MB** (Eigenbau: Median 64,0 MB, Max 67,0 MB);
+  Auswahl-Dauer trotz `archive/`-Ausschluss Median **83,63 s**, P90 **125,54 s** (Max 374,57 s).
+- **DuoPlus M12 / Voll-Lauf `worksteal` gegen `loadfile`:** Rückblick auf 50 Läufe (21 rote) in 3b-0
+  Teil (a) abgeschlossen — 8 Fehlgriffe von `impacted` roh (inkl. Gegenprobe `ce8a95f`), davon **3 nicht
+  von R1–R3 gefangen** (`1ed5b52`, `61e877f`, `0cba2e3`) → Kriterium (c) gerissen [3B0]. **Weiter offen
+  (3b-0 Teil b):** Voll-Lauf `-n 4 --dist loadfile` gegen `-n 4 --dist worksteal` am Stand `b5b23086c`
+  sowie 5 Auswahl-Läufe für Kriterium (a) (nur bei Last < 12 im App-Klon); testmon nicht gestartet.
+- **Tempo-Gewinn der Auswahl in DuoPlus:** Teil (a) zeigt 83,63 s Median-Auswahlzeit allein für
+  `impacted` (bei 41,3 % mittlerem Testanteil) und 59,3 % Voll-Läufe durch R1/R3 [3B0]. Kriterium (a)
+  (Median Auswahl + Lauf / Voll-Lauf am selben Stand) bleibt bis Teil (b) unbelegt. Knoten-Module
+  (`web/app.py` → 267 Testdateien) machen die Auswahl groß [RA].
 - **Bremse bei parallelen Gates:** wichtigste offene Zahl. Faktor 3 nur aus einer Beobachtung
   („13 min ohne Last → 40 min bei Last 14–19“) [SIM] Annahme 6, nicht gemessen.
 - **Bündel-Laufzeit:** keine eigene Fahrtenbuch-Zeile für den Bündel-Lauf, nur Spanne A/B [SIM].
@@ -445,7 +497,9 @@ python3 messung/gen_py.py --ziel <probe> && python3 messung/gen_node.py --ziel <
 <probe>/.venv/bin/python messung/fehler_reihe.py --ort <probe> node
 python3 messung/fehler_reihe_2.py --ort <probe>
 nice -n 15 python3 messung/rueckblick_auswahl_duoplus.py --schlange <schlange> --repo <klon> --venv <venv> \
-  --collect collect.txt --aus rueckblick.jsonl --merges 40 --rot 15 --max-s 1020
+  --collect collect.txt --aus rueckblick.jsonl --merges 40 --rot 15 --ohne archive --max-s 1020
+python3 messung/r1_quote_duoplus.py --schlange <schlange> --repo <klon> --seit 2026-11-07 --aus r1_quote.jsonl
+python3 messung/auswertung_3b0.py --rueckblick rueckblick.jsonl --r1-quote r1_quote.jsonl --repo <klon>
 ```
 
 `schlange_sim.py` liefert bei gleichem `--bis` und Seed byte-gleiche Ausgabe [SIM]. Alle Läufe mit
