@@ -8,7 +8,7 @@ Vergleich mit ``--dist worksteal``).
 Sicherheit:
 - Prüft vor jedem Messpunkt die 1-Minuten-Last (Abbruch bei Last >= 12,0).
 - Fasst keine fremden Prozesse an; räumt eigene Last-Prozesse und Temp-Ordner garantiert auf.
-- Nutzt bestehende Hilfsfunktionen aus ``to_spawn.speicher`` und ``to_spawn.prozessbaum``.
+- Nutzt bestehende Hilfsfunktionen aus ``to_spawn.speicher`` und ``to_spawn.starter``.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ REPO_WURZEL = Path(__file__).resolve().parents[1]
 if str(REPO_WURZEL) not in sys.path:
     sys.path.insert(0, str(REPO_WURZEL))
 
-from to_spawn import prozessbaum, speicher
+from to_spawn import speicher, starter
 
 log = logging.getLogger("messung.pruefzeit_last_290")
 
@@ -347,12 +347,12 @@ def _starte_bau_last_sessions(
             if bereit.exists():
                 bereit.unlink()
             bereit_dateien.append(bereit)
-            proc = subprocess.Popen(
+            proc = starter.starte(
                 [python_exe, "-c", _LAST_ARBEITER_CODE, str(ram_je_session_mib), str(bereit)],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                **prozessbaum.fensterlos(),
+                notnagel=None,
             )
             prozesse.append(proc)
 
@@ -425,13 +425,13 @@ def messe_einzellauf(
     last_spitze = last_vorher
 
     start = time.monotonic()
-    proc = subprocess.Popen(
+    proc = starter.starte(
         befehl,
         cwd=suite_dir,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        **prozessbaum.fensterlos(),
+        notnagel=None,
     )
     try:
         while proc.poll() is None:

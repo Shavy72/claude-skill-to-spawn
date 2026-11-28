@@ -159,3 +159,30 @@ def test_befund_dokument_vollstaendig_und_sauber() -> None:
         name_re = name_muster(NAMEN)
         treffer = [f"Z.{nr}" for nr, zeile in enumerate(text.splitlines(), 1) if name_re.search(zeile)]
         assert treffer == [], f"Personenname im Befund-Dokument: {treffer}"
+
+
+def test_prozess_starts_laufen_ueber_start_tuer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Beide Prozess-Starts im Messskript nutzen ``to_spawn.starter.starte`` und sperren echte Starts im Test."""
+    from to_spawn import starter
+
+    mod = _lade_modul()
+    with pytest.raises(starter.StartGesperrt):
+        mod._starte_bau_last_sessions(1, python_exe=sys.executable, ram_je_session_mib=1, hilfs_dir=tmp_path)
+
+    monkeypatch.setattr(mod, "_warte_unter_last", lambda _max_last: 1.0)
+    monkeypatch.setattr(
+        mod,
+        "speicher_stand",
+        lambda: mod.SpeicherStand(
+            gesamt_mib=16000, frei_mib=8000, belegt_mib=8000, swap_gesamt_mib=0, swap_belegt_mib=0
+        ),
+    )
+    with pytest.raises(starter.StartGesperrt):
+        mod.messe_einzellauf(
+            tmp_path,
+            python_exe=sys.executable,
+            sessions=0,
+            arbeiter=1,
+            verteilung="seriell",
+            bau_prozesse=(),
+        )
